@@ -95,6 +95,7 @@ def view_RFs(img_shape, rf_index):
 
     Note: Values in image shown are proportional to the receptive field number in rf_index.
     '''
+
     # init image
     img = np.zeros(img_shape)
 
@@ -104,6 +105,39 @@ def view_RFs(img_shape, rf_index):
 
     # show image
     plt.imshow(img, cmap='gray', vmin=-len(rf_index), vmax=len(rf_index))
+    plt.show()
+
+def plot_RF_size_ecc(img_shape, rf_index):
+    '''Plot receptive field size as function of eccentricity
+    parameters
+    ----------
+    img_shape : tuple, image shape used in make_RFs to create receptive fields
+    rf_index : list, list of receptive field indices created by make_RFs
+
+    returns
+    -------
+    None
+    '''
+
+    # init sizes, locs
+    sizes = []
+    locs = []
+    for rf in rf_index:
+        # get size and location
+        sz = np.abs(rf[0].start - rf[0].stop)
+        l = np.abs(img_shape[0]/2 - (rf[0].start + sz/2))
+        # if already in sizes, get previous location
+        if sz in sizes:
+            prev_loc = locs[np.where(np.asarray(sizes) == sz)[0][0]]
+        else:
+            prev_loc = -1
+        # append size, location
+        if l > prev_loc:
+            sizes.append(sz)
+            locs.append(l)
+
+    # plot size vs. eccentricy
+    plt.plot(locs, sizes)
     plt.show()
 
 def rf_pool(u, t=None, rf_index=None, pool_type='prob', block_size=(2,2)):
