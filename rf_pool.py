@@ -1,13 +1,15 @@
+import warnings
 import numpy as np
 import torch
 from torch.distributions import Multinomial, Binomial
 
-def make_RFs(img_shape, rf_sizes):
+def make_RFs(img_shape, rf_sizes, stride=0):
     '''Make receptive fields for rf_pool
     parameters
     ----------
     img_shape : tuple, height and width of bottom-up input to pooling layer
     rf_sizes : list, receptive field sizes to tile detection layer (see example)
+    stride : int, spacing (if positive) or overlap (if negative) between receptive fields [default: 0]
 
     returns
     -------
@@ -19,7 +21,10 @@ def make_RFs(img_shape, rf_sizes):
     # indices to inner-most indices
     img_shape = (18,18)
     rf_sizes = [4,3,2]
-    rf_index = make_RFs(img_shape, rf_sizes)
+    rf_index = make_RFs(img_shape, rf_sizes, stride=0)
+
+    Note: If receptive field sizes do not fully cover image, rf_sizes[-1] will be appended to rf_sizes until
+    the image can be completely covered (unless (rf_sizes[-1] + stride) <= 0).
     '''
 
     # ensure rf_sizes given
@@ -29,16 +34,23 @@ def make_RFs(img_shape, rf_sizes):
     img_h, img_w = img_shape
 
     # append rf_size[-1] if img not fully covered
-    while (img_h - 2*np.sum(rf_sizes)) > 0 and (img_w - 2*np.sum(rf_sizes)) > 0:
-        rf_sizes.extend([rf_sizes[-1]])
+    while (img_h - 2*np.sum(rf_sizes) - 2*len(rf_sizes)*stride) > 0 and \
+          (img_w - 2*np.sum(rf_sizes) - 2*len(rf_sizes)*stride) > 0:
+        if rf_sizes[-1] + stride > 0:
+            rf_sizes.extend([rf_sizes[-1]])
+        else: # warn that image won't be covered
+            warnings.warn("Image will not be fully covered by receptive fields.")
+            break
 
     # for each RF size, get slice indices
     rf_index = []
     for n in range(len(rf_sizes)):
         # get sum of previous rf sizes
-        sum_rfs = np.sum(rf_sizes[:n], dtype='uint8')
+        sum_rfs = np.sum(rf_sizes[:n], dtype='uint8') + stride*n
         # get current image size for rf
         if (img_shape[0] - 2*sum_rfs) < rf_sizes[n] and (img_shape[1] - 2*sum_rfs) < rf_sizes[n]:
+            if (img_shape[0] - 2*sum_rfs) > (0 - 2*stride) or (img_shape[1] - 2*sum_rfs) > (0 - 2*stride):
+                warnings.warn("Image may not be fully covered by receptive fields.")
             break
         if (img_shape[0] - 2*sum_rfs) >= rf_sizes[n]:
             img_h = img_shape[0] - 2*sum_rfs
@@ -48,20 +60,20 @@ def make_RFs(img_shape, rf_sizes):
         i = []
         j = []
         # set left side slices
-        i.extend([slice(ii, ii+rf_sizes[n]) for ii in np.arange(sum_rfs, img_h+sum_rfs, rf_sizes[n])
+        i.extend([slice(ii, ii+rf_sizes[n]) for ii in np.arange(sum_rfs, img_h+sum_rfs, rf_sizes[n] + stride)
                   if ii+rf_sizes[n] <= img_h+sum_rfs])
-        j.extend([slice(jj, jj+rf_sizes[n]) for jj in np.repeat(sum_rfs, np.ceil(img_h/rf_sizes[n]))])
+        j.extend([slice(jj, jj+rf_sizes[n]) for jj in np.repeat(sum_rfs, np.ceil(img_h/(rf_sizes[n]+stride)))])
         # set bottom side slices
-        i.extend([slice(ii-rf_sizes[n], ii) for ii in np.repeat(img_h+sum_rfs, np.ceil(img_w/rf_sizes[n]))])
-        j.extend([slice(jj, jj+rf_sizes[n]) for jj in np.arange(sum_rfs, img_w+sum_rfs, rf_sizes[n])
+        i.extend([slice(ii-rf_sizes[n], ii) for ii in np.repeat(img_h+sum_rfs, np.ceil(img_w/(rf_sizes[n]+stride)))])
+        j.extend([slice(jj, jj+rf_sizes[n]) for jj in np.arange(sum_rfs, img_w+sum_rfs, rf_sizes[n] + stride)
                   if jj+rf_sizes[n] <= img_w+sum_rfs])
         # set right side slices
-        i.extend([slice(ii-rf_sizes[n], ii) for ii in np.arange(img_h+sum_rfs, sum_rfs, -rf_sizes[n])
+        i.extend([slice(ii-rf_sizes[n], ii) for ii in np.arange(img_h+sum_rfs, sum_rfs, -rf_sizes[n] - stride)
                   if ii-rf_sizes[n] >= sum_rfs])
-        j.extend([slice(jj-rf_sizes[n], jj) for jj in np.repeat(img_w+sum_rfs, np.ceil(img_h/rf_sizes[n]))])
+        j.extend([slice(jj-rf_sizes[n], jj) for jj in np.repeat(img_w+sum_rfs, np.ceil(img_h/(rf_sizes[n]+stride)))])
         # set top side slices
-        i.extend([slice(ii, ii+rf_sizes[n]) for ii in np.repeat(sum_rfs, np.ceil(img_w/rf_sizes[n]))])
-        j.extend([slice(jj-rf_sizes[n], jj) for jj in np.arange(img_w+sum_rfs, sum_rfs, -rf_sizes[n])
+        i.extend([slice(ii, ii+rf_sizes[n]) for ii in np.repeat(sum_rfs, np.ceil(img_w/(rf_sizes[n]+stride)))])
+        j.extend([slice(jj-rf_sizes[n], jj) for jj in np.arange(img_w+sum_rfs, sum_rfs, -rf_sizes[n] - stride)
                   if jj-rf_sizes[n] >= sum_rfs])
         # append if not already in coords
         for ii,jj in zip(i,j):
