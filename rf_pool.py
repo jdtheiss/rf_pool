@@ -1,4 +1,5 @@
 import warnings
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch.distributions import Multinomial, Binomial
@@ -80,6 +81,30 @@ def make_RFs(img_shape, rf_sizes, stride=0):
             if len(rf_index) == 0 or (ii,jj) not in rf_index:
                 rf_index.append((ii,jj))
     return rf_index
+
+def view_RFs(img_shape, rf_index):
+    '''View receptive fields created by make_RFs
+    parameters
+    ----------
+    img_shape : tuple, image shape used in make_RFs to create receptive fields
+    rf_index : list, list of receptive field indices created by make_RFs
+
+    returns
+    -------
+    None
+
+    Note: Values in image shown are proportional to the receptive field number in rf_index.
+    '''
+    # init image
+    img = np.zeros(img_shape)
+
+    # set each RF to index number
+    for i, rf in enumerate(rf_index):
+        img[rf[0],rf[1]] += (i + 1)
+
+    # show image
+    plt.imshow(img, cmap='gray', vmin=-len(rf_index), vmax=len(rf_index))
+    plt.show()
 
 def rf_pool(u, t=None, rf_index=None, pool_type='prob', block_size=(2,2)):
     '''Receptive field pooling
