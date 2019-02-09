@@ -7,22 +7,32 @@ def gaussian_kernel_2d(mu, sigma, xy):
 
 def gaussian_kernel_lattice(mu, sigma, kernel_size):
     """
-    Outputs a tensor of gaussian kernels of size (kernel_size X kernel_size X num_kernels)
+    Outputs a tensor of gaussian kernels of shape (kernel_size, kernel_size, n_kernels)
 
-    Inputs:
-    -------
-    mu: Tensor (2,num_kernels)
-        xy-coordinate of gaussian centers
-    sigma: Tensor (1, num_kernels)
-        standard deviation of gaussians
-    kernel_size: int
+    Parameters
+    ----------
+    mu : torch.Tensor 
+        kernel centers with shape (2, n_kernels)
+    sigma : torch.Tensor 
+        kernel standard deviations with shape (1, n_kernels)
+    kernel_size : int
         size of input feature map
 
-    Outputs:
+    Returns
     -------
-    gk_kernels: Tensor (batch_size, kernel_size, kernel_size, num_kernels))
+    gk_kernels : torch.Tensor 
+        output kernels with shape (batch_size, kernel_size, kernel_size, n_kernels)
 
+    Examples
+    --------
+    # Create tensor of 10 kernels with random centers and standard deviations of 1.
+    >>> mu = torch.rand(2, 10)
+    >>> sigma = torch.ones(1, 10)
+    >>> kernel_size = 200
+    >>> mu = mu * kernel_size
+    >>> gk_kernels = gaussian_kernel_lattice(mu, sigma, kernel_size)
     """
+    
     assert mu.shape[-1] == sigma.shape[-1]
     num_kernels = mu.shape[-1]
 
@@ -124,27 +134,39 @@ def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1.):
 
 def init_uniform_lattice(center, size, spacing, sigma_init):
     """
-    Creates a uniform lattice of guassian kernel centers(mu) and stantard deviations(sigma)
+    Creates a uniform lattice of guassian kernel centers (mu) 
+    and standard deviations (sigma)
 
-    Inputs:
-    -------
-    center: tuple (x,y)
+    Parameters
+    ----------
+    center : tuple
         x-y coordinate for center of lattice
-    size: int
-        size of the lattice. tota number of filters = size**2
-    spacing: int
+    size : int
+        size of the lattice. n_kernels = size**2
+    spacing : int
         spacing between gaussian centers
-    sigma_init:
+    sigma_init : float
         standard deviation initialization
 
-    Outputs:
+    Returns
     -------
-    mu: Tensor (2, size**2)
-        tensor containg the kernel centers
-    sigma: Tensor (1, size**2)
-        tensor containing the kernel standard deviations
-
+    mu : torch.Tensor
+        kernel centers with shape (2, n_kernels)
+    sigma : torch.Tensor
+        kernel standard deviations with shape (1, n_kernels)
+        
+    Examples
+    --------
+    # Generate lattice of size 8x8 with 12 pixel spacing centered on a 200x200 image
+    
+    >>> kernel_size = 200
+    >>> center = [kernel_size/2.]*2
+    >>> size = 8
+    >>> spacing = 12.
+    >>> sigma_init = 3.
+    >>> mu, sigma = init_uniform_lattice(center, size, spacing, sigma_init)
     """
+    
     cx, cy = center
     if size % 2 == 0:
         cx += np.floor(spacing/2)
@@ -171,13 +193,5 @@ def show_kernel_lattice(kerns):
     plt.show()
 
 if __name__ == '__main__':
-    #test by generating a lattice of size 8x8 with 12 pixel spacing centered on a 200x200 image
-    kernel_size = 200
-    center = [kernel_size/2.]*2
-    size = 8
-    spacing = 12.
-    sigma_init = 3.
-
-    mu, sigma = init_uniform_lattice(center, size, spacing, sigma_init)
-    g_kern = gaussian_kernel_lattice(mu, sigma, kernel_size)
-    show_kernel_lattice(g_kern.numpy())
+    import doctest
+    doctest.testmod()
