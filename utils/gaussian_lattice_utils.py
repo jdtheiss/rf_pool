@@ -164,9 +164,10 @@ def init_uniform_lattice(center, size, spacing, sigma_init):
     return mu, sigma
 
 def show_kernel_lattice(kerns):
-    fig, ax = plt.subplots(1, 1)
-    out = np.sum(kerns, axis=-1)
-    ax.imshow(out)
+    # normalize each kernel to max 1, then max across kernels to show
+    norm_kerns = torch.div(kerns, torch.as_tensor(np.max(kerns.numpy(), axis=(0,1)), dtype=kerns.dtype) + 1e-6)
+    out = torch.max(norm_kerns, dim=-1)[0]
+    plt.imshow(out.numpy())
     plt.show()
 
 if __name__ == '__main__':
