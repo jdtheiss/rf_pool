@@ -1,188 +1,88 @@
-import warnings
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch.distributions import Multinomial, Binomial
 
-def make_RFs(img_shape, rf_sizes, stride=0):
-    '''Make receptive fields for rf_pool
-    parameters
-    ----------
-    img_shape : tuple, height and width of bottom-up input to pooling layer
-    rf_sizes : list, receptive field sizes to tile detection layer (see example)
-    stride : int, spacing (if positive) or overlap (if negative) between receptive fields [default: 0]
+#TODO: create separate functions for each pooling operation
+def prob_max_pool():
+    raise NotImplementedError
 
-    returns
-    -------
-    rf_index : list, slice indices for each receptive field (i.e. [(slice(start, end), slice(start, end))])
+def stochastic_max_pool():
+    raise NotImplementedError
 
-    example
-    -------
-    # creates indices for 32 receptive fields of size 4x4, 3x3, 2x2 tiling image from outer-most
-    # indices to inner-most indices
-    img_shape = (18,18)
-    rf_sizes = [4,3,2]
-    rf_index = make_RFs(img_shape, rf_sizes, stride=0)
+def div_norm_pool():
+    raise NotImplementedError
+    
+def average_pool():
+    raise NotImplementedError
 
-    Note: If receptive field sizes do not fully cover image, rf_sizes[-1] will be appended to rf_sizes until
-    the image can be completely covered (unless (rf_sizes[-1] + stride) <= 0).
-    '''
-
-    # ensure rf_sizes given
-    assert len(rf_sizes) > 0
-
-    # get image size
-    img_h, img_w = img_shape
-
-    # append rf_size[-1] if img not fully covered
-    while (img_h - 2*np.sum(rf_sizes) - 2*len(rf_sizes)*stride) > 0 and \
-          (img_w - 2*np.sum(rf_sizes) - 2*len(rf_sizes)*stride) > 0:
-        if rf_sizes[-1] + stride > 0:
-            rf_sizes.extend([rf_sizes[-1]])
-        else: # warn that image won't be covered
-            warnings.warn("Image will not be fully covered by receptive fields.")
-            break
-
-    # for each RF size, get slice indices
-    rf_index = []
-    for n in range(len(rf_sizes)):
-        # get sum of previous rf sizes
-        sum_rfs = np.sum(rf_sizes[:n], dtype='uint8') + stride*n
-        # get current image size for rf
-        if (img_shape[0] - 2*sum_rfs) < rf_sizes[n] and (img_shape[1] - 2*sum_rfs) < rf_sizes[n]:
-            if (img_shape[0] - 2*sum_rfs) > (0 - 2*stride) or (img_shape[1] - 2*sum_rfs) > (0 - 2*stride):
-                warnings.warn("Image may not be fully covered by receptive fields.")
-            break
-        if (img_shape[0] - 2*sum_rfs) >= rf_sizes[n]:
-            img_h = img_shape[0] - 2*sum_rfs
-        if (img_shape[1] - 2*sum_rfs) >= rf_sizes[n]:
-            img_w = img_shape[1] - 2*sum_rfs
-        # init i, j slices
-        i = []
-        j = []
-        # set left side slices
-        i.extend([slice(ii, ii+rf_sizes[n]) for ii in np.arange(sum_rfs, img_h+sum_rfs, rf_sizes[n] + stride)
-                  if ii+rf_sizes[n] <= img_h+sum_rfs])
-        j.extend([slice(jj, jj+rf_sizes[n]) for jj in np.repeat(sum_rfs, np.ceil(img_h/(rf_sizes[n]+stride)))])
-        # set bottom side slices
-        i.extend([slice(ii-rf_sizes[n], ii) for ii in np.repeat(img_h+sum_rfs, np.ceil(img_w/(rf_sizes[n]+stride)))])
-        j.extend([slice(jj, jj+rf_sizes[n]) for jj in np.arange(sum_rfs, img_w+sum_rfs, rf_sizes[n] + stride)
-                  if jj+rf_sizes[n] <= img_w+sum_rfs])
-        # set right side slices
-        i.extend([slice(ii-rf_sizes[n], ii) for ii in np.arange(img_h+sum_rfs, sum_rfs, -rf_sizes[n] - stride)
-                  if ii-rf_sizes[n] >= sum_rfs])
-        j.extend([slice(jj-rf_sizes[n], jj) for jj in np.repeat(img_w+sum_rfs, np.ceil(img_h/(rf_sizes[n]+stride)))])
-        # set top side slices
-        i.extend([slice(ii, ii+rf_sizes[n]) for ii in np.repeat(sum_rfs, np.ceil(img_w/(rf_sizes[n]+stride)))])
-        j.extend([slice(jj-rf_sizes[n], jj) for jj in np.arange(img_w+sum_rfs, sum_rfs, -rf_sizes[n] - stride)
-                  if jj-rf_sizes[n] >= sum_rfs])
-        # append if not already in coords
-        for ii,jj in zip(i,j):
-            if len(rf_index) == 0 or (ii,jj) not in rf_index:
-                rf_index.append((ii,jj))
-    return rf_index
-
-def view_RFs(img_shape, rf_index):
-    '''View receptive fields created by make_RFs
-    parameters
-    ----------
-    img_shape : tuple, image shape used in make_RFs to create receptive fields
-    rf_index : list, list of receptive field indices created by make_RFs
-
-    returns
-    -------
-    None
-
-    Note: Values in image shown are proportional to the receptive field number in rf_index.
-    '''
-
-    # init image
-    img = np.zeros(img_shape)
-
-    # set each RF to index number
-    for i, rf in enumerate(rf_index):
-        img[rf[0],rf[1]] += (i + 1)
-
-    # show image
-    plt.imshow(img, cmap='gray', vmin=-len(rf_index), vmax=len(rf_index))
-    plt.show()
-
-def plot_RF_size_ecc(img_shape, rf_index):
-    '''Plot receptive field size as function of eccentricity
-    parameters
-    ----------
-    img_shape : tuple, image shape used in make_RFs to create receptive fields
-    rf_index : list, list of receptive field indices created by make_RFs
-
-    returns
-    -------
-    None
-    '''
-
-    # init sizes, locs
-    sizes = []
-    locs = []
-    for rf in rf_index:
-        # get size and location
-        sz = np.abs(rf[0].start - rf[0].stop)
-        l = np.abs(img_shape[0]/2 - (rf[0].start + sz/2))
-        # if already in sizes, get previous location
-        if sz in sizes:
-            prev_loc = locs[np.where(np.asarray(sizes) == sz)[0][0]]
-        else:
-            prev_loc = -1
-        # append size, location
-        if l > prev_loc:
-            sizes.append(sz)
-            locs.append(l)
-
-    # plot size vs. eccentricy
-    plt.plot(locs, sizes)
-    plt.show()
-
+#TODO: implement gaussian receptive fields in rf_pool
 def rf_pool(u, t=None, rf_index=None, pool_type='prob', block_size=(2,2)):
-    '''Receptive field pooling
-    parameters
+    """
+    Receptive field pooling
+    
+    Parameters
     ----------
-    u : tensor, bottom-up input to pooling layer
-    t : tensor, top-down input to pooling layer [default: None]
-    rf_index : list, indices for each receptive field (see make_RFs) [default: None, applies pooling over blocks]
-    pool_type : string, type of pooling ('prob' [default], 'stochastic', 'div_norm', 'average')
-    block_size : tuple, size of blocks in detection layer connected to pooling units [default: (2,2)]
+    u : torch.Tensor
+        bottom-up input to pooling layer with shape (batch_size, ch, h, w)
+    t : torch.Tensor
+        top-down input to pooling layer with shape (batch_size, ch, h//block_size[0], w//block_size[1]) 
+        [default: None]
+    rf_index : list
+        indices for each receptive field (see square_lattice_utils) [default: None, applies pooling over blocks]
+    pool_type : string
+        type of pooling ('prob' [default], 'stochastic', 'div_norm', 'average')
+    block_size : tuple
+        size of blocks in detection layer connected to pooling units [default: (2,2)]
 
-    returns
+    Returns
     -------
-    h_mean : tensor, detection layer mean-field estimates
-    h_sample : tensor, detection layer samples
-    p_mean : tensor, pooling layer mean-field estimates
-    p_sample : tensor, pooling layer samples
+    h_mean : torch.Tensor
+        detection layer mean-field estimates with shape (batch_size, ch, h, w)
+    h_sample : torch.Tensor
+        detection layer samples with shape (batch_size, ch, h, w)
+    p_mean : torch.Tensor
+        pooling layer mean-field estimates with shape (batch_size, ch, h//block_size[0], w//block_size[1])
+    p_sample : torch.Tensor
+        pooling layer samples with shape (batch_size, ch, h//block_size[0], w//block_size[1])
 
-    example
-    -------
-    u = torch.rand(1,10,18,18)
-    t = torch.rand(1,10,9,9)
-    rf_index = make_RFs((18,18), [4,3,2])
-    pool_type = 'prob'
-    block_size = (2,2)
-    h_mean, h_sample, p_mean, p_sample = rf_pool(u, t, rf_index, pool_type, block_size)
+    Examples
+    --------
+    # Performs probabilistic max-pooling across 4x4 regions tiling detection layer with top-down input
+    >>> u = torch.rand(1,10,16,16)
+    >>> t = torch.rand(1,10,8,8)
+    >>> rf_index = [(slice(0,4),slice(0,4)), 
+                    (slice(4,8),slice(0,4)), 
+                    (slice(4,8),slice(4,8)), 
+                    (slice(0,4),slice(4,8))]
+    >>> pool_type = 'prob'
+    >>> block_size = (2,2)
+    >>> h_mean, h_sample, p_mean, p_sample = rf_pool(u, t, rf_index, pool_type, block_size)
 
-    Note: pool_type 'prob' refers to probabilistic max-pooling (Lee et al., 2009),
+    Notes
+    -----
+    pool_type 'prob' refers to probabilistic max-pooling (Lee et al., 2009),
     'stochastic' refers to stochastic max-pooling (Zeiler & Fergus, 2013),
     'div_norm' performs divisive normalization with sigma=0.5 (Heeger, 1992),
     'average' divides each unit in receptive field by the total number of units in the receptive field.
-    '''
+    """
 
     # get bottom-up shape, block size
     batch_size, ch, u_h, u_w = u.shape
     b_h, b_w = block_size
 
     # set sigma_sqr for div_norm
-    sigma_sqr = torch.as_tensor(np.square(0.5), dtype=u.dtype)
+    if pool_type == 'div_norm':
+        sigma_sqr = torch.as_tensor(np.square(0.5), dtype=u.dtype)
 
     # get top-down
     if t is None:
         t = torch.zeros((batch_size, ch, u_h//b_h, u_w//b_w), dtype=u.dtype)
-
+    
+    # check bottom-up, top-down shapes
+    assert u.shape[:2] == t.shape[:2]
+    assert u_h//b_h == t.shape[-2]
+    assert u_w//b_w == t.shape[-1]
+    
     # add bottom-up and top-down
     b = []
     for r in range(b_h):
