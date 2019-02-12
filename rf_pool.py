@@ -7,7 +7,7 @@ def prob_max_pool(rf_u, out_shape):
     Probabilistic max-pooling along last dim
     #TODO:WRITEME
     """
-    
+
     # get probabilities for each unit being on or all off, sample
     off_pt = torch.zeros(rf_u.shape[:-1] + (1,), dtype=rf_u.dtype)
     events = torch.cat([rf_u, off_pt], -1)
@@ -25,7 +25,7 @@ def stochastic_max_pool(rf_u, out_shape):
     Stochastic max-pooling along last dim
     #TODO:WRITEME
     """
-    
+
     # get probabilities for each unit being on
     probs = torch.softmax(rf_u, -1)
     h_mean = torch.reshape(rf_u, out_shape)
@@ -37,20 +37,20 @@ def div_norm_pool(rf_u, out_shape, sigma_sqr=0.25):
     Divisive normalization along last dim
     #TODO:WRITEME
     """
-    
+
     # o = u**2/(sigma**2 + sum(u**2))
     rf_u_sqr = torch.pow(rf_u, 2.)
     probs = torch.div(rf_u_sqr, sigma_sqr + torch.sum(rf_u_sqr, dim=-1, keepdim=True))
     h_mean = torch.reshape(probs, out_shape)
     h_sample = torch.reshape(Binomial(probs=probs).sample(), out_shape)
     return h_mean, h_sample
-    
+
 def average_pool(rf_u, out_shape):
     """
     Average pooling along last dim
     #TODO:WRITEME
     """
-    
+
     # divide activity by number of units
     probs = torch.div(rf_u, rf_u.shape[-1])
     samples = Binomial(probs=torch.sigmoid(probs)).sample()
@@ -64,25 +64,24 @@ def sum_pool(rf_u, out_shape):
     Sum pooling along last dim
     #TODO:WRITEME
     """
-    
+
     # set h_mean to rf_u, h_sample to sum
     h_mean = torch.reshape(rf_u, out_shape)
     h_sample = torch.zeros_like(rf_u)
     h_sample.add_(torch.sum(rf_u, dim=-1, keepdim=True))
     h_sample = torch.reshape(h_sample, out_shape)
     return h_mean, h_sample
-    
-def rf_pool(u, t=None, rf_index=None, rf_kernels=None, pool_type='prob',
-            block_size=(2,2), sigma_sqr=None, mu=None):
+
+def pool(u, t=None, rf_index=None, rf_kernels=None, pool_type='prob', block_size=(2,2), mu=None):
     """
     Receptive field pooling
-    
+
     Parameters
     ----------
     u : torch.Tensor
         bottom-up input to pooling layer with shape (batch_size, ch, h, w)
     t : torch.Tensor
-        top-down input to pooling layer with shape (batch_size, ch, h//block_size[0], w//block_size[1]) 
+        top-down input to pooling layer with shape (batch_size, ch, h//block_size[0], w//block_size[1])
         [default: None]
     rf_index : list
         indices for each receptive field (see square_lattice_utils) [default: None, applies pooling over blocks]
@@ -92,10 +91,8 @@ def rf_pool(u, t=None, rf_index=None, rf_kernels=None, pool_type='prob',
         type of pooling ('prob' [default], 'stochastic', 'div_norm', 'average', 'sum')
     block_size : tuple
         size of blocks in detection layer connected to pooling units [default: (2,2)]
-    sigma_sqr : float
-        sigma squared constant for divisive normalization (see div_norm_pool) [default: None]
     mu : torch.Tensor
-        xy-coordinates of receptive field centers with shape (2, n_kernels) for use pool_type 'sum'
+        xy-coordinates of receptive field centers with shape (2, n_kernels) for use with pool_type='sum'
         [default: None]
 
     Returns
@@ -114,13 +111,13 @@ def rf_pool(u, t=None, rf_index=None, rf_kernels=None, pool_type='prob',
     # Performs probabilistic max-pooling across 4x4 regions tiling detection layer with top-down input
     >>> u = torch.rand(1,10,8,8)
     >>> t = torch.rand(1,10,4,4)
-    >>> rf_index = [(slice(0,4),slice(0,4)), 
-                    (slice(4,8),slice(0,4)), 
-                    (slice(4,8),slice(4,8)), 
+    >>> rf_index = [(slice(0,4),slice(0,4)),
+                    (slice(4,8),slice(0,4)),
+                    (slice(4,8),slice(4,8)),
                     (slice(0,4),slice(4,8))]
     >>> pool_type = 'prob'
     >>> block_size = (2,2)
-    >>> h_mean, h_sample, p_mean, p_sample = rf_pool(u, t, rf_index, None, pool_type, block_size)
+    >>> h_mean, h_sample, p_mean, p_sample = pool(u, t, rf_index, None, pool_type, block_size)
 
     Notes
     -----
@@ -138,12 +135,12 @@ def rf_pool(u, t=None, rf_index=None, rf_kernels=None, pool_type='prob',
     # get top-down
     if t is None:
         t = torch.zeros((batch_size, ch, u_h//b_h, u_w//b_w), dtype=u.dtype)
-    
+
     # check bottom-up, top-down shapes
     assert u.shape[:2] == t.shape[:2]
     assert u_h//b_h == t.shape[-2]
     assert u_w//b_w == t.shape[-1]
-    
+
     # add bottom-up and top-down
     b = []
     for r in range(b_h):
@@ -151,7 +148,7 @@ def rf_pool(u, t=None, rf_index=None, rf_kernels=None, pool_type='prob',
             u[:, :, r::b_h, c::b_w].add_(t)
             b.append(u[:, :, r::b_h, c::b_w].unsqueeze(-1))
     b = torch.cat(b, -1)
-    
+
     # set pool_fn
     if pool_type == 'prob':
         pool_fn = prob_max_pool
