@@ -2,6 +2,12 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
+def generalized_sigmoid(x, v=1., q=1., b=1.):
+    return 1./torch.pow(1. + q * np.exp(-b * x), 1./v)
+
+def exp_kernel_2d(mu, sigma, xy):
+    return torch.exp(-torch.sum((xy - mu)**2., dim=2)/ (2*sigma**2))
+
 def gaussian_kernel_2d(mu, sigma, xy):
     return (1./(2.*np.pi*sigma**2)) * torch.exp(-torch.sum((xy - mu)**2., dim=2)/ (2*sigma**2))
 
@@ -69,7 +75,7 @@ def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1.):
     Returns
     -------
     mu : torch.Tensor
-        kernel centers with shape (2, n_kernels)
+        kernel x-y coordinate centers with shape (2, n_kernels) and dtype torch.int32
     sigma : torch.Tensor
         kernel standard deviations with shape (1, n_kernels)
 
@@ -82,6 +88,10 @@ def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1.):
     >>> spacing = 0.15
     >>> min_ecc = 1.
     >>> mu, sigma = init_foveated_lattic(img_shape, scale, spacing, min_ecc)
+    
+    Notes
+    -----
+    sigma will always be >= 1. (pixel space)
 
     References
     ----------
@@ -130,7 +140,12 @@ def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1.):
         sigma.append(torch.mul(ecc, base_sigma).repeat(mu[-1].shape[1]))
         ecc *= eFactor
         cnt += 1
-    return torch.cat(mu, 1), torch.cat(sigma, 0).unsqueeze(0)
+    # set mu, sigma
+    mu = torch.as_tensor(torch.cat(mu, 1), dtype=torch.int32)
+    sigma = torch.cat(sigma, 0).unsqueeze(0)
+    # add img_shape//2 to mu, set sigma to max(sigma, 1.)
+    half_img_shape = torch.as_tensor(img_shape, dtype=torch.int32).unsqueeze(1)/2
+    return torch.add(mu, half_img_shape), torch.max(sigma, torch.ones_like(sigma))
 
 def init_uniform_lattice(center, size, spacing, sigma_init):
     """
@@ -151,7 +166,7 @@ def init_uniform_lattice(center, size, spacing, sigma_init):
     Returns
     -------
     mu : torch.Tensor
-        kernel centers with shape (2, n_kernels)
+        kernel x-y coordinate centers with shape (2, n_kernels)
     sigma : torch.Tensor
         kernel standard deviations with shape (1, n_kernels)
         
@@ -162,7 +177,7 @@ def init_uniform_lattice(center, size, spacing, sigma_init):
     >>> kernel_size = 200
     >>> center = [kernel_size/2.]*2
     >>> size = 8
-    >>> spacing = 12.
+    >>> spacing = 12
     >>> sigma_init = 3.
     >>> mu, sigma = init_uniform_lattice(center, size, spacing, sigma_init)
     """
@@ -181,7 +196,7 @@ def init_uniform_lattice(center, size, spacing, sigma_init):
     # mu and sigma
     mu = torch.stack([x,y], dim=-1)
     mu = mu.view(-1, 2).t()
-    sigma = torch.ones([1, mu.shape[-1]]) * sigma_init
+    sigma = torch.ones([1, mu.shape[-1]], dtype=torch.int32) * sigma_init
 
     return mu, sigma
 
