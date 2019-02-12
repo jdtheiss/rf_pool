@@ -1,3 +1,4 @@
+import warnings
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,6 +11,51 @@ def exp_kernel_2d(mu, sigma, xy):
 
 def gaussian_kernel_2d(mu, sigma, xy):
     return (1./(2.*np.pi*sigma**2)) * torch.exp(-torch.sum((xy - mu)**2., dim=2)/ (2*sigma**2))
+
+def exp_kernel_lattice(mu, sigma, kernel_size):
+    """
+    Outputs a tensor of exponential kernels of shape (kernel_size, kernel_size, n_kernels) with max value = 1
+
+    Parameters
+    ----------
+    mu : torch.Tensor 
+        kernel centers with shape (2, n_kernels)
+    sigma : torch.Tensor 
+        kernel standard deviations with shape (1, n_kernels)
+    kernel_size : int
+        size of input feature map
+
+    Returns
+    -------
+    exp_kernels : torch.Tensor 
+        output kernels with shape (batch_size, kernel_size, kernel_size, n_kernels)
+
+    Examples
+    --------
+    # Create tensor of 10 kernels with random centers and standard deviations of 1.
+    >>> mu = torch.rand(2, 10)
+    >>> sigma = torch.ones(1, 10)
+    >>> kernel_size = 200
+    >>> mu = mu * kernel_size
+    >>> exp_kernels = exp_kernel_lattice(mu, sigma, kernel_size)
+    """
+    
+    assert mu.shape[-1] == sigma.shape[-1]
+    num_kernels = mu.shape[-1]
+
+    mu = mu.view([1,1,2,num_kernels]).float()
+    sigma = sigma.view([1,1,1,num_kernels]).float()
+
+    # create the input to the gaussian
+    x_coord = torch.arange(kernel_size)
+    x = x_coord.repeat(kernel_size).view(kernel_size, kernel_size)
+    y = x.t()
+    xy = torch.stack([x,y], dim=-1)
+    xy = torch.stack([xy]*mu.shape[-1], dim=-1).float()
+
+    exp_kernels = exp_kernel_2d(mu, sigma, xy)
+
+    return torch.squeeze(exp_kernels)
 
 def gaussian_kernel_lattice(mu, sigma, kernel_size):
     """
@@ -166,7 +212,7 @@ def init_uniform_lattice(center, size, spacing, sigma_init):
     Returns
     -------
     mu : torch.Tensor
-        kernel x-y coordinate centers with shape (2, n_kernels)
+        kernel x-y coordinate centers with shape (2, n_kernels) and dtype torch.int32
     sigma : torch.Tensor
         kernel standard deviations with shape (1, n_kernels)
         
@@ -182,6 +228,8 @@ def init_uniform_lattice(center, size, spacing, sigma_init):
     >>> mu, sigma = init_uniform_lattice(center, size, spacing, sigma_init)
     """
     
+    if sigma_init < 1.:
+        warnings.warn('sigma < 1 will result in sum(pdf) > 1.')
     cx, cy = center
     if size % 2 == 0:
         cx += np.floor(spacing/2)
