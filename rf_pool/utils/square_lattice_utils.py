@@ -5,15 +5,15 @@ function.
 Examples
 --------
 # create square receptive fields of different sizes tiling detection layer
-img_shape = (18,18)
-rf_sizes = [4,3,2]
-rfs = square_kernel_lattice(img_shape, rf_sizes, stride=0)
+>>> img_shape = (18,18)
+>>> rf_sizes = [4,3,2]
+>>> rfs = square_kernel_lattice(img_shape, rf_sizes, stride=0)
 
 # show lattice
-show_kernel_lattice(img_shape, rfs)
+>>> show_kernel_lattice(img_shape, rfs)
 
 # plot size vs. eccentricity for receptive fields in lattice
-plot_size_ecc(img_shape, rfs)
+>>> plot_size_ecc(img_shape, rfs)
 """
 
 import warnings

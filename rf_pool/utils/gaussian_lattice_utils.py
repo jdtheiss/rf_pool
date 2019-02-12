@@ -23,7 +23,7 @@ Examples
 >>> scale = 0.25
 >>> spacing = 0.15
 >>> min_ecc = 1.
->>> mu, sigma = init_foveated_lattic(img_shape, scale, spacing, min_ecc)
+>>> mu, sigma = init_foveated_lattice(img_shape, scale, spacing, min_ecc)
 
 # create exponential kernels from mu, sigma
 >>> rfs = exp_kernel_lattice(mu, sigma, img_shape[0])
