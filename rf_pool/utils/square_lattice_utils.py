@@ -1,3 +1,21 @@
+"""
+Utilities for creating square receptive field indices for use with rf.pool 
+function.
+
+Examples
+--------
+# create square receptive fields of different sizes tiling detection layer
+img_shape = (18,18)
+rf_sizes = [4,3,2]
+rfs = square_kernel_lattice(img_shape, rf_sizes, stride=0)
+
+# show lattice
+show_kernel_lattice(img_shape, rfs)
+
+# plot size vs. eccentricity for receptive fields in lattice
+plot_size_ecc(img_shape, rfs)
+"""
+
 import warnings
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,25 +32,28 @@ def square_kernel_lattice(img_shape, rf_sizes, stride=0):
     rf_sizes : list
         receptive field sizes to tile detection layer (see example)
     stride : int
-        spacing (if positive) or overlap (if negative) between receptive fields [default: 0]
+        spacing (if positive) or overlap (if negative) between receptive 
+        fields [default: 0]
 
     Returns
     -------
-    rf_index : list of tuples
-        slice indices for each receptive field (i.e. [(slice(start, end), slice(start, end))])
+    rfs : list of tuples
+        slice indices for each receptive field 
+        (i.e. [(slice(start, end), slice(start, end))])
 
     Examples
     --------
-    # creates indices for 32 receptive fields of size 4x4, 3x3, 2x2 tiling image from outer-most
-    # indices to inner-most indices
+    # creates indices for 32 receptive fields of size 4x4, 3x3, 2x2 tiling 
+    # image from outer-most indices to inner-most indices
     >>> img_shape = (18,18)
     >>> rf_sizes = [4,3,2]
-    >>> rf_index = make_RFs(img_shape, rf_sizes, stride=0)
+    >>> rfs = make_RFs(img_shape, rf_sizes, stride=0)
 
     Notes
     -----
-    If receptive field sizes do not fully cover image, rf_sizes[-1] will be appended to rf_sizes until
-    the image can be completely covered (unless (rf_sizes[-1] + stride) <= 0).
+    If receptive field sizes do not fully cover image, rf_sizes[-1] will be 
+    appended to rf_sizes until the image can be completely covered 
+    (unless (rf_sizes[-1] + stride) <= 0).
     """
 
     # ensure rf_sizes given
@@ -51,7 +72,7 @@ def square_kernel_lattice(img_shape, rf_sizes, stride=0):
             break
 
     # for each RF size, get slice indices
-    rf_index = []
+    rfs = []
     for n in range(len(rf_sizes)):
         # get sum of previous rf sizes
         sum_rfs = np.sum(rf_sizes[:n], dtype='uint8') + stride*n
@@ -85,11 +106,11 @@ def square_kernel_lattice(img_shape, rf_sizes, stride=0):
                   if jj-rf_sizes[n] >= sum_rfs])
         # append if not already in coords
         for ii,jj in zip(i,j):
-            if len(rf_index) == 0 or (ii,jj) not in rf_index:
-                rf_index.append((ii,jj))
-    return rf_index
+            if len(rfs) == 0 or (ii,jj) not in rfs:
+                rfs.append((ii,jj))
+    return rfs
 
-def plot_size_ecc(img_shape, rf_index):
+def plot_size_ecc(img_shape, rfs):
     """
     Plot receptive field size as function of eccentricity
     
@@ -97,8 +118,9 @@ def plot_size_ecc(img_shape, rf_index):
     ----------
     img_shape : tuple
         image shape to plot receptive fields
-    rf_index : list of tuples
-        list of receptive field slice indices [(slice(start, end), slice(start, end))]
+    rfs : list of tuples
+        list of receptive field slice indices 
+        [(slice(start, end), slice(start, end))]
 
     Returns
     -------
@@ -108,7 +130,7 @@ def plot_size_ecc(img_shape, rf_index):
     # init sizes, locs
     sizes = []
     locs = []
-    for rf in rf_index:
+    for rf in rfs:
         # get size and location
         sz = np.abs(rf[0].start - rf[0].stop)
         l = np.abs(img_shape[0]/2 - (rf[0].start + sz/2))
@@ -126,16 +148,16 @@ def plot_size_ecc(img_shape, rf_index):
     plt.plot(locs, sizes)
     plt.show()
     
-def show_kernel_lattice(img_shape, rf_index):
+def show_kernel_lattice(img_shape, rfs):
     # init image
     img = np.zeros(img_shape)
 
     # set each RF to index number
-    for i, rf in enumerate(rf_index):
+    for i, rf in enumerate(rfs):
         img[rf[0],rf[1]] += (i + 1)
 
     # show image
-    plt.imshow(img, cmap='gray', vmin=-len(rf_index), vmax=len(rf_index))
+    plt.imshow(img, cmap='gray', vmin=-len(rfs), vmax=len(rfs))
     plt.show()
 
 if __name__ == '__main__':

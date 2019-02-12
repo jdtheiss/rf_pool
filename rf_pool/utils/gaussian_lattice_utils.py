@@ -1,3 +1,37 @@
+"""
+Utilities for creating gaussian (and exponential) receptive field lattice
+for use with rf.pool function.
+
+Examples
+--------
+# initiate uniform lattice
+>>> kernel_size = 200
+>>> center = [kernel_size/2.]*2
+>>> size = 8
+>>> spacing = 12
+>>> sigma_init = 3.
+>>> mu, sigma = init_uniform_lattice(center, size, spacing, sigma_init)
+
+# create gaussian kernels from mu, sigma
+>>> rfs = gaussian_kernel_lattice(mu, sigma, kernel_size)
+
+# show kernels
+>>> show_kernel_lattice(rfs)
+
+# initiate foveated lattice
+>>> img_shape = (80,80)
+>>> scale = 0.25
+>>> spacing = 0.15
+>>> min_ecc = 1.
+>>> mu, sigma = init_foveated_lattic(img_shape, scale, spacing, min_ecc)
+
+# create exponential kernels from mu, sigma
+>>> rfs = exp_kernel_lattice(mu, sigma, img_shape[0])
+
+# show kernels
+>>> show_kernel_lattice(rfs)
+"""
+
 import warnings
 import torch
 import numpy as np
@@ -14,7 +48,8 @@ def gaussian_kernel_2d(mu, sigma, xy):
 
 def exp_kernel_lattice(mu, sigma, kernel_size):
     """
-    Outputs a tensor of exponential kernels of shape (kernel_size, kernel_size, n_kernels) with max value = 1
+    Outputs a tensor of exponential kernels of shape 
+    (kernel_size, kernel_size, n_kernels) with max value = 1
 
     Parameters
     ----------
@@ -27,17 +62,18 @@ def exp_kernel_lattice(mu, sigma, kernel_size):
 
     Returns
     -------
-    exp_kernels : torch.Tensor 
-        output kernels with shape (batch_size, kernel_size, kernel_size, n_kernels)
+    rfs : torch.Tensor 
+        output kernels with shape 
+        (batch_size, kernel_size, kernel_size, n_kernels)
 
     Examples
     --------
-    # Create tensor of 10 kernels with random centers and standard deviations of 1.
+    # Create tensor of 10 kernels with random centers and sigma=1.
     >>> mu = torch.rand(2, 10)
     >>> sigma = torch.ones(1, 10)
     >>> kernel_size = 200
     >>> mu = mu * kernel_size
-    >>> exp_kernels = exp_kernel_lattice(mu, sigma, kernel_size)
+    >>> rfs = exp_kernel_lattice(mu, sigma, kernel_size)
     """
     
     assert mu.shape[-1] == sigma.shape[-1]
@@ -59,7 +95,8 @@ def exp_kernel_lattice(mu, sigma, kernel_size):
 
 def gaussian_kernel_lattice(mu, sigma, kernel_size):
     """
-    Outputs a tensor of gaussian kernels of shape (kernel_size, kernel_size, n_kernels)
+    Outputs a tensor of gaussian kernels of shape 
+    (kernel_size, kernel_size, n_kernels)
 
     Parameters
     ----------
@@ -72,17 +109,18 @@ def gaussian_kernel_lattice(mu, sigma, kernel_size):
 
     Returns
     -------
-    gk_kernels : torch.Tensor 
-        output kernels with shape (batch_size, kernel_size, kernel_size, n_kernels)
+    rfs : torch.Tensor 
+        output kernels with shape 
+        (batch_size, kernel_size, kernel_size, n_kernels)
 
     Examples
     --------
-    # Create tensor of 10 kernels with random centers and standard deviations of 1.
+    # Create tensor of 10 kernels with random centers and sigma=1.
     >>> mu = torch.rand(2, 10)
     >>> sigma = torch.ones(1, 10)
     >>> kernel_size = 200
     >>> mu = mu * kernel_size
-    >>> gk_kernels = gaussian_kernel_lattice(mu, sigma, kernel_size)
+    >>> rfs = gaussian_kernel_lattice(mu, sigma, kernel_size)
     """
     
     assert mu.shape[-1] == sigma.shape[-1]
@@ -121,14 +159,14 @@ def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1.):
     Returns
     -------
     mu : torch.Tensor
-        kernel x-y coordinate centers with shape (2, n_kernels) and dtype torch.int32
+        kernel x-y coordinate centers with shape (2, n_kernels) and dtype 
+        torch.int32
     sigma : torch.Tensor
         kernel standard deviations with shape (1, n_kernels)
 
     Examples
     --------
     # creates "V3" lattice
-
     >>> img_shape = (80,80)
     >>> scale = 0.25
     >>> spacing = 0.15
@@ -212,14 +250,15 @@ def init_uniform_lattice(center, size, spacing, sigma_init):
     Returns
     -------
     mu : torch.Tensor
-        kernel x-y coordinate centers with shape (2, n_kernels) and dtype torch.int32
+        kernel x-y coordinate centers with shape (2, n_kernels) and dtype 
+        torch.int32
     sigma : torch.Tensor
         kernel standard deviations with shape (1, n_kernels)
         
     Examples
     --------
-    # Generate lattice of size 8x8 with 12 pixel spacing centered on a 200x200 image
-    
+    # Generate lattice of size 8x8 with 12 pixel spacing centered on a 
+    # 200x200 image
     >>> kernel_size = 200
     >>> center = [kernel_size/2.]*2
     >>> size = 8
@@ -248,10 +287,11 @@ def init_uniform_lattice(center, size, spacing, sigma_init):
 
     return mu, sigma
 
-def show_kernel_lattice(kerns):
+def show_kernel_lattice(rfs):
     # normalize each kernel to max 1, then max across kernels to show
-    norm_kerns = torch.div(kerns, torch.as_tensor(np.max(kerns.numpy(), axis=(0,1)), dtype=kerns.dtype) + 1e-6)
-    out = torch.max(norm_kerns, dim=-1)[0]
+    max_rfs = torch.as_tensor(np.max(rfs.numpy(), axis=(0,1)), dtype=rfs.dtype)
+    norm_rfs = torch.div(rfs, max_rfs + 1e-6)
+    out = torch.max(norm_rfs, dim=-1)[0]
     plt.imshow(out.numpy())
     plt.show()
 
