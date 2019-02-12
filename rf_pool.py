@@ -1,4 +1,3 @@
-import warnings
 import numpy as np
 import torch
 from torch.distributions import Multinomial, Binomial
@@ -58,8 +57,23 @@ def average_pool(rf_u, out_shape):
     h_mean = torch.reshape(probs, out_shape)
     h_sample = torch.reshape(samples, out_shape)
     return h_mean, h_sample
+
+#TODO: not sure where to put sample
+def sum_pool(rf_u, out_shape):
+    """
+    Sum pooling along last dim
+    #TODO:WRITEME
+    """
     
-def rf_pool(u, t=None, rf_index=None, rf_kernels=None, pool_type='prob', block_size=(2,2)):
+    # set h_mean to rf_u, h_sample to sum
+    h_mean = torch.reshape(rf_u, out_shape)
+    h_sample = torch.zeros_like(rf_u)
+    h_sample.add_(torch.sum(rf_u, dim=-1, keepdim=True))
+    h_sample = torch.reshape(h_sample, out_shape)
+    return h_mean, h_sample
+    
+def rf_pool(u, t=None, rf_index=None, rf_kernels=None, pool_type='prob',
+            block_size=(2,2), sigma_sqr=None, mu=None):
     """
     Receptive field pooling
     
@@ -75,9 +89,14 @@ def rf_pool(u, t=None, rf_index=None, rf_kernels=None, pool_type='prob', block_s
     rf_kernels : torch.Tensor
         kernels for each receptive field with shape (h, w, n_kernels)
     pool_type : string
-        type of pooling ('prob' [default], 'stochastic', 'div_norm', 'average')
+        type of pooling ('prob' [default], 'stochastic', 'div_norm', 'average', 'sum')
     block_size : tuple
         size of blocks in detection layer connected to pooling units [default: (2,2)]
+    sigma_sqr : float
+        sigma squared constant for divisive normalization (see div_norm_pool) [default: None]
+    mu : torch.Tensor
+        xy-coordinates of receptive field centers with shape (2, n_kernels) for use pool_type 'sum'
+        [default: None]
 
     Returns
     -------
@@ -108,7 +127,8 @@ def rf_pool(u, t=None, rf_index=None, rf_kernels=None, pool_type='prob', block_s
     pool_type 'prob' refers to probabilistic max-pooling (Lee et al., 2009),
     'stochastic' refers to stochastic max-pooling (Zeiler & Fergus, 2013),
     'div_norm' performs divisive normalization with sigma=0.5 (Heeger, 1992),
-    'average' divides units in receptive field by number of units in the receptive field.
+    'average' divides units in receptive field by number of units in the receptive field,
+    'sum' returns sum over units in receptive field (especially for Gaussian rf_kernels).
     """
 
     # get bottom-up shape, block size
@@ -141,6 +161,8 @@ def rf_pool(u, t=None, rf_index=None, rf_kernels=None, pool_type='prob', block_s
         pool_fn = div_norm_pool
     elif pool_type == 'average':
         pool_fn = average_pool
+    elif pool_type == 'sum':
+        pool_fn = sum_pool
     else:
         raise Exception('pool_type not understood')
 
@@ -148,18 +170,22 @@ def rf_pool(u, t=None, rf_index=None, rf_kernels=None, pool_type='prob', block_s
     h_mean = torch.zeros_like(u)
     h_sample = torch.zeros_like(u)
     if rf_kernels is not None:
-        #TODO: would be more efficient if rf_kernels were shape (n_kernels, h, w)
+        #TODO: could be more efficient if rf_kernels were shape (n_kernels, h, w)
         # pointwise multiply u with rf_kernels
         rf_kernels = rf_kernels.permute(2,0,1).reshape(-1, 1, 1, u_h, u_w)
         g_u = torch.mul(u.unsqueeze(0), rf_kernels)
         # get rf_index as thresholded rf_kernels
         #TODO: determine reasonable threshold
-        thr = 0. 
+        thr = 1e-5
         rf_index = torch.gt(rf_kernels, thr)
         rf_index = rf_index.repeat(1, batch_size, ch, 1, 1)
         for i, rf in enumerate(rf_index):
             rf_u = g_u[i][rf]
-            h_mean[rf], h_sample[rf] = pool_fn(rf_u.reshape(batch_size, ch, -1), rf_u.shape)
+            if mu is not None and pool_type == 'sum':
+                h_mean[rf], samples = pool_fn(rf_u.reshape(batch_size, ch, -1), rf_u.shape)
+                h_sample[:,:,mu[0,i],mu[1,i]] = torch.flatten(samples.reshape(batch_size, ch, -1)[:,:,0])
+            else:
+                h_mean[rf], h_sample[rf] = pool_fn(rf_u.reshape(batch_size, ch, -1), rf_u.shape)
     elif rf_index is not None:
         # use rf_index
         for rf in rf_index:
