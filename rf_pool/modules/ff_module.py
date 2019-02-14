@@ -165,13 +165,16 @@ class FeedForwardModule(nn.Module):
             else:
                 self.dropout_choices[str(layer_id)] = None
 
-    def apply_forward_pass(self, func, x):
+    def apply_forward_pass(self, func, x, delta_mu=None, delta_sigma=None):
         if func:
-            return func(x)
+            if delta_mu and delta_sigma:
+                func(x, delta_mu, delta_sigma)
+            else:
+                return func(x)
         else:
             return x
 
-    def forward(self, x):
+    def forward(self, x, delta_mu=None, delta_sigma=None):
         # forward pass of network
         for layer_id in range(self.num_layers):
             # flatten layer input if switching from 'conv' to 'fc'
@@ -180,7 +183,7 @@ class FeedForwardModule(nn.Module):
             layer_id = str(layer_id)
             x = self.apply_forward_pass(self.layer_choices[layer_id], x)
             x = self.apply_forward_pass(self.act_choices[layer_id], x)
-            x = self.apply_forward_pass(self.pool_choices[layer_id], x)
+            x = self.apply_forward_pass(self.pool_choices[layer_id], x, delta_mu, delta_sigma)
             x = self.apply_forward_pass(self.dropout_choices[layer_id], x)
 
         return x
