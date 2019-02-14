@@ -301,10 +301,12 @@ def pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[]):
     --------
     # Performs probabilistic max-pooling across 4x4 regions tiling hidden 
     # layer with top-down input
+    >>> from utils import lattice
     >>> u = torch.rand(1,10,8,8)
     >>> t = torch.rand(1,10,4,4)
-    >>> kernels = #TODO:WRITEME
-    >>> h_mean, h_sample, p_mean, p_sample = pool(u, t, kernels, 'prob', (2,2))
+    >>> mu, sigma = lattice.init_uniform_lattice((4,4), 2, 3, 2.)
+    >>> kernels = lattice.gaussian_kernel_lattice(mu, sigma, (8,8))
+    >>> h_mean, h_sample, p_mean, p_sample = rf.pool(u, t, kernels, 'sum', (2,2))
 
     Notes
     -----
@@ -316,7 +318,11 @@ def pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[]):
     
     When block_size != (1,1), p_mean and p_sample result from a max operation
     across (n,n) blocks according to either probabilistic max-pooling or 
-    stochastic max-pooling. #TODO:WRITEME
+    stochastic max-pooling.
+    
+    See Also
+    --------
+    layers.RF_Pool : layer implementation of rf.pool function
     """
 
     # get bottom-up shape, block size
@@ -364,7 +370,6 @@ def pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[]):
     p_mean = torch.zeros_like(u_t)
     p_sample = torch.zeros_like(u_t)
     if type(rfs) is torch.Tensor:
-        #TODO: could be more efficient if rf_kernels were shape (n_kernels, h, w)
         # elemwise multiply u with rf_kernels
         rf_kernels = rfs.reshape(-1, 1, 1, u_h, u_w)
         g_u = torch.mul(u_t.unsqueeze(0), rf_kernels)
