@@ -1,15 +1,14 @@
 import torch
-import torch.nn as nn 
-import numpy as np 
-
+import torch.nn as nn
+import numpy as np
 
 class FeedForwardModule(nn.Module):
     def __init__(self, data_shape,
-        layer_types, output_channels, patch_sizes, conv_strides, dropout, 
+        layer_types, output_channels, patch_sizes, conv_strides, dropout,
         pool_types, pool_ksizes):
 
         """
-        Module for doing Feed Forward Convolutional or Fully-Connected (or combo) Neural networks with 
+        Module for doing Feed Forward Convolutional or Fully-Connected (or combo) Neural networks with
         custom pooling layers.
 
         Paramters
@@ -87,7 +86,7 @@ class FeedForwardModule(nn.Module):
         self.dropout = dropout
 
         list_attr_names = ["output_channels", "patch_sizes", "conv_strides", "dropout", "pool_types", "pool_ksizes"]
-        for name in list_attr_names: 
+        for name in list_attr_names:
             assert len(getattr(self, name)) == self.num_layers, (
                 name + " must a be a list of size "+ str(self.num_layers))
 
@@ -117,9 +116,9 @@ class FeedForwardModule(nn.Module):
 
     def make_layers(self):
         """
-        Flow style: --> layer operation: {'fc', 'conv'} 
-        --> activation func: {'ReLU', 'Identity (last)'} 
-        --> pooling: {'max_pool', TODO:others } 
+        Flow style: --> layer operation: {'fc', 'conv'}
+        --> activation func: {'ReLU', 'Identity (last)'}
+        --> pooling: {'max_pool', TODO:others }
         --> dropout
         """
         self.layer_choices = nn.ModuleDict({})
@@ -148,7 +147,7 @@ class FeedForwardModule(nn.Module):
                     "conv layers cannot follow fc layers")
                     in_channels = self.output_channels[layer_id-1]
 
-                self.layer_choices[str(layer_id)] = nn.Conv2d(in_channels, self.output_channels[layer_id], 
+                self.layer_choices[str(layer_id)] = nn.Conv2d(in_channels, self.output_channels[layer_id],
                     self.patch_sizes[layer_id], self.conv_strides[layer_id])
 
             # activation types
@@ -160,9 +159,9 @@ class FeedForwardModule(nn.Module):
             # pooling types
             self.pool_choices[str(layer_id)] = self.pool_layer(layer_id)
 
-            # dropout 
+            # dropout
             if self.dropout[layer_id]:
-                self.dropout_choices[str(layer_id)] = nn.Dropout(self.dropout[layer_id]) 
+                self.dropout_choices[str(layer_id)] = nn.Dropout(self.dropout[layer_id])
             else:
                 self.dropout_choices[str(layer_id)] = None
 
@@ -171,9 +170,9 @@ class FeedForwardModule(nn.Module):
             return func(x)
         else:
             return x
-        
+
     def forward(self, x):
-        # forward pass of network 
+        # forward pass of network
         for layer_id in range(self.num_layers):
             # flatten layer input if switching from 'conv' to 'fc'
             if self.layer_types[layer_id] != self.layer_types[layer_id - 1] and layer_id != 0:
