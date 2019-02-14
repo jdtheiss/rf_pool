@@ -258,7 +258,7 @@ def sum_pool(rf_u, out_shape):
     p_sample = h_sample.clone()
     return h_mean, h_sample, p_mean, p_sample
 
-def pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), mu=None, pool_args=[]):
+def pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[]):
     """
     Receptive field pooling
 
@@ -270,6 +270,7 @@ def pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), mu=None, pool_
         top-down input to pooling layer with shape 
         (batch_size, ch, h//block_size[0], w//block_size[1]) [default: None]
     rfs : list or torch.Tensor
+        receptive fields to apply pooling over
         if type is list, index for receptive fields (see square_lattice_utils) 
         if type is torch.Tensor, kernels for receptive fields with shape 
         (h, w, n_kernels) (see gaussian_lattice_utils) 
@@ -280,9 +281,6 @@ def pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), mu=None, pool_
     block_size : tuple
         size of blocks in hidden layer connected to pooling units 
         [default: (2,2)]
-    mu : torch.Tensor
-        xy-coordinates of receptive field centers with shape (2, n_kernels) 
-        for use with pool_type='sum' [default: None]
     pool_args : list
         extra arguments sent to pooling function indicated by pool_type
         (especially for div_norm_pool) [default: []]
