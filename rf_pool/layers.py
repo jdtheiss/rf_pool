@@ -22,6 +22,9 @@ class RF_Pool(torch.nn.Module):
     pool_args : list
         extra arguments sent to pooling function indicated by pool_type
         (especially for div_norm_pool) [default: []]
+    lattice_fn : utils.lattice function
+        function used to update rfs kernels given delta_mu and delta_sigma
+        [default: lattice.gaussian_kernel_lattice]
         
     Methods
     -------
@@ -34,7 +37,7 @@ class RF_Pool(torch.nn.Module):
         creating a new rfs attribute using lattice_fn.
     """
     def __init__(self, rfs=None, pool_type='prob', block_size=(2, 2), pool_args=[],
-                 mu=None, sigma=None, img_shape=None):
+                 mu=None, sigma=None, img_shape=None, lattice_fn=lattice.gaussian_kernel_lattice):
         super(RF_Pool, self).__init__()
         self.rfs = rfs
         self.pool_type = pool_type
@@ -46,30 +49,34 @@ class RF_Pool(torch.nn.Module):
             self.img_shape = self.rfs.shape[1:]
         else:
             self.img_shape = img_shape
+        self.lattice_fn = lattice_fn
     
-    def __call__(self, u):
+    def __call__(self, u, delta_mu=None, delta_sigma=None):
         self.img_shape = u.shape[-2:]
+        if delta_mu is not None and delta_sigma is not None:
+            self.rfs = self.update_rfs(delta_mu, delta_sigma)
         return rf.pool(u, rfs=self.rfs, pool_type=self.pool_type, 
                        block_size=self.block_size, pool_args=self.pool_args)[2]
     
-    def apply(self, u, t=None):
+    def apply(self, u, t=None, delta_mu=None, delta_sigma=None):
         self.img_shape = u.shape[-2:]
+        if delta_mu is not None and delta_sigma is not None:
+            self.rfs = self.update_rfs(delta_mu, delta_sigma)
         return rf.pool(u, t, rfs=self.rfs, pool_type=self.pool_type,
                        block_size=self.block_size, pool_args=self.pool_args)
     
-    def init_rfs(self, lattice_fn=lattice.gaussian_kernel_lattice):
+    def init_rfs(self):
         assert self.mu.shape[0] == self.sigma.shape[0]
         assert self.img_shape is not None
-        self.rfs = lattice_fn(self.mu, self.sigma, self.img_shape)
+        self.rfs = self.lattice_fn(self.mu, self.sigma, self.img_shape)
     
-    def update_rfs(self, delta_mu, delta_sigma,
-                   lattice_fn=lattice.gaussian_kernel_lattice):
+    def update_rfs(self, delta_mu, delta_sigma):
         assert self.mu.shape == delta_mu.shape
         assert self.sigma.shape == delta_sigma.shape
         assert self.img_shape is not None
         self.mu.add_(delta_mu)
         self.sigma.add_(delta_sigma)
-        self.rfs = lattice_fn(self.mu, self.sigma, self.img_shape)
+        self.rfs = self.lattice_fn(self.mu, self.sigma, self.img_shape)
     
     def show_rfs(self):
         assert self.rfs is not None
