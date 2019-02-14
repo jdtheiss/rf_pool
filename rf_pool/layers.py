@@ -1,11 +1,6 @@
-
-# coding: utf-8
-
-# In[130]:
-
 import torch
 import rf
-from utils import gaussian_lattice_utils
+from utils import lattice
 
 class RF_Pool(torch.nn.Module):
     """
@@ -13,11 +8,10 @@ class RF_Pool(torch.nn.Module):
     
     Attributes
     ----------
-    rfs : list or torch.Tensor
-        receptive fields to apply pooling over
-        if type is list, index for receptive fields (see square_lattice_utils) 
-        if type is torch.Tensor, kernels for receptive fields with shape 
-        (h, w, n_kernels) (see gaussian_lattice_utils) 
+    rfs : torch.Tensor
+        kernels containing receptive fields to apply pooling over with shape
+        (n_kernels, h, w) (see lattice_utils)
+        kernels are element-wise multiplied with (u+t) prior to pooling
         [default: None, applies pooling over blocks]
     pool_type : string
         type of pooling ('prob', 'stochastic', 'div_norm', 'average', 'sum')
@@ -40,7 +34,7 @@ class RF_Pool(torch.nn.Module):
         creating a new rfs attribute using lattice_fn.
     """
     def __init__(self, rfs=None, pool_type='prob', block_size=(2, 2), pool_args=[],
-                 mu=None, sigma=None):
+                 mu=None, sigma=None, img_shape=None):
         super(RF_Pool, self).__init__()
         self.rfs = rfs
         self.pool_type = pool_type
@@ -48,24 +42,35 @@ class RF_Pool(torch.nn.Module):
         self.pool_args = pool_args
         self.mu = mu
         self.sigma = sigma
+        if self.rfs is not None:
+            self.img_shape = self.rfs.shape[1:]
+        else:
+            self.img_shape = img_shape
     
     def __call__(self, u):
+        self.img_shape = u.shape[-2:]
         return rf.pool(u, rfs=self.rfs, pool_type=self.pool_type, 
                        block_size=self.block_size, pool_args=self.pool_args)[2]
     
     def apply(self, u, t=None):
+        self.img_shape = u.shape[-2:]
         return rf.pool(u, t, rfs=self.rfs, pool_type=self.pool_type,
                        block_size=self.block_size, pool_args=self.pool_args)
     
+    def init_rfs(self, lattice_fn=lattice.gaussian_kernel_lattice):
+        assert self.mu.shape[0] == self.sigma.shape[0]
+        assert self.img_shape is not None
+        self.rfs = lattice_fn(self.mu, self.sigma, self.img_shape)
+    
     def update_rfs(self, delta_mu, delta_sigma,
-                   lattice_fn=gaussian_lattice_utils.gaussian_kernel_lattice):
+                   lattice_fn=lattice.gaussian_kernel_lattice):
         assert self.mu.shape == delta_mu.shape
         assert self.sigma.shape == delta_sigma.shape
+        assert self.img_shape is not None
         self.mu.add_(delta_mu)
         self.sigma.add_(delta_sigma)
-        self.rfs = lattice_fn(self.mu, self.sigma, self.rfs.shape[0])
+        self.rfs = lattice_fn(self.mu, self.sigma, self.img_shape)
     
     def show_rfs(self):
         assert self.rfs is not None
-        gaussian_lattice_utils.show_kernel_lattice(self.rfs)
-
+        lattice.show_kernel_lattice(self.rfs)
