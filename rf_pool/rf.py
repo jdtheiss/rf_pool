@@ -269,11 +269,10 @@ def pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[]):
     t : torch.Tensor
         top-down input to pooling layer with shape 
         (batch_size, ch, h//block_size[0], w//block_size[1]) [default: None]
-    rfs : list or torch.Tensor
-        receptive fields to apply pooling over
-        if type is list, index for receptive fields (see square_lattice_utils) 
-        if type is torch.Tensor, kernels for receptive fields with shape 
-        (h, w, n_kernels) (see gaussian_lattice_utils) 
+    rfs : torch.Tensor
+        kernels containing receptive fields to apply pooling over with shape
+        (n_kernels, h, w) (see lattice_utils)
+        kernels are element-wise multiplied with (u+t) prior to pooling
         [default: None, applies pooling over blocks]
     pool_type : string
         type of pooling ('prob', 'stochastic', 'div_norm', 'average', 'sum')
@@ -304,11 +303,8 @@ def pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[]):
     # layer with top-down input
     >>> u = torch.rand(1,10,8,8)
     >>> t = torch.rand(1,10,4,4)
-    >>> rfs = [(slice(0,4),slice(0,4)),
-               (slice(4,8),slice(0,4)),
-               (slice(4,8),slice(4,8)),
-               (slice(0,4),slice(4,8))]
-    >>> h_mean, h_sample, p_mean, p_sample = pool(u, t, rfs, 'prob', (2,2))
+    >>> kernels = #TODO:WRITEME
+    >>> h_mean, h_sample, p_mean, p_sample = pool(u, t, kernels, 'prob', (2,2))
 
     Notes
     -----
@@ -370,7 +366,7 @@ def pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[]):
     if type(rfs) is torch.Tensor:
         #TODO: could be more efficient if rf_kernels were shape (n_kernels, h, w)
         # elemwise multiply u with rf_kernels
-        rf_kernels = rfs.permute(2,0,1).reshape(-1, 1, 1, u_h, u_w)
+        rf_kernels = rfs.reshape(-1, 1, 1, u_h, u_w)
         g_u = torch.mul(u_t.unsqueeze(0), rf_kernels)
         # get rf_index as thresholded rf_kernels
         #TODO: determine reasonable threshold
@@ -382,14 +378,6 @@ def pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[]):
             [
                 h_mean[rf], h_sample[rf], p_mean[rf], p_sample[rf]
             ] = pool_fn(rf_u.reshape(batch_size, ch, -1), rf_u.shape, *pool_args)
-    elif type(rfs) is list:
-        # index u_t with each rf
-        for rf in rfs:
-            rf_u = u_t[:,:,rf[0],rf[1]]
-            [
-                h_mean[:,:,rf[0],rf[1]], h_sample[:,:,rf[0],rf[1]],
-                p_mean[:,:,rf[0],rf[1]], p_sample[:,:,rf[0],rf[1]]
-            ] = pool_fn(torch.flatten(rf_u, -2), rf_u.shape, *pool_args)
     elif rfs is None:
         # pool across blocks
         h_mean_b, h_sample_b, p_mean_b, p_sample_b = pool_fn(b, b.shape, *pool_args)
