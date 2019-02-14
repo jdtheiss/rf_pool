@@ -114,6 +114,8 @@ class FeedForwardModule(nn.Module):
         elif self.pool_types[layer_id] in ["prob", "stochastic", "div_norm", "average", "sum"]:
             return RF_Pool(pool_type=self.pool_types[layer_id], 
                            block_size=(self.pool_ksizes[layer_id],)*2)
+        elif self.pool_type[layer_id] is None:
+            return None
         else:
             raise Exception("pool_type not understood")
 
@@ -171,7 +173,7 @@ class FeedForwardModule(nn.Module):
     def apply_forward_pass(self, func, x, delta_mu=None, delta_sigma=None):
         if func:
             if delta_mu and delta_sigma:
-                func(x, delta_mu, delta_sigma)
+                return func(x, delta_mu, delta_sigma)
             else:
                 return func(x)
         else:
