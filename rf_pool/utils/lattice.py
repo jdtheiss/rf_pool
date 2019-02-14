@@ -331,7 +331,7 @@ def init_uniform_lattice(center, n_kernel_side, spacing, sigma_init=1.):
     y = y.repeat(n_kernel_side).reshape(n_kernel_side, n_kernel_side).t()
     # mu and sigma
     mu = torch.stack([x,y], dim=-1)
-    mu = mu.reshape(-1, 2)
+    mu = torch.as_tensor(mu.reshape(-1, 2), dtype=torch.float32)
     sigma = torch.ones((mu.shape[0],1), dtype=torch.float32) * sigma_init
 
     return mu, sigma
