@@ -12,7 +12,7 @@ class FeedForwardModule(nn.Module):
         Module for doing Feed Forward Convolutional or Fully-Connected (or combo) Neural networks with
         custom pooling layers.
 
-        Paramters
+        Attributes
         ---------
         data_shape: tuple
             shape of the inpute data
@@ -25,15 +25,11 @@ class FeedForwardModule(nn.Module):
         conv_strides: list
             size of stride at each convolutional layer
         dropout: list
-            dropout keep probability at each layer
+            dropout probability at each layer
         pool_types: list
             pooling type at each convolutional layer
         pool_ksizes
             pooling kernel size at each convolutional layer
-
-        Returns
-        -------
-        None
 
         Examples
         --------
