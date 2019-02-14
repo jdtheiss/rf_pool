@@ -114,7 +114,7 @@ class FeedForwardModule(nn.Module):
         elif self.pool_types[layer_id] in ["prob", "stochastic", "div_norm", "average", "sum"]:
             return RF_Pool(pool_type=self.pool_types[layer_id], 
                            block_size=(self.pool_ksizes[layer_id],)*2)
-        elif self.pool_type[layer_id] is None:
+        elif self.pool_types[layer_id] is None:
             return None
         else:
             raise Exception("pool_type not understood")
@@ -149,7 +149,7 @@ class FeedForwardModule(nn.Module):
                     in_channels = self.data_shape[1]
                 else:
                     assert self.layer_types[layer_id-1] == 'conv', (
-                    "conv layers cannot follow fc layers")
+                        "conv layers cannot follow fc layers")
                     in_channels = self.output_channels[layer_id-1]
 
                 self.layer_choices[str(layer_id)] = nn.Conv2d(in_channels, self.output_channels[layer_id],
@@ -178,19 +178,23 @@ class FeedForwardModule(nn.Module):
                 return func(x)
         else:
             return x
-
-    def forward(self, x, delta_mu=None, delta_sigma=None):
+    def forward_layer(self, layer_id, x, delta_mu=None, delta_sigma=None):
+        # preform computations for one layer
+        layer_id = str(layer_id)
+        x = self.apply_forward_pass(self.layer_choices[layer_id], x)
+        x = self.apply_forward_pass(self.act_choices[layer_id], x)
+        x = self.apply_forward_pass(self.pool_choices[layer_id], x, delta_mu, delta_sigma)
+        x = self.apply_forward_pass(self.dropout_choices[layer_id], x)
+        return x
+        
+    def forward(self, x):
         # forward pass of network
         for layer_id in range(self.num_layers):
             # flatten layer input if switching from 'conv' to 'fc'
             if self.layer_types[layer_id] != self.layer_types[layer_id - 1] and layer_id != 0:
                 x = x.view(self.data_shape[0], -1)
-            layer_id = str(layer_id)
-            x = self.apply_forward_pass(self.layer_choices[layer_id], x)
-            x = self.apply_forward_pass(self.act_choices[layer_id], x)
-            x = self.apply_forward_pass(self.pool_choices[layer_id], x, delta_mu, delta_sigma)
-            x = self.apply_forward_pass(self.dropout_choices[layer_id], x)
-
+            # perform computations for given layer    
+            x = self.forward_layer(layer_id, x)
         return x
 
 
