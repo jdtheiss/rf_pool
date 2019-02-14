@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
+from layers import RF_Pool
 
 class FeedForwardModule(nn.Module):
     def __init__(self, data_shape,
@@ -108,11 +109,13 @@ class FeedForwardModule(nn.Module):
 
     def pool_layer(self, layer_id):
         # choose pooling operation
-        # TODO: add custom pooling operations
         if self.pool_types[layer_id] == "max_pool":
             return nn.MaxPool2d(self.pool_ksizes[layer_id], self.pool_ksizes[layer_id])
+        elif self.pool_types[layer_id] in ["prob", "stochastic", "div_norm", "average", "sum"]:
+            return RF_Pool(pool_type=self.pool_types[layer_id], 
+                           block_size=(self.pool_ksizes[layer_id],)*2)
         else:
-            return None
+            raise Exception("pool_type not understood")
 
     def make_layers(self):
         """
