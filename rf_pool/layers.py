@@ -1,10 +1,10 @@
 import torch
-import rf
+import ops
 from utils import lattice
 
 class RF_Pool(torch.nn.Module):
     """
-    Receptive field pooling layer (see rf.pool for details)
+    Receptive field pooling layer (see ops.rf_pool for details)
     
     Attributes
     ----------
@@ -30,7 +30,7 @@ class RF_Pool(torch.nn.Module):
     -------
     apply(u, t=None)
         Apply pooling operation over receptive fields in input, u with optional
-        top-down input, t. output is p_mean (see rf.pool)
+        top-down input, t. output is p_mean (see ops.rf_pool)
     update_rfs(delta_mu, delta_sigma, 
         lattice_fn=gaussian_lattice_utils.gaussian_kernel_lattice)
         Update receptive fields kernels by adding delta_mu, delta_sigma and
@@ -55,15 +55,15 @@ class RF_Pool(torch.nn.Module):
         self.img_shape = u.shape[-2:]
         if delta_mu is not None and delta_sigma is not None:
             self.rfs = self.update_rfs(delta_mu, delta_sigma)
-        return rf.pool(u, rfs=self.rfs, pool_type=self.pool_type, 
-                       block_size=self.block_size, pool_args=self.pool_args)[2]
+        return ops.rf_pool(u, rfs=self.rfs, pool_type=self.pool_type, 
+                           block_size=self.block_size, pool_args=self.pool_args)[2]
     
     def apply(self, u, t=None, delta_mu=None, delta_sigma=None):
         self.img_shape = u.shape[-2:]
         if delta_mu is not None and delta_sigma is not None:
             self.rfs = self.update_rfs(delta_mu, delta_sigma)
-        return rf.pool(u, t, rfs=self.rfs, pool_type=self.pool_type,
-                       block_size=self.block_size, pool_args=self.pool_args)
+        return ops.rf_pool(u, t, rfs=self.rfs, pool_type=self.pool_type,
+                           block_size=self.block_size, pool_args=self.pool_args)
     
     def init_rfs(self):
         assert self.mu.shape[0] == self.sigma.shape[0]

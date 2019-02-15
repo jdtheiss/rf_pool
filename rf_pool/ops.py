@@ -258,7 +258,7 @@ def sum_pool(rf_u, out_shape):
     p_sample = h_sample.clone()
     return h_mean, h_sample, p_mean, p_sample
 
-def pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[]):
+def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[]):
     """
     Receptive field pooling
 
@@ -306,7 +306,7 @@ def pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[]):
     >>> t = torch.rand(1,10,4,4)
     >>> mu, sigma = lattice.init_uniform_lattice((4,4), 2, 3, 2.)
     >>> kernels = lattice.gaussian_kernel_lattice(mu, sigma, (8,8))
-    >>> h_mean, h_sample, p_mean, p_sample = rf.pool(u, t, kernels, 'sum', (2,2))
+    >>> h_mean, h_sample, p_mean, p_sample = rf_pool(u, t, kernels, 'sum', (2,2))
 
     Notes
     -----
