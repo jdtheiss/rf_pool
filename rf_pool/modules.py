@@ -41,6 +41,9 @@ class FeedForwardNetwork(nn.Module):
         dropout probability at each layer (0. or None indicates no dropout)
     dropouts : list of torch.nn.modules.dropout or None
         dropout objects chosen for each layer
+    control_nets : ControlNetwork
+        control networks used to update receptive fields for RF_Pool
+        must be set directly (see ControlNetwork)
 
     Methods
     -------
@@ -82,6 +85,8 @@ class FeedForwardNetwork(nn.Module):
     --------
     RF_Pool : layer implementation for receptive field pooling
     rf.pool : receptive field pooling operation
+    ControlNetwork : module to create control_nets to update receptive fields
+        for use with RF_Pool
     """
     def __init__(self, data_shape, layer_types, output_channels, kernel_sizes=[None],
                  conv_strides=[1], act_types=[None], pool_types=[None], 
@@ -92,40 +97,47 @@ class FeedForwardNetwork(nn.Module):
         data_dim = len(self.data_shape)
         assert (data_dim == 2 or data_dim == 4), (
                'Data must have shape [batch_size, n_features] or [batch_size, n_features, h, w]')
-
         # hidden layer params
         self.layer_types = layer_types
-        self.layer_names = [torch.typename(l) if type(l) is not str else l for l in layer_types]
+        self.layer_names = [torch.typename(l) if type(l) is not str else l for l in self.layer_types]
         self.n_layers = len(self.layer_types)
         self.output_channels = self.check_list_vars(output_channels)
         self.output_shapes = [()]*self.n_layers
         self.kernel_sizes = self.check_list_vars(kernel_sizes)
         self.conv_strides = self.check_list_vars(conv_strides)
-
+        
         # activation functions
         self.act_types = self.check_list_vars(act_types)
-        self.act_names = [torch.typename(l) if type(l) is not str else l for l in act_types]
+        self.act_names = [torch.typename(l) if type(l) is not str else l for l in self.act_types]
 
         # pooling layer params
         self.pool_types = self.check_list_vars(pool_types)
-        self.pool_names = [torch.typename(p) if type(p) is not str else p for p in pool_types]
-        self.pool_ksizes = pool_ksizes
+        self.pool_names = [torch.typename(p) if type(p) is not str else p for p in self.pool_types]
+        self.pool_ksizes = self.check_list_vars(pool_ksizes)
 
+        # initialize control_nets
+        self.control_nets = None
+        
         # misc. params
         self.dropout_types = self.check_list_vars(dropout_types)
-
+        
+        # check each var has len == n_layers
         list_attr_names = ['output_channels', 'kernel_sizes', 'conv_strides',
-                           'dropout_types', 'pool_types', 'pool_ksizes']
+                           'act_types', 'pool_types', 'pool_ksizes', 'dropout_types']
         for name in list_attr_names:
             assert len(getattr(self, name)) == self.n_layers, (
                    name + ' must a be a list of size ' + str(self.n_layers))
         # initialize network
         self.make_layers()
 
+    def __call__(self, x):
+        return self.forward(x)
+
     def check_list_vars(self, var):
-        if type(var) is not list:
+        if not type(var) is list:
             var = [var]
-        var.extend([var[-1]]*(self.n_layers-len(var)))
+        if len(var) < self.n_layers:
+            var = var + var[-1:] * (self.n_layers - len(var))
         return var
 
     def set_hidden_layer(self, layer_id):
@@ -218,7 +230,7 @@ class FeedForwardNetwork(nn.Module):
 
     def apply_forward_pass(self, fn, x, delta_mu=None, delta_sigma=None):
         if fn:
-            if delta_mu and delta_sigma:
+            if delta_mu is not None and delta_sigma is not None:
                 return fn(x, delta_mu, delta_sigma)
             else:
                 return fn(x)
@@ -227,14 +239,18 @@ class FeedForwardNetwork(nn.Module):
 
     def forward_layer(self, layer_id, x):
         # preform computations for one layer
+        delta_mu = None
+        delta_sigma = None
         layer_id = str(layer_id)
         x = self.apply_forward_pass(self.hidden_layers[layer_id], x)
         x = self.apply_forward_pass(self.activations[layer_id], x)
-        x = self.apply_forward_pass(self.pool_layers[layer_id], x)
+        if self.control_nets and layer_id in self.control_nets.layer_ids:
+            delta_mu, delta_sigma = self.control_nets(layer_id, x)
+        x = self.apply_forward_pass(self.pool_layers[layer_id], x, delta_mu, delta_sigma)
         x = self.apply_forward_pass(self.dropouts[layer_id], x)
         return x
 
-    def forward(self, x, delta_mu=None, delta_sigma=None):
+    def forward(self, x):
         # forward pass of network
         for layer_id in range(self.n_layers):
             # flatten layer input if switching from 'conv' to 'fc'
@@ -249,55 +265,71 @@ class ControlNetwork(nn.Module):
     """
     TODO: write
     """
-    def __init__(self, net, control_layer_ids, layer_types, out_channels, 
+    def __init__(self, net, layer_ids, layer_types, output_channels, 
                  kernel_sizes=[None], act_types=['relu']):
         super(ControlNetwork, self).__init__()
-        assert layer_types is list, (
+        assert type(layer_types) is list, (
             "layer_types must be list")
         assert layer_types[-1] == 'fc', (
             "The last trunk layer must be fully-connected")
-        for layer_id in control_layer_ids:
+        for layer_id in layer_ids:
             assert len(net.output_shapes[layer_id]) == 4, (
                 "Control networks must follow conv layers")
 
         # trunk params
-        self.control_layer_ids = control_layer_ids
+        self.layer_ids = [str(i) for i in layer_ids]
         self.n_layers = len(layer_types)
         self.layer_types = layer_types
-        self.out_channels = self.check_list_vars(out_channels)
+        self.output_channels = self.check_list_vars(output_channels)
         self.kernel_sizes = self.check_list_vars(kernel_sizes)
         self.act_types = self.check_list_vars(act_types)
-        self.layer_shapes = [net.out_shapes[i] for i in control_layer_ids]
 
         # branch params
-        self.branch_input_shape = (net.data_shape[0], self.out_channels[-1])
+        self.branch_input_shape = (net.data_shape[0], self.output_channels[-1])
 
         # build control networks
+        self.layer_shapes = []
         self.control_nets = {}
-        for i, layer_id in enumerate(self.control_layer_ids):
+        for i, layer_id in enumerate(self.layer_ids):
+            # get layer shape before pooling
+            self.layer_shapes.append(self.get_conv_shape(net.output_shapes[i], 
+                                                         net.pool_ksizes[i]))
             # make the trunk
             trunk = self.make_trunk(self.layer_shapes[i])
             # make the mu and sigma branches 
-            mu_branch = self.make_branch(2)
-            sigma_branch = self.make_branch(1) 
+            mu_branch = self.make_branch(trunk.output_shapes[-1], 2)
+            sigma_branch = self.make_branch(trunk.output_shapes[-1], 1) 
             # set control net
-            self.control_nets[str(layer_id)] = trunk, mu_branch, sigma_branch
-
-    def check_list_vars(self, var):
-        if type(var) is not list:
-            var = [var]
-        var.extend([var[-1]]*(self.n_layers-len(var)))
-        return var
+            self.control_nets[layer_id] = (trunk, mu_branch, sigma_branch)
             
+    def __call__(self, layer_id, x):
+        return self.apply(layer_id, x)
+
+    def apply(self, layer_id, x):
+        layer_id = str(layer_id)
+        trunk, mu_branch, sigma_branch = self.control_nets[layer_id]
+        trunk_out = trunk.forward(x)
+        return mu_branch.forward(trunk_out), sigma_branch.forward(trunk_out)
+    
+    def check_list_vars(self, var):
+        if not type(var) is list:
+            var = [var]
+        if len(var) < self.n_layers:
+            var = var + var[-1:] * (self.n_layers - len(var))
+        return var
+
+    def get_conv_shape(self, output_shape, pool_ksize):
+        return output_shape[:2] + (output_shape[-2]*pool_ksize, output_shape[-1]*pool_ksize)
+
     def make_trunk(self, input_shape):
         # build trunk for control network
-        trunk_net = FeedForwardModule(input_shape, self.layer_types, 
-                                      self.out_channels, self.kernel_sizes)
+        trunk_net = FeedForwardNetwork(input_shape, self.layer_types, 
+                                       self.output_channels, self.kernel_sizes)
         return trunk_net
 
-    def make_branch(self, input_shape, out_shape):
-        # build branch for control network with shape (batch, out_shape) 
-        branch_net = FeedForwardNetwork(input_shape, ['fc'], [out_shape])
+    def make_branch(self, input_shape, output_channels):
+        # build branch for control network with shape (batch, output_channels) 
+        branch_net = FeedForwardNetwork(input_shape, ['fc'], [output_channels])
         return branch_net
 
 class GenerativeNetwork(nn.Module):
