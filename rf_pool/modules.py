@@ -174,12 +174,13 @@ class FeedForwardModule(nn.Module):
                 return func(x)
         else:
             return x
-    def forward_layer(self, layer_id, x, delta_mu=None, delta_sigma=None):
+            
+    def forward_layer(self, layer_id, x):
         # preform computations for one layer
         layer_id = str(layer_id)
         x = self.apply_forward_pass(self.layer_choices[layer_id], x)
         x = self.apply_forward_pass(self.act_choices[layer_id], x)
-        x = self.apply_forward_pass(self.pool_choices[layer_id], x, delta_mu, delta_sigma)
+        x = self.apply_forward_pass(self.pool_choices[layer_id], x)
         x = self.apply_forward_pass(self.dropout_choices[layer_id], x)
         return x
         
