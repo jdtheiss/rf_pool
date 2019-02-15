@@ -4,89 +4,88 @@ import numpy as np
 from layers import RF_Pool
 
 class FeedForwardNetwork(nn.Module):
-    def __init__(self, data_shape, layer_types, output_channels, kernel_sizes,
-                 conv_strides, act_types, pool_types, pool_ksizes, dropout_types):
+    """
+    Module for doing Feed Forward Convolutional or Fully-Connected (or combo) Neural networks with
+    custom pooling layers.
+    
+    Attributes
+    ----------
+    data_shape : tuple
+    shape of the inpute data
+    layer_types : list of strings or torch.nn.Module
+        layer types, 'conv' or 'fc', at each layer
+    hidden_layers : list of torch.nn.modules
+        hidden layer objects chosen for each layer
+    output_channels : list of ints
+        number of output channels at each layer
+    output_shapes : list of tuples
+        output shape for each layer
+    patch_size : list of ints
+        size of patch at each convolutional layer
+    conv_strides : list of ints
+        size of stride at each convolutional layer
+    act_types : list of strings or torch.nn.modules.activation or None
+        activation function at each layer ('ReLU', torch.nn.modules.activation,
+        or None) last layer has no activation function
+    activations : list of torch.nn.modules.activation or None
+        activation objects chosen for each layer
+    pool_types : list of strings or torch.nn.modules.pooling or rf_pool.layers or None
+        pooling type at each convolutional layer
+        ['max_pool', torch.nn.modules.pooling, 'prob', 'stochastic', 'div_norm',
+        'average', 'sum', rf_pool.layers, None]
+    pool_layers : list of torch.nn.modules.pooling or rf_pool.layers or None
+        pooling layer objects chosen for each layer
+    pool_ksizes : list of ints or None
+        pooling kernel size at each convolutional layer
+    dropout_types : list of floats or None
+        dropout probability at each layer (0. or None indicates no dropout)
+    dropouts : list of torch.nn.modules.dropout or None
+        dropout objects chosen for each layer
 
-        """
-        Module for doing Feed Forward Convolutional or Fully-Connected (or combo) Neural networks with
-        custom pooling layers.
+    Methods
+    -------
+    set_hidden_layer(layer_id)
+        set hidden layer for layer_id based on layer_types
+    set_activation_fn(layer_id)
+        set activation for layer_id based on act_types
+    set_pool_layer(layer_id)
+        set pooling layer for layer_id based on pool_types
+    make_layers()
+        initialize network with layer_types, pool_types, etc.
+    apply_forward_pass(func, x, delta_mu=None, delta_sigma=None)
+        perform forward pass through function with input x and optional arguments
+        delta_mu and delta_sigma which are used to update receptive field kernels
+        when using RF_Pool (see RF_Pool, rf.pool)
+    forward_layer(layer_id, x)
+        perform forward pass through layer_id with input x
+    forward(x)
+        perform forward pass through network with input x
 
-        Attributes
-        ----------
-        data_shape : tuple
-            shape of the inpute data
-        layer_types : list of strings or torch.nn.Module
-            layer types, 'conv' or 'fc', at each layer
-        hidden_layers : list of torch.nn.modules
-            hidden layer objects chosen for each layer
-        output_channels : list of ints
-            number of output channels at each layer
-        output_shapes : list of tuples
-            output shape for each layer
-        patch_size : list of ints
-            size of patch at each convolutional layer
-        conv_strides : list of ints
-            size of stride at each convolutional layer
-        act_types : list of strings or torch.nn.modules.activation or None
-            activation function at each layer ('ReLU', torch.nn.modules.activation,
-            or None) last layer has no activation function
-        activations : list of torch.nn.modules.activation or None
-            activation objects chosen for each layer
-        pool_types : list of strings or torch.nn.modules.pooling or rf_pool.layers or None
-            pooling type at each convolutional layer
-            ['max_pool', torch.nn.modules.pooling, 'prob', 'stochastic', 'div_norm',
-            'average', 'sum', rf_pool.layers, None]
-        pool_layers : list of torch.nn.modules.pooling or rf_pool.layers or None
-            pooling layer objects chosen for each layer
-        pool_ksizes : list of ints or None
-            pooling kernel size at each convolutional layer
-        dropout_types : list of floats or None
-            dropout probability at each layer (0. or None indicates no dropout)
-        dropouts : list of torch.nn.modules.dropout or None
-            dropout objects chosen for each layer
+    Examples
+    --------
+    # Does one forward pass of a random dataset
+    >>> data_shape = (10,3,28,28)
+    >>> layer_types = ['conv', 'conv', 'fc']
+    >>> output_channels = [25, 25, 10]
+    >>> kernel_sizes = [5, 5, None]
+    >>> conv_strides = [1, 1, None]
+    >>> pool_types = ['max_pool', 'prob', None]
+    >>> pool_ksizes = [2,2,None]
+    >>> dropout_types = [None, None, .5]
+    >>> net = FeedForwardNetwork(data_shape, layer_types, output_channels,
+                                kernel_sizes, conv_strides, act_types,
+                                pool_types, pool_ksizes, dropout_types)
+    >>> inputs = torch.rand(data_shape)
+    >>> outputs = net(inputs)
 
-        Methods
-        -------
-        set_hidden_layer(layer_id)
-            set hidden layer for layer_id based on layer_types
-        set_activation_fn(layer_id)
-            set activation for layer_id based on act_types
-        set_pool_layer(layer_id)
-            set pooling layer for layer_id based on pool_types
-        make_layers()
-            initialize network with layer_types, pool_types, etc.
-        apply_forward_pass(func, x, delta_mu=None, delta_sigma=None)
-            perform forward pass through function with input x and optional arguments
-            delta_mu and delta_sigma which are used to update receptive field kernels
-            when using RF_Pool (see RF_Pool, rf.pool)
-        forward_layer(layer_id, x)
-            perform forward pass through layer_id with input x
-        forward(x)
-            perform forward pass through network with input x
-
-        Examples
-        --------
-        # Does one forward pass of a random dataset
-        >>> data_shape = (10,3,28,28)
-        >>> layer_types = ['conv', 'conv', 'fc']
-        >>> output_channels = [25, 25, 10]
-        >>> kernel_sizes = [5, 5, None]
-        >>> conv_strides = [1, 1, None]
-        >>> pool_types = ['max_pool', 'prob', None]
-        >>> pool_ksizes = [2,2,None]
-        >>> dropout_types = [None, None, .5]
-        >>> net = FeedForwardNetwork(data_shape, layer_types, output_channels,
-                                    kernel_sizes, conv_strides, act_types,
-                                    pool_types, pool_ksizes, dropout_types)
-        >>> inputs = torch.rand(data_shape)
-        >>> outputs = net(inputs)
-
-        See Also
-        --------
-        RF_Pool : layer implementation for receptive field pooling
-        rf.pool : receptive field pooling operation
-        """
-
+    See Also
+    --------
+    RF_Pool : layer implementation for receptive field pooling
+    rf.pool : receptive field pooling operation
+    """
+    def __init__(self, data_shape, layer_types, output_channels, kernel_sizes=[None],
+                 conv_strides=[1], act_types=[None], pool_types=[None], 
+                 pool_ksizes=[None], dropout_types=[None]):
         super(FeedForwardNetwork, self).__init__()
         # check data shape
         self.data_shape = data_shape
@@ -98,33 +97,36 @@ class FeedForwardNetwork(nn.Module):
         self.layer_types = layer_types
         self.layer_names = [torch.typename(l) if type(l) is not str else l for l in layer_types]
         self.n_layers = len(self.layer_types)
-        self.output_channels = output_channels
+        self.output_channels = self.check_list_vars(output_channels)
         self.output_shapes = [()]*self.n_layers
-        self.kernel_sizes = kernel_sizes
-        self.conv_strides = conv_strides
+        self.kernel_sizes = self.check_list_vars(kernel_sizes)
+        self.conv_strides = self.check_list_vars(conv_strides)
 
         # activation functions
-        self.act_types = act_types
+        self.act_types = self.check_list_vars(act_types)
         self.act_names = [torch.typename(l) if type(l) is not str else l for l in act_types]
 
         # pooling layer params
-        self.pool_types = pool_types
+        self.pool_types = self.check_list_vars(pool_types)
         self.pool_names = [torch.typename(p) if type(p) is not str else p for p in pool_types]
         self.pool_ksizes = pool_ksizes
 
         # misc. params
-        self.dropout_types = dropout_types
+        self.dropout_types = self.check_list_vars(dropout_types)
 
         list_attr_names = ['output_channels', 'kernel_sizes', 'conv_strides',
                            'dropout_types', 'pool_types', 'pool_ksizes']
         for name in list_attr_names:
             assert len(getattr(self, name)) == self.n_layers, (
                    name + ' must a be a list of size ' + str(self.n_layers))
-
+        # initialize network
         self.make_layers()
 
-    def conv_rules(self, i, k, s):
-        return (i - k)/s + 1
+    def check_list_vars(self, var):
+        if type(var) is not list:
+            var = [var]
+        var.extend([var[-1]]*(self.n_layers-len(var)))
+        return var
 
     def set_hidden_layer(self, layer_id):
         # get input_shape, layer_input to compute output_shape
@@ -242,6 +244,61 @@ class FeedForwardNetwork(nn.Module):
             # perform computations for given layer
             x = self.forward_layer(layer_id, x)
         return x
+
+class ControlNetwork(nn.Module):
+    def __init__(self, net, control_layer_ids, layer_types, out_channels, 
+                 kernel_sizes=[None], act_types=['relu']):
+        """
+        TODO: write
+        """
+        super(ControlNetwork, self).__init__()
+        assert layer_types is list, (
+            "layer_types must be list")
+        assert layer_types[-1] == 'fc', (
+            "The last trunk layer must be fully-connected")
+        for layer_id in control_layer_ids:
+            assert len(net.output_shapes[layer_id]) == 4, (
+                "Control networks must follow conv layers")
+
+        # trunk params
+        self.control_layer_ids = control_layer_ids
+        self.n_layers = len(layer_types)
+        self.layer_types = layer_types
+        self.out_channels = self.check_list_vars(out_channels)
+        self.kernel_sizes = self.check_list_vars(kernel_sizes)
+        self.act_types = self.check_list_vars(act_types)
+        self.layer_shapes = [net.out_shapes[i] for i in control_layer_ids]
+
+        # branch params
+        self.branch_input_shape = (net.data_shape[0], self.out_channels[-1])
+
+        # build control networks
+        self.control_nets = {}
+        for i, layer_id in enumerate(self.control_layer_ids):
+            # make the trunk
+            trunk = self.make_trunk(self.layer_shapes[i])
+            # make the mu and sigma branches 
+            mu_branch = self.make_branch(2)
+            sigma_branch = self.make_branch(1) 
+            # set control net
+            self.control_nets[str(layer_id)] = trunk, mu_branch, sigma_branch
+
+    def check_list_vars(self, var):
+        if type(var) is not list:
+            var = [var]
+        var.extend([var[-1]]*(self.n_layers-len(var)))
+        return var
+            
+    def make_trunk(self, input_shape):
+        # build trunk for control network
+        trunk_net = FeedForwardModule(input_shape, self.layer_types, 
+                                      self.out_channels, self.kernel_sizes)
+        return trunk_net
+
+    def make_branch(self, input_shape, out_shape):
+        # build branch for control network with shape (batch, out_shape) 
+        branch_net = FeedForwardNetwork(input_shape, ['fc'], [out_shape])
+        return branch_net
 
 if __name__ == '__main__':
     import doctest
