@@ -244,13 +244,13 @@ class FeedForwardNetwork(nn.Module):
             # perform computations for given layer
             x = self.forward_layer(layer_id, x)
         return x
-
+    
 class ControlNetwork(nn.Module):
+    """
+    TODO: write
+    """
     def __init__(self, net, control_layer_ids, layer_types, out_channels, 
                  kernel_sizes=[None], act_types=['relu']):
-        """
-        TODO: write
-        """
         super(ControlNetwork, self).__init__()
         assert layer_types is list, (
             "layer_types must be list")
@@ -300,6 +300,14 @@ class ControlNetwork(nn.Module):
         branch_net = FeedForwardNetwork(input_shape, ['fc'], [out_shape])
         return branch_net
 
+class GenerativeNetwork(nn.Module):
+    """
+    #TODO:WRITEME
+    """
+    def __init__(self):
+        super(GenerativeNetwork, self).__init__()
+        raise NotImplementedError
+    
 if __name__ == '__main__':
     import doctest
     doctest.testmod()
