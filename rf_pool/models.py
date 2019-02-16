@@ -29,7 +29,7 @@ class Model(nn.Module):
     show_lattice()
         notImplemented
     get_trainable_params()
-        gets the trainable parameters on the network
+        gets the trainable parameters from the network
     set_requires_grad(net_params, requires_grad)
         sets net_params to require gradient or not
     get_accuracy(dataLoader)
@@ -110,7 +110,6 @@ class Model(nn.Module):
 
         return 100 * correct / total
 
-
     def train_this_shit(self, epochs, trainloader, lr=0.001, momentum=0.9):
         assert self.loss_criterion is not None, (
             "loss function must be initialized before training")
@@ -163,8 +162,6 @@ class FeedForwardModel(Model):
             "Feed forward network must be initialized before the control network(s)")
 
         self.net.control_nets = ControlNetwork(self.net, *args)
-
-
 
 if __name__ == "__main__":
     import doctest
