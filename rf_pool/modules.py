@@ -101,25 +101,25 @@ class FeedForwardNetwork(nn.Module):
         self.layer_types = layer_types
         self.layer_names = [torch.typename(l) if type(l) is not str else l for l in self.layer_types]
         self.n_layers = len(self.layer_types)
-        self.output_channels = self.check_list_vars(output_channels)
+        self.output_channels = self.set_list_vars(output_channels)
         self.output_shapes = [()]*self.n_layers
-        self.kernel_sizes = self.check_list_vars(kernel_sizes)
-        self.conv_strides = self.check_list_vars(conv_strides)
+        self.kernel_sizes = self.set_list_vars(kernel_sizes)
+        self.conv_strides = self.set_list_vars(conv_strides)
         
         # activation functions
-        self.act_types = self.check_list_vars(act_types)
+        self.act_types = self.set_list_vars(act_types)
         self.act_names = [torch.typename(l) if type(l) is not str else l for l in self.act_types]
 
         # pooling layer params
-        self.pool_types = self.check_list_vars(pool_types)
+        self.pool_types = self.set_list_vars(pool_types)
         self.pool_names = [torch.typename(p) if type(p) is not str else p for p in self.pool_types]
-        self.pool_ksizes = self.check_list_vars(pool_ksizes)
+        self.pool_ksizes = self.set_list_vars(pool_ksizes)
 
         # initialize control_nets
         self.control_nets = None
         
         # misc. params
-        self.dropout_types = self.check_list_vars(dropout_types)
+        self.dropout_types = self.set_list_vars(dropout_types)
         
         # check each var has len == n_layers
         list_attr_names = ['output_channels', 'kernel_sizes', 'conv_strides',
@@ -133,8 +133,8 @@ class FeedForwardNetwork(nn.Module):
     def __call__(self, x):
         return self.forward(x)
 
-    def check_list_vars(self, var):
-        if not type(var) is list:
+    def set_list_vars(self, var):
+        if type(var) is not list:
             var = [var]
         if len(var) < self.n_layers:
             var = var + var[-1:] * (self.n_layers - len(var))
@@ -263,7 +263,7 @@ class FeedForwardNetwork(nn.Module):
     
 class ControlNetwork(nn.Module):
     """
-    TODO: write
+    TODO: WRITEME
     """
     def __init__(self, net, layer_ids, layer_types, output_channels, 
                  kernel_sizes=[None], act_types=['relu']):
@@ -280,9 +280,9 @@ class ControlNetwork(nn.Module):
         self.layer_ids = [str(i) for i in layer_ids]
         self.n_layers = len(layer_types)
         self.layer_types = layer_types
-        self.output_channels = self.check_list_vars(output_channels)
-        self.kernel_sizes = self.check_list_vars(kernel_sizes)
-        self.act_types = self.check_list_vars(act_types)
+        self.output_channels = self.set_list_vars(output_channels)
+        self.kernel_sizes = self.set_list_vars(kernel_sizes)
+        self.act_types = self.set_list_vars(act_types)
 
         # branch params
         self.branch_input_shape = (net.data_shape[0], self.output_channels[-1])
@@ -292,10 +292,10 @@ class ControlNetwork(nn.Module):
         self.control_nets = {}
         for i, layer_id in enumerate(self.layer_ids):
             # get layer shape before pooling
-            self.layer_shapes.append(self.get_conv_shape(net.output_shapes[i], 
-                                                         net.pool_ksizes[i]))
+            self.layer_shapes.append(self.get_conv_shape(net.output_shapes[int(layer_id)], 
+                                                         net.pool_ksizes[int(layer_id)]))
             # make the trunk
-            trunk = self.make_trunk(self.layer_shapes[i])
+            trunk = self.make_trunk(self.layer_shapes[-1])
             # make the mu and sigma branches 
             mu_branch = self.make_branch(trunk.output_shapes[-1], 2)
             sigma_branch = self.make_branch(trunk.output_shapes[-1], 1) 
@@ -311,16 +311,28 @@ class ControlNetwork(nn.Module):
         trunk_out = trunk.forward(x)
         return mu_branch.forward(trunk_out), sigma_branch.forward(trunk_out)
     
-    def check_list_vars(self, var):
-        if not type(var) is list:
+    def set_list_vars(self, var):
+        if type(var) is not list:
             var = [var]
         if len(var) < self.n_layers:
             var = var + var[-1:] * (self.n_layers - len(var))
         return var
 
+    def append_list_vars(self, var, new_var):
+        if type(new_var) is not list:
+            new_var = [new_var]
+        var = var + new_var
+        return self.set_list_vars(var)
+    
     def get_conv_shape(self, output_shape, pool_ksize):
         return output_shape[:2] + (output_shape[-2]*pool_ksize, output_shape[-1]*pool_ksize)
 
+    def append(self, layer_id, control_net):
+        raise NotImplementedError
+        
+    def link_parameters(self):
+        raise NotImplementedError
+        
     def make_trunk(self, input_shape):
         # build trunk for control network
         trunk_net = FeedForwardNetwork(input_shape, self.layer_types, 
