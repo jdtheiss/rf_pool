@@ -2,7 +2,61 @@ import torch
 import ops
 from utils import lattice
 
-class RF_Pool(torch.nn.Module):
+class Layer(torch.nn.Module):
+    """
+    Base class for receptive field pooling layers
+    """
+    def __init__(self):
+        super(Layer, self).__init__()
+        self.mu = None
+        self.sigma = None
+        self.img_shape = None
+        self.lattice_fn = None
+        self.updates = None
+        self.inputs = {'u': None, 't': None, 
+                       'rfs': None, 'pool_type': 'prob', 
+                       'block_size': (2,2), 'pool_args': []}
+        
+    def __call__(self, *args):
+        return self.forward(*args)
+
+    def apply(self, **kwargs):
+        return ops.rf_pool(**kwargs)
+    
+    def forward(self):
+        pass
+    
+    def set(self, name, var):
+        setattr(self, name, var)
+
+    def get(self, name):
+        return getattr(self, name)
+
+    def init_rfs(self):
+        assert self.lattice_fn is not None
+        assert self.mu.shape[0] == self.sigma.shape[0]
+        assert self.img_shape is not None
+        self.inputs['rfs'] = self.lattice_fn(self.mu, self.sigma, self.img_shape)
+    
+    def update_rfs(self, delta_mu, delta_sigma):
+        assert self.inputs['rfs'] is not None
+        assert self.img_shape is not None
+        rfs_shape = self.inputs['rfs'].shape[1:]
+        # update mu if img_shape doesnt match rfs.shape[1:]
+        if rfs_shape != self.img_shape:
+            self.mu.add_(torch.sub(torch.as_tensor(self.img_shape, dtype=self.mu.dtype), 
+                                   torch.as_tensor(rfs_shape, dtype=self.mu.dtype)))
+        self.inputs['rfs'] = self.lattice_fn(self.mu + delta_mu, self.sigma + delta_sigma, self.img_shape)
+    
+    def update_mu_sigma(self, delta_mu, delta_sigma):
+        self.mu.add_(delta_mu)
+        self.sigma.add_(delta_sigma)
+    
+    def show_rfs(self):
+        assert self.inputs['rfs'] is not None
+        lattice.show_kernel_lattice(self.inputs['rfs'])
+
+class RF_Pool(Layer):
     """
     Receptive field pooling layer (see ops.rf_pool for details)
     
@@ -44,7 +98,7 @@ class RF_Pool(torch.nn.Module):
         Initialize receptive fields kernels with given lattice_fn, mu, sigma, 
         and img_shape
     update_rfs(delta_mu, delta_sigma, 
-        lattice_fn=gaussian_lattice_utils.gaussian_kernel_lattice)
+               lattice_fn=utils.lattice.gaussian_kernel_lattice)
         Update receptive fields kernels by adding delta_mu, delta_sigma and
         creating a new rfs attribute using lattice_fn.
     update_mu_sigma(delta_mu, delta_sigma)
@@ -52,52 +106,35 @@ class RF_Pool(torch.nn.Module):
     show_rfs()
         Display receptive field lattice from rfs kernel
     """
-    def __init__(self, rfs=None, pool_type='prob', block_size=(2, 2), pool_args=[],
-                 mu=None, sigma=None, img_shape=None, lattice_fn=lattice.gaussian_kernel_lattice):
+    def __init__(self, mu=None, sigma=None, img_shape=None, updates=False,
+                 lattice_fn=lattice.gaussian_kernel_lattice, **kwargs):
         super(RF_Pool, self).__init__()
-        self.rfs = rfs
-        self.pool_type = pool_type
-        self.block_size = block_size
-        self.pool_args = pool_args
         self.mu = mu
         self.sigma = sigma
-        if self.rfs is not None:
-            self.img_shape = self.rfs.shape[1:]
+        if self.inputs['rfs'] is not None and self.img_shape is None:
+            self.img_shape = self.inputs['rfs'].shape[1:]
         else:
             self.img_shape = img_shape
+        self.updates = updates
         self.lattice_fn = lattice_fn
-        self.updates = False
-    
-    def __call__(self, u, delta_mu=None, delta_sigma=None):
-        return self.apply(u, None, delta_mu, delta_sigma)[2]
-    
-    def apply(self, u, t=None, delta_mu=None, delta_sigma=None):
+        self.inputs.update(kwargs)
+                         
+    def forward(self, u, t=None, delta_mu=None, delta_sigma=None):
+        # set u, t
+        self.inputs['u'] = u
+        self.inputs['t'] = t
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
         if delta_mu is not None and delta_sigma is not None:
-            self.rfs = self.update_rfs(delta_mu, delta_sigma)
+            self.update_rfs(delta_mu, delta_sigma)
             if self.updates:
                 self.update_mu_sigma(delta_mu, delta_sigma)
         # return pooling outputs
-        return ops.rf_pool(u, t, rfs=self.rfs, pool_type=self.pool_type,
-                           block_size=self.block_size, pool_args=self.pool_args)
+        return self.apply(**self.inputs)[2]
     
-    def init_rfs(self):
-        assert self.mu.shape[0] == self.sigma.shape[0]
-        assert self.img_shape is not None
-        self.rfs = self.lattice_fn(self.mu, self.sigma, self.img_shape)
+class RF_Uniform(Layer):
+    def __init__(self):
+        super(RF_Uniform, self).__init__()
+                         
     
-    def update_rfs(self, delta_mu, delta_sigma):
-        assert self.img_shape is not None
-        if self.rfs.shape[1:] != self.img_shape:
-            self.mu.add_(torch.as_tensor(self.img_shape) - torch.as_tensor(self.rfs.shape[1:]))
-        self.rfs = self.lattice_fn(self.mu + delta_mu, self.sigma + delta_sigma, self.img_shape)
-    
-    def update_mu_sigma(self, delta_mu, delta_sigma):
-        self.mu.add_(delta_mu)
-        self.sigma.add_(delta_sigma)
-    
-    def show_rfs(self):
-        assert self.rfs is not None
-        lattice.show_kernel_lattice(self.rfs)
