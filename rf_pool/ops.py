@@ -156,11 +156,16 @@ def div_norm_pool(rf_u, out_shape, n=2., sigma=0.5):
     cortex. Visual neuroscience, 9(2), 181-197.
     """
 
+    # get inf indices, set to 0.
+    inf_mask = torch.isinf(rf_u)
+    rf_u[inf_mask] = 0.
     # raise rf_u, sigma to nth power
     rf_u_n = torch.pow(rf_u, n)
     sigma_n = torch.pow(torch.as_tensor(sigma, dtype=rf_u.dtype), n)
     probs = torch.div(rf_u_n, sigma_n + torch.sum(rf_u_n, dim=-1, keepdim=True))
     h_mean = torch.reshape(probs, out_shape)
+    # set inf indices to -inf for softmax
+    probs[inf_mask] = -np.inf
     h_sample = torch.reshape(Multinomial(probs=torch.softmax(probs, -1)).sample(), out_shape)
     p_mean = torch.mul(h_mean, h_sample)
     p_sample = h_sample.clone()
@@ -202,10 +207,18 @@ def average_pool(rf_u, out_shape):
         p_sample is set to h_sample
     """
 
+    # get inf indices, set to 0.
+    inf_mask = torch.isinf(rf_u)
+    rf_u[inf_mask] = 0.
+    # get count of units in last dim
+    n_units = torch.as_tensor(rf_u.shape[-1] - torch.sum(inf_mask, -1, keepdim=True), 
+                              dtype=rf_u.dtype)
     # divide activity by number of units
-    probs = torch.div(rf_u, rf_u.shape[-1])
-    samples = Multinomial(probs=torch.softmax(probs, -1)).sample()
+    probs = torch.div(rf_u, n_units)
     h_mean = torch.reshape(probs, out_shape)
+    # set inf indices to -inf for softmax
+    probs[inf_mask] = -np.inf
+    samples = Multinomial(probs=torch.softmax(probs, -1)).sample()
     h_sample = torch.reshape(samples, out_shape)
     p_mean = torch.mul(h_mean, h_sample)
     p_sample = h_sample.clone()
@@ -247,11 +260,16 @@ def sum_pool(rf_u, out_shape):
         p_sample is set to h_sample
     """
 
+    # get inf indices, set to 0.
+    inf_mask = torch.isinf(rf_u)
+    rf_u[inf_mask] = 0.
     # set h_mean to rf_u, h_sample to sum
     h_mean = torch.reshape(rf_u, out_shape)
     h_sample = torch.zeros_like(rf_u)
     h_sample.add_(torch.sum(rf_u, dim=-1, keepdim=True))
     h_sample = torch.reshape(h_sample, out_shape)
+    # set inf indices to -inf for softmax
+    rf_u[inf_mask] = -np.inf
     sampled_pos = torch.reshape(Multinomial(probs=torch.softmax(rf_u, -1)).sample(), out_shape)
     h_sample = torch.mul(h_sample, sampled_pos)
     p_mean = torch.mul(h_mean, sampled_pos)
@@ -370,19 +388,24 @@ def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[
     p_mean = torch.zeros_like(u_t)
     p_sample = torch.zeros_like(u_t)
     if type(rfs) is torch.Tensor:
-        # elemwise multiply u with rf_kernels
-        rf_kernels = rfs.reshape(-1, 1, 1, u_h, u_w)
-        g_u = torch.mul(u_t.unsqueeze(0), rf_kernels)
-        # get rf_index as thresholded rf_kernels
-        #TODO: determine reasonable threshold
+        # elemwise multiply u_t with rf_kernels
+        u_t = u_t.unsqueeze(2)
+        rf_kernels = torch.add(torch.zeros_like(u_t), rfs)
+        g_u = torch.mul(u_t, rf_kernels).permute(2,0,1,3,4)
+        # create rf_mask of 0s at rf and -inf elsewhere
         thr = 1e-5
-        rf_index = torch.gt(rf_kernels, thr)
-        rf_index = rf_index.repeat(1, batch_size, ch, 1, 1)
-        for i, rf in enumerate(rf_index):
-            rf_u = g_u[i][rf]
-            [
-                h_mean[rf], h_sample[rf], p_mean[rf], p_sample[rf]
-            ] = pool_fn(rf_u.reshape(batch_size, ch, -1), rf_u.shape, *pool_args)
+        rf_mask = torch.as_tensor(torch.le(rf_kernels, thr).permute(2,0,1,3,4),
+                                  dtype=g_u.dtype)
+        rf_mask = -1. * torch.exp(np.inf * (2. * rf_mask - 1.))
+        # get rf_u with g_u at rf and -inf elsewhere
+        rf_u = torch.add(g_u, rf_mask)
+        # apply pool function across image dims
+        h_mean, h_sample, p_mean, p_sample = pool_fn(rf_u.flatten(-2), rf_u.shape, *pool_args)
+        # max across receptive fields
+        h_mean = torch.max(h_mean, 0)[0]
+        h_sample = torch.max(h_sample, 0)[0]
+        p_mean = torch.max(p_mean, 0)[0]
+        p_sample = torch.max(p_sample, 0)[0]
     elif rfs is None:
         # pool across blocks
         h_mean_b, h_sample_b, p_mean_b, p_sample_b = pool_fn(b, b.shape, *pool_args)
