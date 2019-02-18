@@ -163,7 +163,7 @@ def div_norm_pool(rf_u, out_shape, n=2., sigma=0.5):
     rf_u_n = torch.pow(rf_u, n)
     sigma_n = torch.pow(torch.as_tensor(sigma, dtype=rf_u.dtype), n)
     probs = torch.div(rf_u_n, sigma_n + torch.sum(rf_u_n, dim=-1, keepdim=True))
-    h_mean = torch.reshape(probs, out_shape)
+    h_mean = torch.reshape(probs.clone(), out_shape)
     # set inf indices to -inf for softmax
     probs[inf_mask] = -np.inf
     h_sample = torch.reshape(Multinomial(probs=torch.softmax(probs, -1)).sample(), out_shape)
@@ -215,7 +215,7 @@ def average_pool(rf_u, out_shape):
                               dtype=rf_u.dtype)
     # divide activity by number of units
     probs = torch.div(rf_u, n_units)
-    h_mean = torch.reshape(probs, out_shape)
+    h_mean = torch.reshape(probs.clone(), out_shape)
     # set inf indices to -inf for softmax
     probs[inf_mask] = -np.inf
     samples = Multinomial(probs=torch.softmax(probs, -1)).sample()
@@ -264,7 +264,7 @@ def sum_pool(rf_u, out_shape):
     inf_mask = torch.isinf(rf_u)
     rf_u[inf_mask] = 0.
     # set h_mean to rf_u, h_sample to sum
-    h_mean = torch.reshape(rf_u, out_shape)
+    h_mean = torch.reshape(rf_u.clone(), out_shape)
     h_sample = torch.zeros_like(rf_u)
     h_sample.add_(torch.sum(rf_u, dim=-1, keepdim=True))
     h_sample = torch.reshape(h_sample, out_shape)
