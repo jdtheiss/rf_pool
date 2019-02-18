@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn 
 import torch.optim as optim 
 import numpy as np 
+from IPython.display import clear_output, display
 import matplotlib.pyplot as plt 
 import pickle
 from modules import FeedForwardNetwork, ControlNetwork
@@ -124,7 +125,7 @@ class Model(nn.Module):
 
         return 100 * correct / total
 
-    def train_model(self, epochs, trainloader, lr=0.001, momentum=0.9):
+    def train_model(self, epochs, trainloader, lr=0.001, momentum=0.9, monitor=2000):
         assert self.loss_criterion is not None, (
             "loss function must be initialized before training")
         assert self.net is not None, (
@@ -143,6 +144,10 @@ class Model(nn.Module):
                 loss.backward()
                 self.optimizer.step()
                 self.running_loss += loss.item()
+                if (i+1) % monitor == 0:
+                    clear_output(wait=True)
+                    display('[%d, %5d] loss: %.3f' % (epoch , i, self.running_loss / monitor))
+                    self.running_loss = 0.0
 
 
 class FeedForwardModel(Model):
@@ -168,8 +173,8 @@ class FeedForwardModel(Model):
     def __call__(self, x):
         return self.net(x)
 
-    def ff_network(self, **kwargs):
-        self.net = FeedForwardNetwork(**kwargs)
+    def ff_network(self, *args, **kwargs):
+        self.net = FeedForwardNetwork(*args, **kwargs)
 
     def control_network(self, *args, **kwargs):
         assert self.net is not None,  (
