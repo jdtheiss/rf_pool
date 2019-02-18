@@ -84,13 +84,13 @@ def exp_kernel_lattice(mu, sigma, kernel_shape):
     -------
     kernels : torch.Tensor 
         output kernels with shape 
-        (n_kernels, kernel_shape[0], kernel_shape[1])
+        mu.shape[:-1] + (kernel_shape[0], kernel_shape[1])
 
     Examples
     --------
     # Create tensor of 10 kernels with random centers and sigma=1.
-    >>> mu = torch.rand(2, 10)
-    >>> sigma = torch.ones(1, 10)
+    >>> mu = torch.rand(10, 2)
+    >>> sigma = torch.ones(10, 1)
     >>> kernel_shape = (200,200)
     >>> mu = mu * torch.as_tensor(kernel_shape, dtype=mu.dtype)
     >>> kernels = exp_kernel_lattice(mu, sigma, kernel_shape)
@@ -102,9 +102,7 @@ def exp_kernel_lattice(mu, sigma, kernel_shape):
     y = torch.arange(kernel_shape[1])
     xy = torch.stack(torch.meshgrid(x, y), dim=0).unsqueeze(0).float()
 
-    kernels = exp_kernel_2d(mu, sigma, xy)
-
-    return torch.squeeze(kernels)
+    return exp_kernel_2d(mu, sigma, xy)
 
 def gaussian_kernel_lattice(mu, sigma, kernel_shape):
     """
@@ -113,9 +111,9 @@ def gaussian_kernel_lattice(mu, sigma, kernel_shape):
     Parameters
     ----------
     mu : torch.Tensor 
-        kernel centers with shape (2, n_kernels)
+        kernel centers with shape (n_kernels, 2)
     sigma : torch.Tensor 
-        kernel standard deviations with shape (1, n_kernels)
+        kernel standard deviations with shape (n_kernels, 1)
     kernel_shape : tuple
         shape of input feature map
 
@@ -123,13 +121,13 @@ def gaussian_kernel_lattice(mu, sigma, kernel_shape):
     -------
     kernels : torch.Tensor 
         output kernels with shape 
-        (n_kernels, kernel_shape[0], kernel_shape[1])
+        mu.shape[:-1] + (kernel_shape[0], kernel_shape[1])
 
     Examples
     --------
     # Create tensor of 10 kernels with random centers and sigma=1.
-    >>> mu = torch.rand(2, 10)
-    >>> sigma = torch.ones(1, 10)
+    >>> mu = torch.rand(10, 2)
+    >>> sigma = torch.ones(10, 1)
     >>> kernel_shape = (200,200)
     >>> mu = mu * torch.as_tensor(kernel_shape, dtype=mu.dtype)
     >>> kernels = gaussian_kernel_lattice(mu, sigma, kernel_shape)
@@ -141,9 +139,7 @@ def gaussian_kernel_lattice(mu, sigma, kernel_shape):
     y = torch.arange(kernel_shape[1])
     xy = torch.stack(torch.meshgrid(x, y), dim=0).unsqueeze(0).float()
 
-    kernels = gaussian_kernel_2d(mu, sigma, xy)
-
-    return torch.squeeze(kernels)
+    return gaussian_kernel_2d(mu, sigma, xy)
 
 def mask_kernel_lattice(mu, sigma, kernel_shape):
     """
@@ -152,9 +148,9 @@ def mask_kernel_lattice(mu, sigma, kernel_shape):
     Parameters
     ----------
     mu : torch.Tensor 
-        kernel centers with shape (2, n_kernels)
+        kernel centers with shape (n_kernels, 2)
     sigma : torch.Tensor 
-        kernel standard deviations with shape (1, n_kernels)
+        kernel standard deviations with shape (n_kernels, 1)
     kernel_shape : tuple
         shape of input feature map
 
@@ -162,13 +158,13 @@ def mask_kernel_lattice(mu, sigma, kernel_shape):
     -------
     kernels : torch.Tensor 
         output kernels with shape 
-        (n_kernels, kernel_shape[0], kernel_shape[1])
+        mu.shape[:-1] + (kernel_shape[0], kernel_shape[1])
 
     Examples
     --------
     # Create tensor of 10 kernels with random centers and sigma=1.
-    >>> mu = torch.rand(2, 10)
-    >>> sigma = torch.ones(1, 10)
+    >>> mu = torch.rand(10, 2)
+    >>> sigma = torch.ones(10, 1)
     >>> kernel_shape = (200, 200)
     >>> mu = mu * torch.as_tensor(kernel_shape, dtype=mu.dtype)
     >>> kernels = mask_kernel_lattice(mu, sigma, kernel_shape)
@@ -180,9 +176,7 @@ def mask_kernel_lattice(mu, sigma, kernel_shape):
     y = torch.arange(kernel_shape[1])
     xy = torch.stack(torch.meshgrid(x, y), dim=0).unsqueeze(0).float()
 
-    kernels = mask_kernel_2d(mu, sigma, xy)
-
-    return torch.squeeze(kernels)
+    return mask_kernel_2d(mu, sigma, xy)
 
 def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1.):
     """
