@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim 
 import numpy as np 
 import matplotlib.pyplot as plt 
+import pickle
 from modules import FeedForwardNetwork, ControlNetwork
 
 class Model(nn.Module):
@@ -34,7 +35,7 @@ class Model(nn.Module):
         sets net_params to require gradient or not
     get_accuracy(dataLoader)
         gets the model's accuracy given a torch.utils.data.DataLoader
-    train_this_shit(epochs, trainloader)
+    train_model(epochs, trainloader)
         trains the model with a given torch.utils.data.DataLoader
 
     """
@@ -42,7 +43,7 @@ class Model(nn.Module):
         super(Model, self).__init__()
         self.loss_type = loss_type
         self.optimizer_type = optimizer_type
-
+        self.net = None
         self.set_loss_fn() # set loss function
         self.optimizer = None # optimizer must be set after the graph is initialized
 
@@ -80,22 +81,35 @@ class Model(nn.Module):
         else:
             raise Exception("optimizer_type not understood")
 
-    def load_model(self):
-        raise NotImplementedError
+    def save_model(self, filename, extras=[]):
+        if type(extras) is not list:
+        	extras = [extras]
+        with open(filename, 'wb') as f:
+        	pickle.dump([self,] + extras, f)
 
-    def save_model(self):
-        raise NotImplementedError
+    def load_model(self, filename):
+        model = pickle.load(open(filename, 'rb'))
+        return model
 
     def show_lattice(self):
         raise NotImplementedError
 
     def get_trainable_params(self):
-        # TODO: grab only parameters with 'requires_grad' set to True
-        return self.net.parameters()
+        #grabs only parameters with 'requires_grad' set to True
+        trainable_params = []
+        for (name, param) in self.net.named_parameters():
+            if param.requires_grad == True:
+                trainable_params.append(param)
 
-    def set_requires_grad(self, net_params, requires_grad = True):
+        return trainable_params
+
+    def set_requires_grad(self, net_type, requires_grad = True):
+        if net_type not in ["hidden", "control"]:
+            raise Exception("net_type not understood")
         # set a net's parameters to require gradient or not
-        raise NotImplementedError
+        for (name, param) in self.net.named_parameters():
+            if name.startswith(net_type):
+                param.requires_grad = requires_grad
 
     def get_accuracy(self, dataloader):
         correct = 0
@@ -110,7 +124,7 @@ class Model(nn.Module):
 
         return 100 * correct / total
 
-    def train_this_shit(self, epochs, trainloader, lr=0.001, momentum=0.9):
+    def train_model(self, epochs, trainloader, lr=0.001, momentum=0.9):
         assert self.loss_criterion is not None, (
             "loss function must be initialized before training")
         assert self.net is not None, (
@@ -154,14 +168,14 @@ class FeedForwardModel(Model):
     def __call__(self, x):
         return self.net(x)
 
-    def ff_network(self, *args):
-        self.net = FeedForwardNetwork(*args)
+    def ff_network(self, **kwargs):
+        self.net = FeedForwardNetwork(**kwargs)
 
-    def control_network(self, *args):
+    def control_network(self, *args, **kwargs):
         assert self.net is not None,  (
             "Feed forward network must be initialized before the control network(s)")
 
-        self.net.control_nets = ControlNetwork(self.net, *args)
+        self.net.control_nets = ControlNetwork(self.net, *args, **kwargs)
 
 if __name__ == "__main__":
     import doctest
