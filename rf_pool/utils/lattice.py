@@ -55,12 +55,12 @@ def generalized_sigmoid(x, v=1., q=1., b=1.):
 def exp_kernel_2d(mu, sigma, xy):
     mu = mu.reshape(mu.shape + (1,1)).float()
     sigma = sigma.unsqueeze(-1).float()
-    return torch.exp(-torch.sum((xy - mu)**2., dim=1)/ (2*sigma**2))
+    return torch.exp(-torch.sum((xy - mu)**2., dim=-3)/ (2*sigma**2))
 
 def gaussian_kernel_2d(mu, sigma, xy):
     mu = mu.reshape(mu.shape + (1,1)).float()
     sigma = sigma.unsqueeze(-1).float()
-    return (1./(2.*np.pi*sigma**2)) * torch.exp(-torch.sum((xy - mu)**2., dim=1)/ (2*sigma**2))
+    return (1./(2.*np.pi*sigma**2)) * torch.exp(-torch.sum((xy - mu)**2., dim=-3)/ (2*sigma**2))
 
 def mask_kernel_2d(mu, sigma, xy):
     kernels = exp_kernel_2d(mu, sigma, xy)
@@ -96,9 +96,7 @@ def exp_kernel_lattice(mu, sigma, kernel_shape):
     >>> kernels = exp_kernel_lattice(mu, sigma, kernel_shape)
     """
     
-    assert mu.shape[0] == sigma.shape[0]
-    n_kernels = mu.shape[0]
-    
+    assert mu.shape[-2] == sigma.shape[-2]
     # create the coordinates input to kernel function
     x = torch.arange(kernel_shape[0])
     y = torch.arange(kernel_shape[1])
@@ -137,9 +135,7 @@ def gaussian_kernel_lattice(mu, sigma, kernel_shape):
     >>> kernels = gaussian_kernel_lattice(mu, sigma, kernel_shape)
     """
     
-    assert mu.shape[0] == sigma.shape[0]
-    n_kernels = mu.shape[0]
-
+    assert mu.shape[-2] == sigma.shape[-2]
     # create the coordinates input to kernel function
     x = torch.arange(kernel_shape[0])
     y = torch.arange(kernel_shape[1])
@@ -178,9 +174,7 @@ def mask_kernel_lattice(mu, sigma, kernel_shape):
     >>> kernels = mask_kernel_lattice(mu, sigma, kernel_shape)
     """
     
-    assert mu.shape[0] == sigma.shape[0]
-    n_kernels = mu.shape[0]
-
+    assert mu.shape[-2] == sigma.shape[-2]
     # create the coordinates input to kernel function
     x = torch.arange(kernel_shape[0])
     y = torch.arange(kernel_shape[1])
