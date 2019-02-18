@@ -24,19 +24,20 @@ class Model(nn.Module):
         sets a torch.nn.modules.loss function
     set_optimizer(**kwargs)
         sets a torch.optim optimizer
-    load_model()
-        notImplemented
-    save_model()
-        notImplemented
+        see torch.optim for **kwargs
+    load_model(filename)
+        loads a previously saved model from filename
+    save_model(filename, extras = [])
+        saves a model instance 
     show_lattice()
         notImplemented
     get_trainable_params()
         gets the trainable parameters from the network
-    set_requires_grad(net_params, requires_grad)
-        sets net_params to require gradient or not
+    set_requires_grad(net_type, requires_grad)
+        sets net_type params to require gradient or not
     get_accuracy(dataLoader)
         gets the model's accuracy given a torch.utils.data.DataLoader
-    train_model(epochs, trainloader)
+    train_model(epochs, trainloader, monitor=2000, **kwargs)
         trains the model with a given torch.utils.data.DataLoader
 
     """
@@ -125,14 +126,14 @@ class Model(nn.Module):
 
         return 100 * correct / total
 
-    def train_model(self, epochs, trainloader, lr=0.001, momentum=0.9, monitor=2000):
+    def train_model(self, epochs, trainloader, monitor=2000, **kwargs):
         assert self.loss_criterion is not None, (
             "loss function must be initialized before training")
         assert self.net is not None, (
             "network must be initialized before training")
 
         #initialize optimizer for training
-        self.set_optimizer(lr=lr, momentum=momentum)
+        self.set_optimizer(**kwargs)
         # train the model
         self.running_loss = 0
         for epoch in range(epochs):
