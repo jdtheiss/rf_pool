@@ -66,13 +66,11 @@ class Module(nn.Module):
         for (key, value) in self.attrs.items():
             setattr(self, key, value)
     
-    def set_list_vars(self, var):
-        assert self.n_layers is not None, (
-            'network must be initialized')
+    def set_list_vars(self, var, n_layers):
         if type(var) is not list:
             var = [var]
-        if len(var) < self.n_layers:
-            var = var + var[-1:] * (self.n_layers - len(var))
+        if len(var) < n_layers:
+            var = var + var[-1:] * (n_layers - len(var))
         return var
         
     def append_list_vars(self, var, new_var):
@@ -121,10 +119,10 @@ class Module(nn.Module):
             return
         # set layer_id str, register each layer_id_net_name_param to self
         layer_id = str(layer_id)
-        net_names = ['trunk','mu_branch','sigma_branch']
-        for net_name, net in zip(net_names, self.control_nets[layer_id]):
-            for i, (name, param) in enumerate(net.named_parameters()):
-                reg_name = '_'.join([layer_id, net_name, name.replace('.','_')])
+        net_names = self.set_list_vars(['trunk','branch'], len(self.control_nets[layer_id]))
+        for i, (net_name, net) in enumerate(zip(net_names, self.control_nets[layer_id])):
+            for name, param in net.named_parameters():
+                reg_name = '_'.join([layer_id, net_name, str(i), name.replace('.','_')])
                 self.register_parameter(reg_name, param)
     
     def set_hidden_layer(self, layer_id):
@@ -268,7 +266,7 @@ class FeedForwardNetwork(Module):
         set pooling layer for layer_id based on pool_types
     make_layers()
         initialize network with layer_types, pool_types, etc.
-    apply_forward_pass(func, x, delta_mu=None, delta_sigma=None)
+    apply_forward_pass(func, x, *control_out)
         perform forward pass through function with input x and optional arguments
         delta_mu and delta_sigma which are used to update receptive field kernels
         when using RF_Pool (see RF_Pool, rf.pool)
@@ -325,21 +323,21 @@ class FeedForwardNetwork(Module):
         self.layer_names = self.get_typenames(self.layer_types)
         self.n_layers = len(self.layer_types)
         self.layer_ids = [str(i) for i in range(self.n_layers)]
-        self.output_channels = self.set_list_vars(self.output_channels)
+        self.output_channels = self.set_list_vars(self.output_channels, self.n_layers)
         self.output_shapes = [()]*self.n_layers
-        self.kernel_sizes = self.set_list_vars(self.kernel_sizes)
+        self.kernel_sizes = self.set_list_vars(self.kernel_sizes, self.n_layers)
         
         # activation functions
-        self.act_types = self.set_list_vars(self.act_types)
+        self.act_types = self.set_list_vars(self.act_types, self.n_layers)
         self.act_names = self.get_typenames(self.act_types)
 
         # pooling layer params
-        self.pool_types = self.set_list_vars(self.pool_types)
+        self.pool_types = self.set_list_vars(self.pool_types, self.n_layers)
         self.pool_names = self.get_typenames(self.pool_types)
-        self.pool_ksizes = self.set_list_vars(self.pool_ksizes)
+        self.pool_ksizes = self.set_list_vars(self.pool_ksizes, self.n_layers)
         
         # misc. params
-        self.dropout_types = self.set_list_vars(self.dropout_types)
+        self.dropout_types = self.set_list_vars(self.dropout_types, self.n_layers)
         self.dropout_names = self.get_typenames(self.dropout_types)
         
         # check each list var has len == n_layers
@@ -383,25 +381,21 @@ class FeedForwardNetwork(Module):
             # dropout
             self.dropouts[layer_id] = self.set_dropout(i)
 
-    def apply_forward_pass(self, fn, x, delta_mu=None, delta_sigma=None):
+    def apply_forward_pass(self, fn, x, *args):
         if fn:
-            if delta_mu is not None and delta_sigma is not None:
-                return fn(x, delta_mu, delta_sigma)
-            else:
-                return fn(x)
+            return fn(x, *args)
         else:
             return x
 
     def forward_layer(self, layer_id, x):
         # preform computations for one layer
-        delta_mu = None
-        delta_sigma = None
+        control_out = []
         layer_id = str(layer_id)
         x = self.apply_forward_pass(self.hidden_layers[layer_id], x)
         x = self.apply_forward_pass(self.activations[layer_id], x)
         if self.control_nets and layer_id in self.control_nets.layer_ids:
-            delta_mu, delta_sigma = self.control_nets(layer_id, x)
-        x = self.apply_forward_pass(self.pool_layers[layer_id], x, delta_mu, delta_sigma)
+            control_out = self.control_nets(layer_id, x)
+        x = self.apply_forward_pass(self.pool_layers[layer_id], x, *control_out)
         x = self.apply_forward_pass(self.dropouts[layer_id], x)
         return x
 
@@ -419,10 +413,12 @@ class ControlNetwork(Module):
     """
     TODO: WRITEME
     """
-    def __init__(self, net, layer_ids, layer_types, act_types=['relu'], **kwargs):
+    def __init__(self, net, layer_ids, layer_types, branch_output_shapes, 
+                 act_types=['relu'], **kwargs):
         super(ControlNetwork, self).__init__()
         # set inputs to attributes
         self.update_attrs({'layer_ids':layer_ids, 'layer_types':layer_types,
+                           'branch_output_shapes':branch_output_shapes,
                            'act_types':act_types})
         # initialize additional attributes
         attr_names = [key for key in net.attrs.keys()]
@@ -443,9 +439,13 @@ class ControlNetwork(Module):
         # trunk params
         self.layer_ids = [str(i) for i in self.layer_ids]
         self.n_layers = len(self.layer_types)
-        self.output_channels = self.set_list_vars(self.output_channels)
-        self.kernel_sizes = self.set_list_vars(self.kernel_sizes)
-        self.act_types = self.set_list_vars(self.act_types)
+        self.output_channels = self.set_list_vars(self.output_channels, self.n_layers)
+        self.kernel_sizes = self.set_list_vars(self.kernel_sizes, self.n_layers)
+        self.act_types = self.set_list_vars(self.act_types, self.n_layers)
+        
+        # branch params
+        if type(self.branch_output_shapes) is not list:
+            self.branch_output_shapes = [self.branch_output_shapes]
         
         # initialize control nets
         self.make_layers(net)
@@ -471,11 +471,14 @@ class ControlNetwork(Module):
                                               net.pool_ksizes[int(layer_id)])
             # make the trunk
             trunk = self.make_trunk(layer_shape)
-            # make the mu and sigma branches 
-            mu_branch = self.make_branch(trunk.output_shapes[-1], 2)
-            sigma_branch = self.make_branch(trunk.output_shapes[-1], 1) 
+            
+            # make branches
+            branches = []
+            for branch_output_shape in self.branch_output_shapes:
+                branches.append(self.make_branch(trunk.output_shapes[-1], branch_output_shape))
+                
             # set control net
-            self.control_nets[str(layer_id)] = (trunk, mu_branch, sigma_branch)
+            self.control_nets[str(layer_id)] = (trunk, *branches)
         
     def make_trunk(self, input_shape):
         # build trunk for control network
@@ -486,14 +489,19 @@ class ControlNetwork(Module):
 
     def make_branch(self, input_shape, output_channels):
         # build branch for control network with shape (batch, output_channels) 
+        output_channels = np.abs(np.prod(output_channels))
         branch_net = FeedForwardNetwork(input_shape, ['fc'], [None], output_channels=[output_channels])
         return branch_net
 
     def forward(self, layer_id, x):
         layer_id = str(layer_id)
-        trunk, mu_branch, sigma_branch = self.control_nets[layer_id]
+        trunk = self.control_nets[layer_id][0]
+        branches = self.control_nets[layer_id][1:]
         trunk_out = trunk.forward(x)
-        return mu_branch.forward(trunk_out), sigma_branch.forward(trunk_out)
+        branch_out = []
+        for branch, branch_output_shape in zip(branches, self.branch_output_shapes):
+            branch_out.append(torch.reshape(branch.forward(trunk_out), branch_output_shape))
+        return branch_out
 
 class GenerativeNetwork(Module):
     """
