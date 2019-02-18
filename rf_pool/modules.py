@@ -298,7 +298,8 @@ class FeedForwardNetwork(Module):
     ControlNetwork : module to create control_nets to update receptive fields
         for use with RF_Pool
     """
-    def __init__(self, data_shape, layer_types, act_types, pool_types=[None], dropout_types=[None], **kwargs):
+    def __init__(self, data_shape, layer_types, act_types=[None], 
+                 pool_types=[None], dropout_types=[None], **kwargs):
         super(FeedForwardNetwork, self).__init__()
         # set inputs to attributes
         self.update_attrs({'data_shape':data_shape, 'layer_types':layer_types, 
@@ -345,7 +346,7 @@ class FeedForwardNetwork(Module):
             value = getattr(self, key)
             if type(value) is list:
                 assert len(value) == self.n_layers, (
-                   ' '.join(key,'must a be a list of size',str(self.n_layers)))
+                   ' '.join([key,'must a be a list of size',str(self.n_layers)]))
             
         # initialize network
         self.make_layers()
