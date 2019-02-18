@@ -13,25 +13,18 @@ class Layer(torch.nn.Module):
         self.img_shape = None
         self.lattice_fn = None
         self.updates = None
-        self.inputs = {'u': None, 't': None, 
-                       'rfs': None, 'pool_type': 'prob', 
+        self.inputs = {'t': None, 'rfs': None, 'pool_type': 'prob', 
                        'block_size': (2,2), 'pool_args': []}
         
     def __call__(self, *args):
         return self.forward(*args)
 
-    def apply(self, **kwargs):
-        return ops.rf_pool(**kwargs)
+    def apply(self, *args, **kwargs):
+        return ops.rf_pool(*args, **kwargs)
     
     def forward(self):
         pass
     
-    def set(self, name, var):
-        setattr(self, name, var)
-
-    def get(self, name):
-        return getattr(self, name)
-
     def init_rfs(self):
         assert self.lattice_fn is not None
         assert self.mu.shape[0] == self.sigma.shape[0]
@@ -60,34 +53,31 @@ class RF_Pool(Layer):
     """
     Receptive field pooling layer (see ops.rf_pool for details)
     
-    Attributes
+    Parameters
     ----------
-    rfs : torch.Tensor
-        kernels containing receptive fields to apply pooling over with shape
-        (n_kernels, h, w) (see utils.lattice)
-        kernels are element-wise multiplied with (u+t) prior to pooling
-        [default: None, applies pooling over blocks]
-    pool_type : string
-        type of pooling ('prob', 'stochastic', 'div_norm', 'average', 'sum')
-        [default: 'prob']
-    block_size : tuple
-        size of blocks in hidden layer connected to pooling units 
-        [default: (2,2)]
-    pool_args : list
-        extra arguments sent to pooling function indicated by pool_type
-        (especially for div_norm_pool) [default: []]
+    mu
+    
+    Parameters
+    ----------
     mu : torch.Tensor
-        #TODO:WRITEME
+        receptive field centers (in x-y coordinate space) with shape 
+        (n_kernels, 2) [default: None
     sigma : torch.Tensor
-        #TODO:WRITEME
+        receptive field standard deviations with shape 
+        (n_kernels, 1) [default: None]
     img_shape : tuple
-        #TODO:WRITEME
-    lattice_fn : utils.lattice function
-        function used to update rfs kernels given delta_mu and delta_sigma
-        [default: lattice.gaussian_kernel_lattice]
+        receptive field/detection layer shape [default: None]
     updates : bool
         update mu and sigma on each call to update_rfs (True) or keep mu and
         sigma static (False [default])
+    lattice_fn : utils.lattice function
+        function used to update receptive field kernels given delta_mu and delta_sigma
+        [default: lattice.gaussian_kernel_lattice]
+
+    Attributes
+    ----------
+    inputs : dict
+        inputs passed to ops.rf_pool
         
     Methods
     -------
@@ -119,10 +109,9 @@ class RF_Pool(Layer):
         self.lattice_fn = lattice_fn
         self.inputs.update(kwargs)
                          
-    def forward(self, u, t=None, delta_mu=None, delta_sigma=None):
-        # set u, t
-        self.inputs['u'] = u
-        self.inputs['t'] = t
+    def forward(self, u, delta_mu=None, delta_sigma=None, **kwargs):
+        # update inputs with kwargs
+        self.inputs.update(kwargs)
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
@@ -131,10 +120,10 @@ class RF_Pool(Layer):
             if self.updates:
                 self.update_mu_sigma(delta_mu, delta_sigma)
         # return pooling outputs
-        return self.apply(**self.inputs)[2]
+        return self.apply(u, **self.inputs)[2]
     
 class RF_Uniform(Layer):
     def __init__(self):
         super(RF_Uniform, self).__init__()
-                         
+        raise NotImplementedError
     
