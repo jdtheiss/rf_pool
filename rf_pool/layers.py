@@ -34,8 +34,8 @@ class Layer(torch.nn.Module):
     def update_rfs(self, delta_mu, delta_sigma):
         assert self.inputs['rfs'] is not None
         assert self.img_shape is not None
-        rfs_shape = self.inputs['rfs'].shape[1:]
-        # update mu if img_shape doesnt match rfs.shape[1:]
+        rfs_shape = self.inputs['rfs'].shape[-2:]
+        # update mu if img_shape doesnt match rfs.shape[-2:]
         if rfs_shape != self.img_shape:
             self.mu.add_(torch.sub(torch.as_tensor(self.img_shape, dtype=self.mu.dtype), 
                                    torch.as_tensor(rfs_shape, dtype=self.mu.dtype)))
@@ -102,7 +102,7 @@ class RF_Pool(Layer):
         self.mu = mu
         self.sigma = sigma
         if self.inputs['rfs'] is not None and self.img_shape is None:
-            self.img_shape = self.inputs['rfs'].shape[1:]
+            self.img_shape = self.inputs['rfs'].shape[-2:]
         else:
             self.img_shape = img_shape
         self.updates = updates
