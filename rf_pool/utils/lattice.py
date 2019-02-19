@@ -423,13 +423,22 @@ def plot_size_ecc(mu, sigma, img_shape):
     plt.plot(ecc.numpy(), sigma.numpy())
     plt.show()
 
-def show_kernel_lattice(kernels):
-    # normalize each kernel to max 1, then max across kernels to show
-    max_kerns = torch.as_tensor(np.max(kernels.numpy(), axis=(1,2), keepdims=True), 
+def make_kernel_lattice(kernels):
+    if len(kernels.shape) == 3:
+        #normalize each kernel to max 1, then max across kernels to show
+        max_kerns = torch.as_tensor(np.max(kernels.numpy(), axis=(1,2), keepdims=True), 
                                 dtype=kernels.dtype)
-    norm_kerns = torch.div(kernels, max_kerns + 1e-6)
-    out = torch.max(norm_kerns, dim=0)[0]
-    plt.imshow(out.numpy())
+        norm_kerns = torch.div(kernels, max_kerns + 1e-6)
+        out = torch.max(norm_kerns, dim=0)[0]
+
+    elif len(kernels.shape) == 5:
+        out = torch.squeeze(torch.max(kernels, dim=2)[0])
+
+    return out.numpy()
+
+def show_kernel_lattice(kernels):
+    out = make_kernel_lattice(kernels)
+    plt.imshow(out)
     plt.show()
 
 if __name__ == '__main__':

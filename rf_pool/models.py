@@ -6,6 +6,7 @@ from IPython.display import clear_output, display
 import matplotlib.pyplot as plt 
 import pickle
 from modules import FeedForwardNetwork, ControlNetwork
+import utils.lattice as lattice
 
 class Model(nn.Module):
     """
@@ -29,8 +30,8 @@ class Model(nn.Module):
         loads a previously saved model from filename
     save_model(filename, extras = [])
         saves a model instance 
-    show_lattice()
-        notImplemented
+    show_lattice(x, figsize=(10,10))
+        shows the lattice for each layer given input x
     get_trainable_params()
         gets the trainable parameters from the network
     set_requires_grad(net_type, requires_grad)
@@ -93,8 +94,30 @@ class Model(nn.Module):
         model = pickle.load(open(filename, 'rb'))
         return model
 
-    def show_lattice(self):
-        raise NotImplementedError
+    def show_lattice(self, x, figsize=(10,10)):
+        assert self.net.control_nets is not None, (
+            "control network must be activated to show lattice")
+
+        n_examples = x.shape[0]
+        n_lattices =  len(self.net.control_nets.layer_ids)
+        fig, ax = plt.subplots(n_examples, 1+n_lattices, figsize=figsize)
+
+        # adjust the pooling layers
+        self.net(x)
+        with torch.no_grad():
+            for batch_id in range(n_examples):
+                img = x[batch_id]
+                img =  img / 2 + 0.5 # unnormalize
+                img = img.numpy()
+                img = np.transpose(img, (1, 2, 0))
+                ax[batch_id, 0].imshow(img)
+
+                for i, layer_id in enumerate(self.net.control_nets.layer_ids):
+                    rfs = self.net.pool_layers[layer_id].inputs['rfs']
+                    lattice_layer = lattice.make_kernel_lattice(rfs)
+                    ax[batch_id, i+1].imshow(lattice_layer[batch_id])                 
+        plt.show()
+
 
     def get_trainable_params(self):
         #grabs only parameters with 'requires_grad' set to True
