@@ -66,9 +66,22 @@ class Model(nn.Module):
         else:
             raise Exception('loss_type not understood')
 
-    def set_optimizer(self, **kwargs):
-        trainable_params = self.get_trainable_params()
+    def set_optimizer(self, prefix=[''], **kwargs):
+        # set params dict for main, control networks
+        params = []
+        for net_prefix in prefix:
+            params.append({'params': self.get_trainable_params(net_prefix)})
 
+        # remove kwargs and set to params if list
+        removed_keys = []
+        for (key, value) in kwargs.items():
+            if type(value) is list:
+                removed_keys.append(key)
+                for i, v in enumerate(value):
+                    params[i].update({key: v})
+        [kwargs.pop(key) for key in removed_keys]
+        
+        # get typename for optimizer
         if type(self.optimizer_type) is not str:
             self.optimizer_name = torch.typename(self.optimizer_type)
         else:
@@ -76,19 +89,19 @@ class Model(nn.Module):
 
         # choose optimizer 
         if self.optimizer_name.lower() == 'sgd':
-            self.optimizer = optim.SGD(trainable_params, **kwargs)
+            self.optimizer = optim.SGD(params, **kwargs)
         elif self.optimizer_name.lower() == 'adam':
-            self.optimizer = optim.Adam(trainable_params, **kwargs) 
+            self.optimizer = optim.Adam(params, **kwargs) 
         elif self.optimizer_name.startswith('torch.optim'):
-            self.optimizer = self.optimizer_type(trainable_params, **kwargs)
+            self.optimizer = self.optimizer_type(params, **kwargs)
         else:
             raise Exception("optimizer_type not understood")
 
     def save_model(self, filename, extras=[]):
         if type(extras) is not list:
-        	extras = [extras]
+            extras = [extras]
         with open(filename, 'wb') as f:
-        	pickle.dump([self,] + extras, f)
+            pickle.dump([self,] + extras, f)
 
     def load_model(self, filename):
         model = pickle.load(open(filename, 'rb'))
@@ -118,11 +131,13 @@ class Model(nn.Module):
                     ax[batch_id, i+1].imshow(lattice_layer[batch_id])                 
         plt.show()
 
-    def get_trainable_params(self):
+    def get_trainable_params(self, prefix=''):
+        # set prefix to 'hidden_layers' to grab only net params
+        # or set prefix to 'control_nets' to grab only control params
         #grabs only parameters with 'requires_grad' set to True
         trainable_params = []
         for (name, param) in self.net.named_parameters():
-            if param.requires_grad == True:
+            if param.requires_grad == True and name.startswith(prefix):
                 trainable_params.append(param)
 
         return trainable_params
