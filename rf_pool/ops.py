@@ -423,30 +423,29 @@ def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), mask_thr=1e
     else: #TODO: allow pool_fn = pool_type if function
         raise Exception('pool_type not understood')
 
-    # init h_mean, h_sample, p_mean, p_sample
-    h_mean = torch.zeros_like(u_t)
-    h_sample = torch.zeros_like(u_t)
-    p_mean = torch.zeros_like(u_t)
-    p_sample = torch.zeros_like(u_t)
-    
     # pooling across receptive fields
     if receptive_fields:
         # elemwise multiply u_t with rf_kernels
         u_t = u_t.unsqueeze(2)
         rf_kernels = torch.add(torch.zeros_like(u_t), rfs)
-        rf_u = torch.mul(u_t, rf_kernels).permute(2,0,1,3,4)
+        rf_u = torch.mul(u_t, rf_kernels)
         # create rf_mask of receptive field kernels
-        rf_mask = torch.as_tensor(torch.gt(rf_kernels, mask_thr).permute(2,0,1,3,4),
-                                  dtype=rf_u.dtype)
+        rf_mask = torch.as_tensor(torch.gt(rf_kernels, mask_thr), dtype=rf_u.dtype)
         # apply pool function across image dims
         h_mean, h_sample, p_mean, p_sample = pool_fn(rf_u.flatten(-2), rf_u.shape,
                                                      mask=rf_mask.flatten(-2), **kwargs)
         # max across receptive fields
-        h_mean = torch.max(h_mean, 0)[0]
-        h_sample = torch.max(h_sample, 0)[0]
-        p_mean = torch.max(p_mean, 0)[0]
-        p_sample = torch.max(p_sample, 0)[0]
+        h_mean = torch.max(h_mean, -3)[0]
+        h_sample = torch.max(h_sample, -3)[0]
+        p_mean = torch.max(p_mean, -3)[0]
+        p_sample = torch.max(p_sample, -3)[0]
+    # pooling across blocks
     elif rfs is None:
+        # init h_mean, h_sample, p_mean, p_sample
+        h_mean = torch.zeros_like(u_t)
+        h_sample = torch.zeros_like(u_t)
+        p_mean = torch.zeros_like(u_t)
+        p_sample = torch.zeros_like(u_t)
         # pool across blocks
         h_mean_b, h_sample_b, p_mean_b, p_sample_b = pool_fn(b, b.shape, **kwargs)
         for r in range(b_h):
