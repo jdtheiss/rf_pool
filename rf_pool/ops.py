@@ -2,14 +2,46 @@ import numpy as np
 import torch
 from torch.distributions import Multinomial
 
-def prob_max_pool(rf_u, out_shape):
+def local_softmax(u, dim=-1, mask=None):
+    """
+    Apply softmax across dim with mask
+    
+    Parameters
+    ----------
+    u : torch.Tensor
+        input to softmax
+    dim : int
+        dimension to across which to softmax
+    mask : torch.Tensor or None
+        mask with shape = u.shape and dtype = u.dtype with 1s indicating units
+        to include in softmax
+
+    Returns
+    -------
+    s : torch.Tensor
+        softmaxed output
+
+    Notes
+    -----
+    Mask is applied by setting 1s to 0 and 0s to -inf before adding to u. This
+    allows for indices that are not included in mask to output as 0 and not be
+    included in sum of exponentials.
+    """
+    if type(mask) is torch.Tensor:
+        mask = torch.as_tensor(-1. * torch.exp(np.inf * (1. - 2 * mask)),
+                               dtype=u.dtype)
+        u = torch.add(u, mask)
+    return torch.softmax(u, dim)
+
+def prob_max_pool(u, out_shape, mask=None):
     """
     Probabilistic max-pooling across units in a receptive field (last dim)
     
     Parameters
     ----------
-    rf_u : torch.Tensor
-        receptive field to pool over with shape[-1] == n_units
+    u : torch.Tensor
+        receptive field to pool over with n_units = shape[-1]
+        or torch.sum(mask, -1)
     out_shape : tuple
         shape of tensor to output
 
@@ -45,30 +77,33 @@ def prob_max_pool(rf_u, out_shape):
     """
 
     # get probabilities for each unit being on or all off, sample
-    off_pt = torch.zeros(rf_u.shape[:-1] + (1,), dtype=rf_u.dtype)
-    events = torch.cat([rf_u, off_pt], -1)
-    probs = torch.softmax(events, -1)
+    off_pt = torch.zeros(u.shape[:-1] + (1,), dtype=u.dtype)
+    events = torch.cat([u, off_pt], -1)
+    if type(mask) is torch.Tensor:
+        mask = torch.cat([mask, 1. + off_pt], -1)
+        mask = torch.flatten(mask, 0, -2)
+    probs = local_softmax(torch.flatten(events, 0, -2), -1, mask)
     samples = Multinomial(probs=probs).sample()
-    # get mean-field estimates and samples
-    index = torch.cat([torch.ones_like(rf_u, dtype=torch.uint8), 
-                       torch.zeros_like(off_pt, dtype=torch.uint8)], -1)
-    h_mean = torch.reshape(probs[index], out_shape)
-    h_sample = torch.reshape(samples[index], out_shape)
-    p_mean = torch.zeros_like(rf_u)
-    p_mean = torch.add(p_mean, torch.reshape(1. - probs[index-1], off_pt.shape))
+    # set detection mean-field estimates and samples
+    h_mean = torch.reshape(probs[:,:-1], out_shape)
+    h_sample = torch.reshape(samples[:,:-1], out_shape)
+    # set pooling mean-field estimates and samples
+    p_mean = torch.zeros_like(u)
+    p_mean = torch.add(p_mean, torch.reshape(1. - probs[:,-1], off_pt.shape))
     p_mean = torch.reshape(p_mean, out_shape)
     p_mean = torch.mul(p_mean, h_sample)
     p_sample = h_sample.clone()
     return h_mean, h_sample, p_mean, p_sample
 
-def stochastic_max_pool(rf_u, out_shape):
+def stochastic_max_pool(u, out_shape, mask=None):
     """
     Stochastic max-pooling across units in a receptive field (last dim)
     
     Parameters
     ----------
-    rf_u : torch.Tensor
-        receptive field to pool over with shape[-1] == n_units
+    u : torch.Tensor
+        receptive field to pool over with n_units = shape[-1]
+        or torch.sum(mask, -1)
     out_shape : tuple
         shape of tensor to output
 
@@ -101,21 +136,24 @@ def stochastic_max_pool(rf_u, out_shape):
     """
 
     # get probabilities for each unit being on
-    probs = torch.softmax(rf_u, -1)
+    probs = local_softmax(u, -1, mask)
+    # set detection mean-field estimates and samples
     h_mean = torch.reshape(probs, out_shape)
     h_sample = torch.reshape(Multinomial(probs=probs).sample(), out_shape)
+    # set pooling mean-field estimates and samples
     p_mean = torch.mul(h_mean, h_sample)
     p_sample = h_sample.clone()
     return h_mean, h_sample, p_mean, p_sample
 
-def div_norm_pool(rf_u, out_shape, n=2., sigma=0.5):
+def div_norm_pool(u, out_shape, mask=None, n=2., sigma=0.5):
     """
     Divisive normalization across units in a receptive field (last dim)
     
     Parameters
     ----------
-    rf_u : torch.Tensor
-        receptive field to pool over with shape[-1] == n_units
+    u : torch.Tensor
+        receptive field to pool over with n_units = shape[-1]
+        or torch.sum(mask, -1)
     out_shape : tuple
         shape of tensor to output
     n : float
@@ -143,9 +181,11 @@ def div_norm_pool(rf_u, out_shape, n=2., sigma=0.5):
     each unit with a constant, sigma, added in the denominator:
         h_mean = torch.pow(rf_u, n)/torch.add(torch.pow(sigma, n),
                  torch.sum(torch.pow(rf_u, n), dim=-1, keepdim=True))
-        h_sample = Multinomial(probs=torch.softmax(h_mean, -1)).sample()
-        p_mean = torch.mul(h_mean, h_sample)
-        p_sample = h_sample.clone()
+        h_sample is set to 1 indexed at the stochastically selected max unit
+        (see stochastic_max_pool)
+        p_mean is set to the value of h_mean indexed at the stochastically
+        selected max unit
+        p_sample is set to h_sample
     
     With n=2 and sigma=0.5, div_norm_pool simulates the average cortical 
     normalization observed emprically (Heeger, 1992).
@@ -156,29 +196,27 @@ def div_norm_pool(rf_u, out_shape, n=2., sigma=0.5):
     cortex. Visual neuroscience, 9(2), 181-197.
     """
 
-    # get inf indices, set to 0.
-    inf_mask = torch.isinf(rf_u)
-    rf_u[inf_mask] = 0.
     # raise rf_u, sigma to nth power
-    rf_u_n = torch.pow(rf_u, n)
-    sigma_n = torch.pow(torch.as_tensor(sigma, dtype=rf_u.dtype), n)
-    probs = torch.div(rf_u_n, sigma_n + torch.sum(rf_u_n, dim=-1, keepdim=True))
-    h_mean = torch.reshape(probs.clone(), out_shape)
-    # set inf indices to -inf for softmax
-    probs[inf_mask] = -np.inf
-    h_sample = torch.reshape(Multinomial(probs=torch.softmax(probs, -1)).sample(), out_shape)
+    u_n = torch.pow(u, n)
+    sigma_n = torch.pow(torch.as_tensor(sigma, dtype=u.dtype), n)
+    probs = torch.div(u_n, sigma_n + torch.sum(u_n, dim=-1, keepdim=True))
+    # set detection mean-field estimates and samples
+    h_mean = torch.reshape(probs, out_shape)
+    h_sample = torch.reshape(Multinomial(probs=local_softmax(probs, -1, mask)).sample(), out_shape)
+    # set pooling mean-field estimates and samples
     p_mean = torch.mul(h_mean, h_sample)
     p_sample = h_sample.clone()
     return h_mean, h_sample, p_mean, p_sample
 
-def average_pool(rf_u, out_shape):
+def average_pool(u, out_shape, mask=None):
     """
     Average pooling across units in a receptive field (last dim)
     
     Parameters
     ----------
-    rf_u : torch.Tensor
-        receptive field to pool over with shape[-1] == n_units
+    u : torch.Tensor
+        receptive field to pool over with n_units = shape[-1]
+        or torch.sum(mask, -1)
     out_shape : tuple
         shape of tensor to output
 
@@ -207,31 +245,30 @@ def average_pool(rf_u, out_shape):
         p_sample is set to h_sample
     """
 
-    # get inf indices, set to 0.
-    inf_mask = torch.isinf(rf_u)
-    rf_u[inf_mask] = 0.
     # get count of units in last dim
-    n_units = torch.as_tensor(rf_u.shape[-1] - torch.sum(inf_mask, -1, keepdim=True), 
-                              dtype=rf_u.dtype)
+    n_units = torch.as_tensor(u.shape[-1], dtype=u.dtype)
+    if type(mask) is torch.Tensor:
+        n_units = torch.sum(mask, -1, keepdim=True)
     # divide activity by number of units
-    probs = torch.div(rf_u, n_units)
-    h_mean = torch.reshape(probs.clone(), out_shape)
-    # set inf indices to -inf for softmax
-    probs[inf_mask] = -np.inf
-    samples = Multinomial(probs=torch.softmax(probs, -1)).sample()
+    probs = torch.div(u, n_units)
+    # set detection mean-field estimates and samples
+    h_mean = torch.reshape(probs, out_shape)
+    samples = Multinomial(probs=local_softmax(probs, -1, mask)).sample()
     h_sample = torch.reshape(samples, out_shape)
+    # set pooling mean-field estimates and samples
     p_mean = torch.mul(h_mean, h_sample)
     p_sample = h_sample.clone()
     return h_mean, h_sample, p_mean, p_sample
 
-def sum_pool(rf_u, out_shape):
+def sum_pool(u, out_shape, mask=None):
     """
     Sum pooling across units in a receptive field (last dim)
     
     Parameters
     ----------
-    rf_u : torch.Tensor
-        receptive field to pool over with shape[-1] == n_units
+    u : torch.Tensor
+        receptive field to pool over with n_units = shape[-1]
+        or torch.sum(mask, -1)
     out_shape : tuple
         shape of tensor to output
 
@@ -252,31 +289,30 @@ def sum_pool(rf_u, out_shape):
     Sum pooling returns the following mean-field estimates and samples for
     the hidden and pooling layers:
         h_mean is set to the input, rf_u
-        h_sample is set to the sum across the receptive field indexed at
-        the stochastically selected max unit in the receptive field (see 
-        stochastic_max_pool)
-        p_mean is set to the input value indexed at the stochastically
-        selected max unit
+        h_sample is set to 1 indexed at the stochastically selected max unit
+        (see stochastic_max_pool)
+        p_mean is set to the sum across across units in the receptive field 
+        indexed at the stochastically selected max unit
         p_sample is set to h_sample
     """
 
-    # get inf indices, set to 0.
-    inf_mask = torch.isinf(rf_u)
-    rf_u[inf_mask] = 0.
-    # set h_mean to rf_u, h_sample to sum
-    h_mean = torch.reshape(rf_u.clone(), out_shape)
-    h_sample = torch.zeros_like(rf_u)
-    h_sample.add_(torch.sum(rf_u, dim=-1, keepdim=True))
-    h_sample = torch.reshape(h_sample, out_shape)
-    # set inf indices to -inf for softmax
-    rf_u[inf_mask] = -np.inf
-    sampled_pos = torch.reshape(Multinomial(probs=torch.softmax(rf_u, -1)).sample(), out_shape)
-    h_sample = torch.mul(h_sample, sampled_pos)
-    p_mean = torch.mul(h_mean, sampled_pos)
+    # multiply u by mask
+    if type(mask) is torch.Tensor:
+        u = torch.mul(u, torch.as_tensor(mask, dtype=u.dtype))
+    # get sum across last dim in u
+    sum_val = torch.zeros_like(u)
+    sum_val = torch.add(sum_val, torch.sum(u, -1, keepdim=True))
+    sum_val = torch.reshape(sum_val, out_shape)
+    # set detection mean-field estimates and samples
+    h_mean = torch.reshape(u, out_shape)
+    h_sample = torch.reshape(Multinomial(probs=local_softmax(u, -1, mask)).sample(), 
+                             out_shape)
+    # set pooling mean-field estimates and samples
+    p_mean = torch.mul(sum_val, h_sample)
     p_sample = h_sample.clone()
     return h_mean, h_sample, p_mean, p_sample
 
-def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[]):
+def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), mask_thr=1e-5, **kwargs):
     """
     Receptive field pooling
 
@@ -284,10 +320,10 @@ def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[
     ----------
     u : torch.Tensor
         bottom-up input to pooling layer with shape (batch_size, ch, h, w)
-    t : torch.Tensor
+    t : torch.Tensor or None
         top-down input to pooling layer with shape 
         (batch_size, ch, h//block_size[0], w//block_size[1]) [default: None]
-    rfs : torch.Tensor
+    rfs : torch.Tensor or None
         kernels containing receptive fields to apply pooling over with shape
         (n_kernels, h, w) (see lattice_utils)
         kernels are element-wise multiplied with (u+t) prior to pooling
@@ -298,9 +334,10 @@ def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[
     block_size : tuple
         size of blocks in hidden layer connected to pooling units 
         [default: (2,2)]
-    pool_args : list
-        extra arguments sent to pooling function indicated by pool_type
-        (especially for div_norm_pool) [default: []]
+    mask_thr : float
+        threshold for creating a mask from rfs tensor (if input) [default: 1e-5]
+    **kwargs : dict
+        extra arguments passed to pooling function indicated by pool_type
 
     Returns
     -------
@@ -340,7 +377,7 @@ def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[
     
     See Also
     --------
-    layers.RF_Pool : layer implementation of rf.pool function
+    layers.RF_Pool : layer implementation of rf_pool function
     """
 
     # get bottom-up shape, block size
@@ -348,22 +385,29 @@ def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[
     b_h, b_w = block_size
 
     # get top-down
-    if t is None:
-        t = torch.zeros((batch_size, ch, u_h//b_h, u_w//b_w), dtype=u.dtype)
-
-    # check bottom-up, top-down shapes
-    assert u.shape[:2] == t.shape[:2]
-    assert u_h//b_h == t.shape[-2]
-    assert u_w//b_w == t.shape[-1]
-
-    # add bottom-up and top-down
     u_t = u.clone()
-    b = []
-    for r in range(b_h):
-        for c in range(b_w):
-            u_t[:, :, r::b_h, c::b_w].add_(t)
-            b.append(u_t[:, :, r::b_h, c::b_w].unsqueeze(-1))
-    b = torch.cat(b, -1)
+    top_down = (type(t) is torch.Tensor)
+    receptive_fields = (type(rfs) is torch.Tensor)
+    
+    # check bottom-up, top-down shapes
+    if top_down:
+        assert u.shape[:2] == t.shape[:2]
+        assert u_h//b_h == t.shape[-2]
+        assert u_w//b_w == t.shape[-1]
+        t_shape = t.shape
+    else:
+        t_shape = (batch_size, ch, u_h//b_h, u_w//b_w)
+    
+    # add top-down, get blocks
+    if top_down or not receptive_fields:
+        # add bottom-up and top-down
+        b = []
+        for r in range(b_h):
+            for c in range(b_w):
+                if top_down:
+                    u_t[:, :, r::b_h, c::b_w].add_(t)
+                b.append(u_t[:, :, r::b_h, c::b_w].unsqueeze(-1))
+        b = torch.cat(b, -1)
 
     # set pool_fn
     if pool_type == 'prob':
@@ -379,28 +423,24 @@ def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[
     else: #TODO: allow pool_fn = pool_type if function
         raise Exception('pool_type not understood')
 
-    # check pool_args is list
-    assert type(pool_args) is list
-
-    # init h_mean, h_sample
+    # init h_mean, h_sample, p_mean, p_sample
     h_mean = torch.zeros_like(u_t)
     h_sample = torch.zeros_like(u_t)
     p_mean = torch.zeros_like(u_t)
     p_sample = torch.zeros_like(u_t)
-    if type(rfs) is torch.Tensor:
+    
+    # pooling across receptive fields
+    if receptive_fields:
         # elemwise multiply u_t with rf_kernels
         u_t = u_t.unsqueeze(2)
         rf_kernels = torch.add(torch.zeros_like(u_t), rfs)
-        g_u = torch.mul(u_t, rf_kernels).permute(2,0,1,3,4)
-        # create rf_mask of 0s at rf and -inf elsewhere
-        thr = 1e-5
-        rf_mask = torch.as_tensor(torch.le(rf_kernels, thr).permute(2,0,1,3,4),
-                                  dtype=g_u.dtype)
-        rf_mask = -1. * torch.exp(np.inf * (2. * rf_mask - 1.))
-        # get rf_u with g_u at rf and -inf elsewhere
-        rf_u = torch.add(g_u, rf_mask)
+        rf_u = torch.mul(u_t, rf_kernels).permute(2,0,1,3,4)
+        # create rf_mask of receptive field kernels
+        rf_mask = torch.as_tensor(torch.gt(rf_kernels, mask_thr).permute(2,0,1,3,4),
+                                  dtype=rf_u.dtype)
         # apply pool function across image dims
-        h_mean, h_sample, p_mean, p_sample = pool_fn(rf_u.flatten(-2), rf_u.shape, *pool_args)
+        h_mean, h_sample, p_mean, p_sample = pool_fn(rf_u.flatten(-2), rf_u.shape,
+                                                     mask=rf_mask.flatten(-2), **kwargs)
         # max across receptive fields
         h_mean = torch.max(h_mean, 0)[0]
         h_sample = torch.max(h_sample, 0)[0]
@@ -408,7 +448,7 @@ def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[
         p_sample = torch.max(p_sample, 0)[0]
     elif rfs is None:
         # pool across blocks
-        h_mean_b, h_sample_b, p_mean_b, p_sample_b = pool_fn(b, b.shape, *pool_args)
+        h_mean_b, h_sample_b, p_mean_b, p_sample_b = pool_fn(b, b.shape, **kwargs)
         for r in range(b_h):
             for c in range(b_w):
                 h_mean[:, :, r::b_h, c::b_w] = h_mean_b[:,:,:,:,(r*b_h) + c]
@@ -418,12 +458,12 @@ def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), pool_args=[
     else:
         raise Exception('rfs type not understood')
         
-    # set p_mean, p_sample
+    # set p_mean, p_sample if blocks larger than (1,1)
     if block_size != (1,1):
         tmp_mean = p_mean.clone()
         tmp_sample = p_sample.clone()
-        p_mean = torch.zeros_like(t)
-        p_sample = torch.zeros_like(t)
+        p_mean = torch.zeros(t_shape)
+        p_sample = torch.zeros(t_shape)
         for r in range(b_h):
             for c in range(b_w):
                 p_mean = torch.max(p_mean, tmp_mean[:, :, r::b_h, c::b_w])
