@@ -173,7 +173,7 @@ class Model(nn.Module):
                     clear_output(wait=True)
                     display('[%d, %5d] loss: %.3f' % (epoch , i, self.running_loss / monitor))
                     if monitor_lattice == True:
-                        display(self.show_lattice(inputs))
+                        self.show_lattice(inputs)
                     self.running_loss = 0.0
 
 
