@@ -103,8 +103,8 @@ class Model(nn.Module):
         fig, ax = plt.subplots(n_examples, 1+n_lattices, figsize=figsize)
 
         # adjust the pooling layers
-        self.net(x)
         with torch.no_grad():
+            self.net(x)
             for batch_id in range(n_examples):
                 img = x[batch_id]
                 img =  img / 2 + 0.5 # unnormalize
@@ -117,7 +117,6 @@ class Model(nn.Module):
                     lattice_layer = lattice.make_kernel_lattice(rfs)
                     ax[batch_id, i+1].imshow(lattice_layer[batch_id])                 
         plt.show()
-
 
     def get_trainable_params(self):
         #grabs only parameters with 'requires_grad' set to True
