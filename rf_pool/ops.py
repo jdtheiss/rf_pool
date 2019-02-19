@@ -1,5 +1,7 @@
 import numpy as np
+from six.moves import xrange
 import torch
+import torch.nn.functional as F
 from torch.distributions import Multinomial
 
 def local_softmax(u, dim=-1, mask=None):
@@ -402,8 +404,8 @@ def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), mask_thr=1e
     if top_down or not receptive_fields:
         # add bottom-up and top-down
         b = []
-        for r in range(b_h):
-            for c in range(b_w):
+        for r in xrange(b_h):
+            for c in xrange(b_w):
                 if top_down:
                     u_t[:, :, r::b_h, c::b_w].add_(t)
                 b.append(u_t[:, :, r::b_h, c::b_w].unsqueeze(-1))
@@ -439,6 +441,10 @@ def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), mask_thr=1e
         h_sample = torch.max(h_sample, -3)[0]
         p_mean = torch.max(p_mean, -3)[0]
         p_sample = torch.max(p_sample, -3)[0]
+        
+        # set p_mean, p_sample if blocks larger than (1,1)
+        p_mean = F.max_pool2d_with_indices(p_mean, block_size)[0]
+        p_sample = F.max_pool2d_with_indices(p_sample, block_size)[0]
     # pooling across blocks
     elif rfs is None:
         # init h_mean, h_sample, p_mean, p_sample
@@ -448,26 +454,15 @@ def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), mask_thr=1e
         p_sample = torch.zeros_like(u_t)
         # pool across blocks
         h_mean_b, h_sample_b, p_mean_b, p_sample_b = pool_fn(b, b.shape, **kwargs)
-        for r in range(b_h):
-            for c in range(b_w):
+        for r in xrange(b_h):
+            for c in xrange(b_w):
                 h_mean[:, :, r::b_h, c::b_w] = h_mean_b[:,:,:,:,(r*b_h) + c]
                 h_sample[:, :, r::b_h, c::b_w] = h_sample_b[:,:,:,:,(r*b_h) + c]
-                p_mean[:, :, r::b_h, c::b_w] = p_mean_b[:,:,:,:,(r*b_h) + c]
-                p_sample[:, :, r::b_h, c::b_w] = p_sample_b[:,:,:,:,(r*b_h) + c]
+        p_mean = torch.max(p_mean_b, -1)[0]
+        p_sample = torch.max(p_sample_b, -1)[0]
     else:
         raise Exception('rfs type not understood')
         
-    # set p_mean, p_sample if blocks larger than (1,1)
-    if block_size != (1,1):
-        tmp_mean = p_mean.clone()
-        tmp_sample = p_sample.clone()
-        p_mean = torch.zeros(t_shape)
-        p_sample = torch.zeros(t_shape)
-        for r in range(b_h):
-            for c in range(b_w):
-                p_mean = torch.max(p_mean, tmp_mean[:, :, r::b_h, c::b_w])
-                p_sample = torch.max(p_sample, tmp_sample[:, :, r::b_h, c::b_w])
-
     return h_mean, h_sample, p_mean, p_sample
 
 if __name__ == '__main__':
