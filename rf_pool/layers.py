@@ -14,7 +14,7 @@ class Layer(torch.nn.Module):
         self.lattice_fn = None
         self.updates = None
         self.inputs = {'t': None, 'rfs': None, 'pool_type': 'prob', 
-                       'block_size': (2,2), 'pool_args': []}
+                       'block_size': (2,2)}
         
     def __call__(self, *args):
         return self.forward(*args)
@@ -73,6 +73,8 @@ class RF_Pool(Layer):
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and delta_sigma
         [default: lattice.gaussian_kernel_lattice]
+    **kwargs : dict
+        kwargs passed to ops.rf_pool (see ops.rf_pool, other ops pooling functions)
 
     Attributes
     ----------
