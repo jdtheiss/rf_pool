@@ -126,12 +126,13 @@ class Model(nn.Module):
 
         return 100 * correct / total
 
-    def train_model(self, epochs, trainloader, monitor=2000, **kwargs):
+    def train_model(self, epochs, trainloader, monitor=2000, lr=.001, **kwargs):
         assert self.loss_criterion is not None, (
             "loss function must be initialized before training")
         assert self.net is not None, (
             "network must be initialized before training")
 
+        kwargs.update({'lr':lr})
         #initialize optimizer for training
         self.set_optimizer(**kwargs)
         # train the model
