@@ -436,7 +436,7 @@ def make_kernel_lattice(kernels):
 
 def show_kernel_lattice(kernels):
     out = make_kernel_lattice(kernels)
-    assert out.ndimension() == 2
+    assert out.ndim == 2
     plt.imshow(out)
     plt.show()
 
