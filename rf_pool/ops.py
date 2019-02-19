@@ -200,7 +200,10 @@ def div_norm_pool(u, out_shape, mask=None, n=2., sigma=0.5):
     Heeger, D. J. (1992). Normalization of cell responses in cat striate 
     cortex. Visual neuroscience, 9(2), 181-197.
     """
-
+    
+    # apply mask to u
+    if type(mask) is torch.Tensor:
+        u = torch.mul(u, torch.as_tensor(mask, dtype=u.dtype))
     # raise rf_u, sigma to nth power
     u_n = torch.pow(u, n)
     sigma_n = torch.pow(torch.as_tensor(sigma, dtype=u.dtype), n)
@@ -249,6 +252,9 @@ def average_pool(u, out_shape, mask=None):
         p_sample is set to h_sample
     """
 
+    # apply mask to u
+    if type(mask) is torch.Tensor:
+        u = torch.mul(u, torch.as_tensor(mask, dtype=u.dtype))
     # get count of units in last dim
     n_units = torch.as_tensor(u.shape[-1], dtype=u.dtype)
     if type(mask) is torch.Tensor:
@@ -298,7 +304,7 @@ def sum_pool(u, out_shape, mask=None):
         p_sample is set to h_sample
     """
 
-    # multiply u by mask
+    # apply mask to u
     if type(mask) is torch.Tensor:
         u = torch.mul(u, torch.as_tensor(mask, dtype=u.dtype))
     # get sum across last dim in u
