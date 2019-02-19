@@ -36,7 +36,7 @@ Examples
 >>> rf_sizes = [3]
 >>> spacing = 9
 >>> mu, sigma = init_uniform_lattice(img_shape, rf_sizes, spacing)
-    
+
 # create masked kernels from mu, sigma
 >>> kernels = mask_kernel_lattice(mu, sigma, img_shape)
 
@@ -73,17 +73,17 @@ def exp_kernel_lattice(mu, sigma, kernel_shape):
 
     Parameters
     ----------
-    mu : torch.Tensor 
+    mu : torch.Tensor
         kernel centers with shape (n_kernels, 2)
-    sigma : torch.Tensor 
+    sigma : torch.Tensor
         kernel standard deviations with shape (n_kernels, 1)
     kernel_shape : tuple
         shape of input feature map
 
     Returns
     -------
-    kernels : torch.Tensor 
-        output kernels with shape 
+    kernels : torch.Tensor
+        output kernels with shape
         mu.shape[:-1] + (kernel_shape[0], kernel_shape[1])
 
     Examples
@@ -95,7 +95,7 @@ def exp_kernel_lattice(mu, sigma, kernel_shape):
     >>> mu = mu * torch.as_tensor(kernel_shape, dtype=mu.dtype)
     >>> kernels = exp_kernel_lattice(mu, sigma, kernel_shape)
     """
-    
+
     assert mu.shape[-2] == sigma.shape[-2]
     # create the coordinates input to kernel function
     x = torch.arange(kernel_shape[0])
@@ -110,17 +110,17 @@ def gaussian_kernel_lattice(mu, sigma, kernel_shape):
 
     Parameters
     ----------
-    mu : torch.Tensor 
+    mu : torch.Tensor
         kernel centers with shape (n_kernels, 2)
-    sigma : torch.Tensor 
+    sigma : torch.Tensor
         kernel standard deviations with shape (n_kernels, 1)
     kernel_shape : tuple
         shape of input feature map
 
     Returns
     -------
-    kernels : torch.Tensor 
-        output kernels with shape 
+    kernels : torch.Tensor
+        output kernels with shape
         mu.shape[:-1] + (kernel_shape[0], kernel_shape[1])
 
     Examples
@@ -132,7 +132,7 @@ def gaussian_kernel_lattice(mu, sigma, kernel_shape):
     >>> mu = mu * torch.as_tensor(kernel_shape, dtype=mu.dtype)
     >>> kernels = gaussian_kernel_lattice(mu, sigma, kernel_shape)
     """
-    
+
     assert mu.shape[-2] == sigma.shape[-2]
     # create the coordinates input to kernel function
     x = torch.arange(kernel_shape[0])
@@ -147,17 +147,17 @@ def mask_kernel_lattice(mu, sigma, kernel_shape):
 
     Parameters
     ----------
-    mu : torch.Tensor 
+    mu : torch.Tensor
         kernel centers with shape (n_kernels, 2)
-    sigma : torch.Tensor 
+    sigma : torch.Tensor
         kernel standard deviations with shape (n_kernels, 1)
     kernel_shape : tuple
         shape of input feature map
 
     Returns
     -------
-    kernels : torch.Tensor 
-        output kernels with shape 
+    kernels : torch.Tensor
+        output kernels with shape
         mu.shape[:-1] + (kernel_shape[0], kernel_shape[1])
 
     Examples
@@ -169,7 +169,7 @@ def mask_kernel_lattice(mu, sigma, kernel_shape):
     >>> mu = mu * torch.as_tensor(kernel_shape, dtype=mu.dtype)
     >>> kernels = mask_kernel_lattice(mu, sigma, kernel_shape)
     """
-    
+
     assert mu.shape[-2] == sigma.shape[-2]
     # create the coordinates input to kernel function
     x = torch.arange(kernel_shape[0])
@@ -197,7 +197,7 @@ def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1.):
     Returns
     -------
     mu : torch.Tensor
-        kernel x-y coordinate centers with shape (n_kernels, 2) and dtype 
+        kernel x-y coordinate centers with shape (n_kernels, 2) and dtype
         torch.int32
     sigma : torch.Tensor
         kernel standard deviations with shape (n_kernels, 1)
@@ -210,7 +210,7 @@ def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1.):
     >>> spacing = 0.15
     >>> min_ecc = 1.
     >>> mu, sigma = init_foveated_lattic(img_shape, scale, spacing, min_ecc)
-    
+
     Notes
     -----
     sigma will always be >= 1. (pixel space)
@@ -271,7 +271,7 @@ def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1.):
 
 def init_uniform_lattice(center, n_kernel_side, spacing, sigma_init=1.):
     """
-    Creates a uniform lattice of kernel centers (mu) 
+    Creates a uniform lattice of kernel centers (mu)
     and standard deviations (sigma)
 
     Parameters
@@ -288,14 +288,14 @@ def init_uniform_lattice(center, n_kernel_side, spacing, sigma_init=1.):
     Returns
     -------
     mu : torch.Tensor
-        kernel x-y coordinate centers with shape (n_kernels, 2) and dtype 
+        kernel x-y coordinate centers with shape (n_kernels, 2) and dtype
         torch.int32
     sigma : torch.Tensor
         kernel standard deviations with shape (n_kernels, 1)
-        
+
     Examples
     --------
-    # Generate lattice of size 8x8 with 12 pixel spacing centered on a 
+    # Generate lattice of size 8x8 with 12 pixel spacing centered on a
     # 200x200 image
     >>> center = (100,100)
     >>> n_kernel_side = 8
@@ -303,7 +303,7 @@ def init_uniform_lattice(center, n_kernel_side, spacing, sigma_init=1.):
     >>> sigma_init = 3.
     >>> mu, sigma = init_uniform_lattice(center, n_kernel_side, spacing, sigma_init)
     """
-    
+
     if sigma_init < 1.:
         warnings.warn('sigma < 1 will result in sum(pdf) > 1.')
     cx, cy = center
@@ -326,9 +326,9 @@ def init_uniform_lattice(center, n_kernel_side, spacing, sigma_init=1.):
 
 def init_tile_lattice(img_shape, rf_sizes, spacing=0):
     """
-    Creates a tiled lattice of kernel centers (mu) 
+    Creates a tiled lattice of kernel centers (mu)
     and standard deviations (sigma)
-    
+
     Parameters
     ----------
     img_shape : tuple
@@ -336,17 +336,17 @@ def init_tile_lattice(img_shape, rf_sizes, spacing=0):
     rf_sizes : list
         receptive field sizes to tile detection layer (see example)
     spacing : int
-        spacing (if positive) or overlap (if negative) between receptive 
+        spacing (if positive) or overlap (if negative) between receptive
         field edges [default: 0]
 
     Returns
     -------
     mu : torch.Tensor
-        kernel x-y coordinate centers with shape (n_kernels, 2) and dtype 
+        kernel x-y coordinate centers with shape (n_kernels, 2) and dtype
         torch.int32
     sigma : torch.Tensor
         kernel standard deviations with shape (n_kernels, 1)
-        
+
     Examples
     --------
     # Generate lattice tiling a 200x200 image with 9 pixels between receptive
@@ -355,20 +355,20 @@ def init_tile_lattice(img_shape, rf_sizes, spacing=0):
     >>> rf_sizes = [3]
     >>> spacing = 9
     >>> mu, sigma = init_uniform_lattice(center, size, spacing)
-    
+
     Notes
     -----
-    If receptive field sizes do not fully cover image, rf_sizes[-1] will be 
-    appended to rf_sizes until the image can be completely covered 
+    If receptive field sizes do not fully cover image, rf_sizes[-1] will be
+    appended to rf_sizes until the image can be completely covered
     (unless (rf_sizes[-1] + spacing) <= 0).
     """
-    
+
     # ensure rf_sizes given
     assert len(rf_sizes) > 0
 
     # get image size
     img_h, img_w = img_shape
-    
+
     # append rf_size[-1] if img not fully covered
     while (img_h - 2*np.sum(rf_sizes) - 2*len(rf_sizes)*spacing) > 0 and \
           (img_w - 2*np.sum(rf_sizes) - 2*len(rf_sizes)*spacing) > 0:
@@ -424,20 +424,19 @@ def plot_size_ecc(mu, sigma, img_shape):
     plt.show()
 
 def make_kernel_lattice(kernels):
-    if len(kernels.shape) == 3:
-        #normalize each kernel to max 1, then max across kernels to show
-        max_kerns = torch.as_tensor(np.max(kernels.numpy(), axis=(1,2), keepdims=True), 
+    #normalize each kernel to max 1, then max across kernels to show
+    max_kerns = torch.as_tensor(np.max(kernels.detach().numpy(), axis=(-2,-1), keepdims=True),
                                 dtype=kernels.dtype)
-        norm_kerns = torch.div(kernels, max_kerns + 1e-6)
-        out = torch.max(norm_kerns, dim=0)[0]
-
-    elif len(kernels.shape) == 5:
-        out = torch.squeeze(torch.max(kernels, dim=2)[0])
+    norm_kerns = torch.div(kernels, max_kerns + 1e-6)
+    out = torch.max(norm_kerns, dim=-3)[0]
+    if out.ndimension() > 2:
+        out = torch.flatten(out, 0, -3)
 
     return out.numpy()
 
 def show_kernel_lattice(kernels):
     out = make_kernel_lattice(kernels)
+    assert out.ndimension() == 2
     plt.imshow(out)
     plt.show()
 
