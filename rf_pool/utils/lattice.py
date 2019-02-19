@@ -432,7 +432,7 @@ def make_kernel_lattice(kernels):
     if out.ndimension() > 2:
         out = torch.flatten(out, 0, -3)
 
-    return out.numpy()
+    return out.detach().numpy()
 
 def show_kernel_lattice(kernels):
     out = make_kernel_lattice(kernels)
