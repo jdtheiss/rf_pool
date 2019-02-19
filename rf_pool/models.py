@@ -116,7 +116,7 @@ class Model(nn.Module):
                     rfs = self.net.pool_layers[layer_id].inputs['rfs']
                     lattice_layer = lattice.make_kernel_lattice(rfs)
                     ax[batch_id, i+1].imshow(lattice_layer[batch_id])                 
-        return fig
+        plt.show()
 
     def get_trainable_params(self):
         #grabs only parameters with 'requires_grad' set to True
@@ -172,10 +172,9 @@ class Model(nn.Module):
                 if (i+1) % monitor == 0:
                     clear_output(wait=True)
                     display('[%d, %5d] loss: %.3f' % (epoch , i, self.running_loss / monitor))
-                    if monitor_lattice == True:
-                        self.show_lattice(inputs)
                     self.running_loss = 0.0
-
+                    if monitor_lattice:
+                        self.show_lattice(inputs)
 
 class FeedForwardModel(Model):
     """
