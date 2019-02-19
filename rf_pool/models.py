@@ -116,7 +116,7 @@ class Model(nn.Module):
                     rfs = self.net.pool_layers[layer_id].inputs['rfs']
                     lattice_layer = lattice.make_kernel_lattice(rfs)
                     ax[batch_id, i+1].imshow(lattice_layer[batch_id])                 
-        plt.show()
+        return fig
 
     def get_trainable_params(self):
         #grabs only parameters with 'requires_grad' set to True
@@ -148,7 +148,8 @@ class Model(nn.Module):
 
         return 100 * correct / total
 
-    def train_model(self, epochs, trainloader, monitor=2000, lr=.001, **kwargs):
+    def train_model(self, epochs, trainloader, monitor=2000, monitor_lattice=False,
+        lr=.001, **kwargs):
         assert self.loss_criterion is not None, (
             "loss function must be initialized before training")
         assert self.net is not None, (
@@ -171,6 +172,8 @@ class Model(nn.Module):
                 if (i+1) % monitor == 0:
                     clear_output(wait=True)
                     display('[%d, %5d] loss: %.3f' % (epoch , i, self.running_loss / monitor))
+                    if monitor_lattice == True:
+                        display(self.show_lattice(inputs))
                     self.running_loss = 0.0
 
 
