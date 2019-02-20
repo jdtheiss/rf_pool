@@ -40,14 +40,15 @@ class Module(nn.Module):
     def __call__(self, *args):
         return self.forward(*args)
 
-    def init_attrs(self, keys):
+    def init_attrs(self, keys, defaults=[None]):
         # initialize attributes in self.attrs
         if not hasattr(self, 'attrs'):
             self.attrs = {}
         if type(keys) is not list:
             keys = [keys]
-        for key in keys:
-            self.attrs.setdefault(key, None)
+        defaults = self.set_list_vars(defaults, len(keys))
+        for key, default in zip(keys, defaults):
+            self.attrs.setdefault(key, default)
     
     def update_attrs(self, new_attrs=None):
         # update attrs in self.attrs with new_attrs dict
@@ -415,12 +416,12 @@ class ControlNetwork(Module):
     TODO: WRITEME
     """
     def __init__(self, net, layer_ids, layer_types, branch_output_shapes, 
-                 act_types=['relu'], **kwargs):
+                 act_types=['relu'], branch_act_types=[None,None], **kwargs):
         super(ControlNetwork, self).__init__()
         # set inputs to attributes
         self.update_attrs({'layer_ids':layer_ids, 'layer_types':layer_types,
                            'branch_output_shapes':branch_output_shapes,
-                           'act_types':act_types})
+                           'act_types':act_types, 'branch_act_types':branch_act_types})
         # initialize additional attributes
         attr_names = [key for key in net.attrs.keys()]
         self.init_attrs(attr_names)
@@ -447,6 +448,8 @@ class ControlNetwork(Module):
         # branch params
         if type(self.branch_output_shapes) is not list:
             self.branch_output_shapes = [self.branch_output_shapes]
+        self.branch_act_types = self.set_list_vars(self.branch_act_types, 
+                                                   len(self.branch_output_shapes))
         
         # initialize control nets
         self.make_layers(net)
@@ -475,8 +478,9 @@ class ControlNetwork(Module):
             
             # make branches
             branches = []
-            for branch_output_shape in self.branch_output_shapes:
-                branches.append(self.make_branch(trunk.output_shapes[-1], branch_output_shape))
+            for b, branch_output_shape in enumerate(self.branch_output_shapes):
+                branches.append(self.make_branch(trunk.output_shapes[-1], self.branch_act_types[b],
+                                                 branch_output_shape))
                 
             # set control net
             self.control_nets[str(layer_id)] = (trunk, *branches)
@@ -488,10 +492,11 @@ class ControlNetwork(Module):
                                        kernel_sizes=self.kernel_sizes)
         return trunk_net
 
-    def make_branch(self, input_shape, output_channels):
+    def make_branch(self, input_shape, act_type, output_channels):
         # build branch for control network with shape (batch, output_channels) 
-        output_channels = np.abs(np.prod(output_channels))
-        branch_net = FeedForwardNetwork(input_shape, ['fc'], [None], output_channels=[output_channels])
+        output_channels = np.prod(output_channels[1:])
+        branch_net = FeedForwardNetwork(input_shape, ['fc'], [act_type], 
+                                        output_channels=[output_channels])
         return branch_net
 
     def forward(self, layer_id, x):
