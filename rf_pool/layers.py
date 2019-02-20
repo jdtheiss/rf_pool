@@ -48,7 +48,7 @@ class Layer(torch.nn.Module):
         mu = torch.add(self.mu, delta_mu)
         mu = torch.min(mu, torch.as_tensor(self.img_shape, dtype=mu.dtype))
         mu = torch.max(mu, torch.zeros_like(mu))
-        sigma = torch.add(self.sigma, delta_sigma)
+        sigma = torch.mul(self.sigma, (1. + delta_sigma))
         sigma = torch.min(sigma, torch.min(torch.as_tensor(self.img_shape, dtype=sigma.dtype)))
         sigma = torch.max(sigma, torch.ones_like(sigma))
         if updates:
