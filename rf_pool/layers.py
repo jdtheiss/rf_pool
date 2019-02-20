@@ -39,11 +39,22 @@ class Layer(torch.nn.Module):
         if rfs_shape != self.img_shape:
             self.mu.add_(torch.sub(torch.as_tensor(self.img_shape, dtype=self.mu.dtype), 
                                    torch.as_tensor(rfs_shape, dtype=self.mu.dtype)))
-        self.inputs['rfs'] = self.lattice_fn(self.mu + delta_mu, self.sigma + delta_sigma, self.img_shape)
+        # update mu and sigma
+        mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, self.updates)
+        # update rfs
+        self.inputs['rfs'] = self.lattice_fn(mu, sigma, self.img_shape)
     
-    def update_mu_sigma(self, delta_mu, delta_sigma):
-        self.mu.add_(delta_mu)
-        self.sigma.add_(delta_sigma)
+    def update_mu_sigma(self, delta_mu, delta_sigma, updates=False):
+        mu = torch.add(self.mu, delta_mu)
+        mu = torch.min(mu, torch.as_tensor(self.img_shape, dtype=mu.dtype))
+        mu = torch.max(mu, torch.zeros_like(mu))
+        sigma = torch.add(self.sigma, delta_sigma)
+        sigma = torch.min(sigma, torch.min(torch.as_tensor(self.img_shape, dtype=sigma.dtype)))
+        sigma = torch.max(sigma, torch.ones_like(sigma))
+        if updates:
+            self.mu = mu
+            self.sigma = sigma
+        return mu, sigma
     
     def show_rfs(self):
         assert self.inputs['rfs'] is not None
@@ -119,8 +130,6 @@ class RF_Pool(Layer):
         # update rfs, mu, sigma
         if delta_mu is not None and delta_sigma is not None:
             self.update_rfs(delta_mu, delta_sigma)
-            if self.updates:
-                self.update_mu_sigma(delta_mu, delta_sigma)
         # return pooling outputs
         return self.apply(u, **self.inputs)[2]
     
