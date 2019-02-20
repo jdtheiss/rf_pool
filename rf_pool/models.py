@@ -143,8 +143,6 @@ class Model(nn.Module):
         return trainable_params
 
     def set_requires_grad(self, net_type, requires_grad = True):
-        if net_type not in ["hidden", "control"]:
-            raise Exception("net_type not understood")
         # set a net's parameters to require gradient or not
         for (name, param) in self.net.named_parameters():
             if name.startswith(net_type):
@@ -163,7 +161,7 @@ class Model(nn.Module):
 
         return 100 * correct / total
 
-    def train_model(self, epochs, trainloader, monitor=2000, monitor_lattice=False,
+    def train_model(self, epochs, trainloader, monitor=2000, monitor_cost=False, monitor_lattice=False,
         lr=.001, **kwargs):
         assert self.loss_criterion is not None, (
             "loss function must be initialized before training")
@@ -175,6 +173,7 @@ class Model(nn.Module):
         self.set_optimizer(**kwargs)
         # train the model
         self.running_loss = 0
+        cost = []
         for epoch in range(epochs):
             for i, data in  enumerate(trainloader, 0):
                 inputs, labels = data
@@ -187,7 +186,11 @@ class Model(nn.Module):
                 if (i+1) % monitor == 0:
                     clear_output(wait=True)
                     display('[%d, %5d] loss: %.3f' % (epoch , i, self.running_loss / monitor))
+                    cost.append(self.running_loss / monitor)
                     self.running_loss = 0.0
+                    if monitor_cost:
+                        plt.plot(cost)
+                        plt.show()
                     if monitor_lattice:
                         self.show_lattice(inputs)
 
