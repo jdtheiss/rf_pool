@@ -107,6 +107,13 @@ class Model(nn.Module):
         model = pickle.load(open(filename, 'rb'))
         return model
 
+    def monitor_loss(self, loss):
+        if not hasattr(self, 'loss_history'):
+            self.loss_history = []
+        self.loss_history.append(loss)
+        plt.plot(self.loss_history)
+        plt.show()
+    
     def show_lattice(self, x, figsize=(10,10)):
         assert self.net.control_nets is not None, (
             "control network must be activated to show lattice")
@@ -141,6 +148,12 @@ class Model(nn.Module):
                 trainable_params.append(param)
 
         return trainable_params
+    
+    def get_param_names(self):
+        param_names = []
+        for (name, param) in self.net.named_parameters():
+            param_names.append(name)
+        return param_names
 
     def set_requires_grad(self, net_type, requires_grad = True):
         # set a net's parameters to require gradient or not
@@ -161,38 +174,39 @@ class Model(nn.Module):
 
         return 100 * correct / total
 
-    def train_model(self, epochs, trainloader, monitor=2000, monitor_cost=False, monitor_lattice=False,
-        lr=.001, **kwargs):
+    def train_model(self, epochs, trainloader, lr=0.001, monitor=2000,
+                    monitor_loss=False, monitor_lattice=False, **kwargs):
         assert self.loss_criterion is not None, (
             "loss function must be initialized before training")
         assert self.net is not None, (
             "network must be initialized before training")
 
-        kwargs.update({'lr':lr})
         #initialize optimizer for training
+        kwargs.update({'lr':lr})
         self.set_optimizer(**kwargs)
         # train the model
-        self.running_loss = 0
-        cost = []
+        running_loss = 0.
         for epoch in range(epochs):
             for i, data in  enumerate(trainloader, 0):
+                # get inputs , labels
                 inputs, labels = data
+                # update params with optimizer
                 self.optimizer.zero_grad()
                 outputs = self.net(inputs)
                 loss = self.loss_criterion(outputs, labels)
                 loss.backward()
                 self.optimizer.step()
-                self.running_loss += loss.item()
+                running_loss += loss.item()
+                # monitor loss, lattice
                 if (i+1) % monitor == 0:
                     clear_output(wait=True)
-                    display('[%d, %5d] loss: %.3f' % (epoch , i, self.running_loss / monitor))
-                    cost.append(self.running_loss / monitor)
-                    self.running_loss = 0.0
-                    if monitor_cost:
-                        plt.plot(cost)
-                        plt.show()
+                    display('[%d, %5d] loss: %.3f' % (epoch, i+1, running_loss / monitor))
+                    if monitor_loss:
+                        self.monitor_loss(running_loss / monitor)
                     if monitor_lattice:
                         self.show_lattice(inputs)
+                    # reset running_loss
+                    running_loss = 0.
 
 class FeedForwardModel(Model):
     """
