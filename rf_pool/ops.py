@@ -427,25 +427,34 @@ def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), mask_thr=1e
         pool_fn = average_pool
     elif pool_type == 'sum':
         pool_fn = sum_pool
+    elif pool_type is None:
+        pool_fn = None
     else: #TODO: allow pool_fn = pool_type if function
         raise Exception('pool_type not understood')
 
     # pooling across receptive fields
     if receptive_fields:
-        # elemwise multiply u_t with rf_kernels
-        u_t = u_t.unsqueeze(2)
-        rf_kernels = torch.add(torch.zeros_like(u_t), rfs)
-        rf_u = torch.mul(u_t, rf_kernels)
-        # create rf_mask of receptive field kernels
-        mask = torch.as_tensor(torch.gt(rf_kernels, mask_thr), dtype=rf_u.dtype)
         # apply pool function across image dims
-        h_mean, h_sample, p_mean, p_sample = pool_fn(rf_u.flatten(-2), rf_u.shape,
-                                                     mask=mask.flatten(-2), **kwargs)
-        # max across receptive fields
-        h_mean = torch.max(h_mean, -3)[0]
-        h_sample = torch.max(h_sample, -3)[0]
-        p_mean = torch.max(p_mean, -3)[0]
-        p_sample = torch.max(p_sample, -3)[0]
+        if pool_fn:
+            # elemwise multiply u_t with rf_kernels
+            u_t = u_t.unsqueeze(2)
+            rf_kernels = torch.add(torch.zeros_like(u_t), rfs)
+            rf_u = torch.mul(u_t, rf_kernels)
+            # create rf_mask of receptive field kernels
+            mask = torch.as_tensor(torch.gt(rf_kernels, mask_thr), dtype=rf_u.dtype)
+            h_mean, h_sample, p_mean, p_sample = pool_fn(rf_u.flatten(-2), rf_u.shape,
+                                                         mask=mask.flatten(-2), **kwargs)
+            # max across receptive fields
+            h_mean = torch.max(h_mean, -3)[0]
+            h_sample = torch.max(h_sample, -3)[0]
+            p_mean = torch.max(p_mean, -3)[0]
+            p_sample = torch.max(p_sample, -3)[0]
+        else: # if no pool function, set all to rf_u
+            rf_u = torch.mul(u_t, torch.max(rfs, -3)[0])
+            h_mean = rf_u.clone()
+            h_sample = rf_u.clone()
+            p_mean = rf_u.clone()
+            p_sample = rf_u.clone()
         
         # set p_mean, p_sample if blocks larger than (1,1)
         p_mean = F.max_pool2d_with_indices(p_mean, block_size)[0]
