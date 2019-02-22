@@ -45,12 +45,16 @@ class Layer(torch.nn.Module):
         self.inputs['rfs'] = self.lattice_fn(mu, sigma, self.img_shape)
     
     def update_mu_sigma(self, delta_mu, delta_sigma, updates=False):
+        img_hw = torch.as_tensor(self.img_shape, dtype=delta_mu.dtype)
+        # add delta_mu to mu
         mu = torch.add(self.mu, delta_mu)
-        mu = torch.min(mu, torch.as_tensor(self.img_shape, dtype=mu.dtype))
+        mu = torch.min(mu, img_hw)
         mu = torch.max(mu, torch.zeros_like(mu))
+        # multiply sigma by delta_sigma
         sigma = torch.mul(self.sigma, (1. + delta_sigma))
-        sigma = torch.min(sigma, torch.min(torch.as_tensor(self.img_shape, dtype=sigma.dtype)))
+        sigma = torch.min(sigma, torch.min(img_hw))
         sigma = torch.max(sigma, torch.ones_like(sigma))
+        # if updates, set to self
         if updates:
             self.mu = mu
             self.sigma = sigma
