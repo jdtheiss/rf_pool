@@ -47,26 +47,26 @@ class Model(nn.Module):
         self.loss_type = loss_type
         self.optimizer_type = optimizer_type
         self.net = None
-        self.set_loss_fn() # set loss function
+        self.set_loss_fn(self.loss_type) # set loss function
         self.optimizer = None # optimizer must be set after the graph is initialized
 
-    def set_loss_fn(self):
-        if type(self.loss_type) is not str: 
-            self.loss_name = torch.typname(self.loss_type)
+    def set_loss_fn(self, loss_type):
+        if type(loss_type) is not str: 
+            loss_name = torch.typname(loss_type)
         else:
-            self.loss_name = self.loss_type
+            loss_name = loss_type
 
         # choose loss function
-        if self.loss_name.lower() == 'cross_entropy':
+        if loss_name.lower() == 'cross_entropy':
             self.loss_criterion = nn.CrossEntropyLoss()
-        elif self.loss_name.lower() == 'squared_error':
+        elif loss_name.lower() == 'squared_error':
             self.loss_criterion = nn.MSELoss()
-        elif self.loss_name.startswith('torch.nn.modules.loss'):
-            self.loss_criterion = self.loss_type()
+        elif loss_name.startswith('torch.nn.modules.loss'):
+            self.loss_criterion = loss_type()
         else:
             raise Exception('loss_type not understood')
 
-    def set_optimizer(self, prefix=[''], **kwargs):
+    def set_optimizer(self, optimizer_type, prefix=[''], **kwargs):
         # set params dict for main, control networks
         params = []
         for net_prefix in prefix:
@@ -82,18 +82,18 @@ class Model(nn.Module):
         [kwargs.pop(key) for key in removed_keys]
         
         # get typename for optimizer
-        if type(self.optimizer_type) is not str:
-            self.optimizer_name = torch.typename(self.optimizer_type)
+        if type(optimizer_type) is not str:
+            optimizer_name = torch.typename(optimizer_type)
         else:
-            self.optimizer_name = self.optimizer_type
+            optimizer_name = optimizer_type
 
         # choose optimizer 
-        if self.optimizer_name.lower() == 'sgd':
+        if optimizer_name.lower() == 'sgd':
             self.optimizer = optim.SGD(params, **kwargs)
-        elif self.optimizer_name.lower() == 'adam':
+        elif optimizer_name.lower() == 'adam':
             self.optimizer = optim.Adam(params, **kwargs) 
-        elif self.optimizer_name.startswith('torch.optim'):
-            self.optimizer = self.optimizer_type(params, **kwargs)
+        elif optimizer_name.startswith('torch.optim'):
+            self.optimizer = optimizer_type(params, **kwargs)
         else:
             raise Exception("optimizer_type not understood")
 
@@ -183,18 +183,25 @@ class Model(nn.Module):
 
         #initialize optimizer for training
         kwargs.update({'lr':lr})
-        self.set_optimizer(**kwargs)
+        self.set_optimizer(self.optimizer_type, **kwargs)
         # train the model
         running_loss = 0.
         for epoch in range(epochs):
             for i, data in  enumerate(trainloader, 0):
                 # get inputs , labels
                 inputs, labels = data
-                # update params with optimizer
+                # zero grad, get outputs
                 self.optimizer.zero_grad()
                 outputs = self.net(inputs)
+                # get loss
                 loss = self.loss_criterion(outputs, labels)
+                # add penalty to loss
+                if hasattr(self, 'penalty_attr'):
+                    loss += self.loss_penalty(self.penalty_attr, 
+                                              self.penalty_cost,
+                                              self.penalty_type)
                 loss.backward()
+                # update parameters
                 self.optimizer.step()
                 running_loss += loss.item()
                 # monitor loss, lattice
@@ -239,6 +246,29 @@ class FeedForwardModel(Model):
             "Feed forward network must be initialized before the control network(s)")
 
         self.net.control_nets = ControlNetwork(self.net, *args, **kwargs)
+
+    def loss_penalty(self, attr, cost, penalty_type):
+        assert hasattr(self.net, attr), (
+            'network does not have attribute')
+        
+        # get value for attribute
+        value = getattr(self.net, attr)
+        if penalty_type == 'L1':
+            penalty_fn = torch.abs
+
+        # add penalties
+        penalty = 0.
+        if type(value) is list:
+            for v in value:
+                penalty = torch.add(penalty, torch.sum(penalty_fn(v)))
+        else:
+            penalty = penalty_fn(value)
+        return torch.as_tensor(torch.mul(penalty, cost), dtype=torch.float32)
+
+    def set_penalty_fn(self, attr, cost=1., penalty_type='L1'):
+        self.penalty_attr = attr
+        self.penalty_cost = cost
+        self.penalty_type = penalty_type
 
 if __name__ == "__main__":
     import doctest

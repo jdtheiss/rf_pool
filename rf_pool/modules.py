@@ -391,13 +391,13 @@ class FeedForwardNetwork(Module):
 
     def forward_layer(self, layer_id, x):
         # preform computations for one layer
-        control_out = []
+        self.control_out = []
         layer_id = str(layer_id)
         x = self.apply_forward_pass(self.hidden_layers[layer_id], x)
         x = self.apply_forward_pass(self.activations[layer_id], x)
         if self.control_nets and layer_id in self.control_nets.layer_ids:
-            control_out = self.control_nets(layer_id, x)
-        x = self.apply_forward_pass(self.pool_layers[layer_id], x, *control_out)
+            self.control_out = self.control_nets(layer_id, x)
+        x = self.apply_forward_pass(self.pool_layers[layer_id], x, *self.control_out)
         x = self.apply_forward_pass(self.dropouts[layer_id], x)
         return x
 
