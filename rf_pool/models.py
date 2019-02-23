@@ -114,7 +114,7 @@ class Model(nn.Module):
         plt.plot(self.loss_history)
         plt.show()
     
-    def show_lattice(self, x, figsize=(10,10)):
+    def show_lattice(self, x, figsize=(10,10)): #TODO: integrate with lattice.show_kernel_lattice
         assert self.net.control_nets is not None, (
             "control network must be activated to show lattice")
 
@@ -127,10 +127,15 @@ class Model(nn.Module):
             self.net(x)
             for batch_id in range(n_examples):
                 img = x[batch_id]
-                img =  img / 2 + 0.5 # unnormalize
-                img = img.numpy()
-                img = np.transpose(img, (1, 2, 0))
-                ax[batch_id, 0].imshow(img)
+                if x.shape[1] == 3:
+                    img =  img / 2 + 0.5 # unnormalize
+                    img = img.numpy()
+                    img = np.transpose(img, (1, 2, 0))
+                    cmap = None
+                else:
+                    img = torch.squeeze(img).numpy()
+                    cmap = 'gray'
+                ax[batch_id, 0].imshow(img, cmap=cmap)
 
                 for i, layer_id in enumerate(self.net.control_nets.layer_ids):
                     rfs = self.net.pool_layers[layer_id].inputs['rfs']
