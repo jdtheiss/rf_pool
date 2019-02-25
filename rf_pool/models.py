@@ -119,8 +119,8 @@ class Model(nn.Module):
             "control network must be activated to show lattice")
 
         n_examples = x.shape[0]
-        n_lattices =  len(self.net.control_nets.layer_ids)
-        fig, ax = plt.subplots(n_examples, 1+n_lattices, figsize=figsize)
+        n_lattices =  len(self.net.control_nets)
+        fig, ax = plt.subplots(n_examples, n_lattices+1, figsize=figsize)
 
         # adjust the pooling layers
         with torch.no_grad():
@@ -137,7 +137,7 @@ class Model(nn.Module):
                     cmap = 'gray'
                 ax[batch_id, 0].imshow(img, cmap=cmap)
 
-                for i, layer_id in enumerate(self.net.control_nets.layer_ids):
+                for i, layer_id in enumerate(self.net.control_nets.keys()):
                     rfs = self.net.pool_layers[layer_id].inputs['rfs']
                     lattice_layer = lattice.make_kernel_lattice(rfs)
                     ax[batch_id, i+1].imshow(lattice_layer[batch_id])                 
@@ -246,11 +246,13 @@ class FeedForwardModel(Model):
     def ff_network(self, *args, **kwargs):
         self.net = FeedForwardNetwork(*args, **kwargs)
 
-    def control_network(self, *args, **kwargs):
+    def control_network(self, layer_id, *args, **kwargs):
         assert self.net is not None,  (
             "Feed forward network must be initialized before the control network(s)")
+        if not hasattr(self.net, 'control_nets') or self.net.control_nets is None:
+            self.net.control_nets = nn.ModuleDict()
 
-        self.net.control_nets = ControlNetwork(self.net, *args, **kwargs)
+        self.net.control_nets.add_module(str(layer_id), ControlNetwork(self.net, layer_id, *args, **kwargs))
 
     def loss_penalty(self, attr, cost, penalty_type):
         assert hasattr(self.net, attr), (
