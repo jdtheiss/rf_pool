@@ -319,7 +319,7 @@ def sum_pool(u, out_shape, mask=None):
     p_sample = h_sample.clone()
     return h_mean, h_sample, p_mean, p_sample
 
-def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), mask_thr=1e-5, **kwargs):
+def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), mask_thr=-np.inf, **kwargs):
     """
     Receptive field pooling
 
