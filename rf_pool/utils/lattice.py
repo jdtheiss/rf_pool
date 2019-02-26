@@ -63,8 +63,44 @@ def mask_kernel_2d(mu, sigma, xy):
     kernels = exp_kernel_2d(mu, sigma, xy)
     thr = torch.exp(torch.as_tensor(-1, dtype=kernels.dtype))
     mask = torch.as_tensor(torch.gt(kernels, thr), dtype=kernels.dtype)
-    return torch.div(torch.mul(kernels, mask), kernels + 1e-6)
+    with torch.no_grad():
+        kernels_no_grad = torch.add(kernels, 1e-6)
+    return torch.div(torch.mul(kernels, mask), kernels_no_grad)
 
+def mu_mask(mu, kernel_shape):
+    """
+    Returns a tensor of kernels with value = 1 at each mu location
+    
+    Parameters
+    ----------
+    mu : torch.Tensor
+        kernel centers with shape (n_kernels, 2)
+    kernel_shape : tuple
+        shape of input feature map
+
+    Returns
+    -------
+    kernels : torch.Tensor
+        output kernels with shape
+        mu.shape[:-1] + (kernel_shape[0], kernel_shape[1])
+
+    Examples
+    --------
+    # Create tensor mask of 10 kernels with random centers.
+    >>> mu = torch.rand(10, 2)*200
+    >>> kernel_shape = (200,200)
+    >>> kernels = mu_mask(mu, kernel_shape)
+    """
+    
+    # create the coordinates input to kernel function
+    x = torch.arange(kernel_shape[0])
+    y = torch.arange(kernel_shape[1])
+    xy = torch.stack(torch.meshgrid(x, y), dim=0).unsqueeze(0)
+    # reshape mu to same dimension as xy
+    mu = mu.reshape(mu.shape + (1,1))
+    # return 1s at mu locations
+    return torch.as_tensor(torch.prod(torch.eq(mu.int(), xy.int()), -3), dtype=mu.dtype)
+    
 def exp_kernel_lattice(mu, sigma, kernel_shape):
     """
     Returns a tensor of exponential kernels with max value = 1
