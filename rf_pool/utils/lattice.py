@@ -49,9 +49,6 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
-def generalized_sigmoid(x, v=1., q=1., b=1.):
-    return 1./torch.pow(1. + q * np.exp(-b * x), 1./v)
-
 def exp_kernel_2d(mu, sigma, xy):
     mu = mu.reshape(mu.shape + (1,1)).float()
     sigma = sigma.unsqueeze(-1).float()
@@ -65,7 +62,8 @@ def gaussian_kernel_2d(mu, sigma, xy):
 def mask_kernel_2d(mu, sigma, xy):
     kernels = exp_kernel_2d(mu, sigma, xy)
     thr = torch.exp(torch.as_tensor(-1, dtype=kernels.dtype))
-    return torch.gt(kernels, thr).float()
+    mask = torch.as_tensor(torch.gt(kernels, thr), dtype=kernels.dtype)
+    return torch.div(torch.mul(kernels, mask), kernels + 1e-6)
 
 def exp_kernel_lattice(mu, sigma, kernel_shape):
     """
