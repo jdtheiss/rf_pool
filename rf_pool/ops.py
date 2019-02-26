@@ -3,6 +3,7 @@ from six.moves import xrange
 import torch
 import torch.nn.functional as F
 from torch.distributions import Multinomial
+from utils import lattice
 
 def max_index(u):
     return torch.as_tensor(torch.eq(u, torch.max(u, -1, keepdim=True)[0]),
@@ -16,11 +17,11 @@ def local_softmax(u, dim=-1, mask=None):
     ----------
     u : torch.Tensor
         input to softmax
-    dim : int
-        dimension to across which to softmax
-    mask : torch.Tensor or None
+    dim : int, optional
+        dimension to across which to softmax [default: -1]
+    mask : torch.Tensor or None, optional
         mask with shape = u.shape and dtype = u.dtype with 1s indicating units
-        to include in softmax
+        to include in softmax [default: None]
 
     Returns
     -------
@@ -50,6 +51,9 @@ def prob_max_pool(u, out_shape, mask=None):
         or torch.sum(mask, -1)
     out_shape : tuple
         shape of tensor to output
+    mask : torch.Tensor or None, optional
+        mask with shape = u.shape and dtype = u.dtype with 1s indicating units
+        included in the receptive field [default: None]
 
     Returns
     -------
@@ -112,6 +116,9 @@ def stochastic_max_pool(u, out_shape, mask=None):
         or torch.sum(mask, -1)
     out_shape : tuple
         shape of tensor to output
+    mask : torch.Tensor or None, optional
+        mask with shape = u.shape and dtype = u.dtype with 1s indicating units
+        included in the receptive field [default: None]
 
     Returns
     -------
@@ -162,10 +169,13 @@ def div_norm_pool(u, out_shape, mask=None, n=2., sigma=0.5):
         or torch.sum(mask, -1)
     out_shape : tuple
         shape of tensor to output
-    n : float
+    mask : torch.Tensor or None, optional
+        mask with shape = u.shape and dtype = u.dtype with 1s indicating units
+        included in the receptive field [default: None]
+    n : float, optional
         exponent used in divisive normalization (see Notes)
         [default: 2.]
-    sigma : float
+    sigma : float, optional
         constant used in divisive normalization (see Notes)
         [default: 0.5]
 
@@ -216,6 +226,53 @@ def div_norm_pool(u, out_shape, mask=None, n=2., sigma=0.5):
     p_sample = h_sample.clone()
     return h_mean, h_sample, p_mean, p_sample
 
+def max_pool(u, out_shape, mask=None):
+    """
+    Max pooling across units in a receptive field (last dim)
+    
+    Parameters
+    ----------
+    u : torch.Tensor
+        receptive field to pool over with n_units = shape[-1]
+        or torch.sum(mask, -1)
+    out_shape : tuple
+        shape of tensor to output
+    mask : torch.Tensor or None, optional
+        mask with shape = u.shape and dtype = u.dtype with 1s indicating units
+        included in the receptive field [default: None]
+
+    Returns
+    -------
+    h_mean : torch.Tensor
+        mean-field estimates of hidden layer after pooling with shape out_shape
+        (see Notes)
+    h_sample : torch.Tensor
+        samples of hidden layer after pooling with shape out_shape (see Notes)
+    p_mean : torch.Tensor
+        mean-field estimate of pooling layer with shape out_shape (see Notes)
+    p_sample : torch.Tensor
+        samples of pooling layer with shape out_shape (see Notes)
+    
+    Notes
+    -----
+    Max pooling returns the following mean-field estimates and samples
+    for the hidden and pooling layers:
+        h_mean is set to the input, u
+        h_sample is set to 1 indexed at the maximum unit in h_mean
+        p_mean is set to the value of h_mean indexed at the maximum unit in h_mean
+        p_sample is set to h_sample
+    """
+    # apply mask to u
+    if type(mask) is torch.Tensor:
+        u = torch.mul(u, torch.as_tensor(mask, dtype=u.dtype))
+    # set detection mean-field estimates and samples
+    h_mean = torch.reshape(u, out_shape)
+    h_sample = torch.reshape(max_index(u), out_shape)
+    # set pooling mean-field estimates and samples
+    p_mean = torch.mul(h_mean, h_sample)
+    p_sample = h_sample.clone()
+    return h_mean, h_sample, p_mean, p_sample
+
 def average_pool(u, out_shape, mask=None):
     """
     Average pooling across units in a receptive field (last dim)
@@ -227,6 +284,9 @@ def average_pool(u, out_shape, mask=None):
         or torch.sum(mask, -1)
     out_shape : tuple
         shape of tensor to output
+    mask : torch.Tensor or None, optional
+        mask with shape = u.shape and dtype = u.dtype with 1s indicating units
+        included in the receptive field [default: None]
 
     Returns
     -------
@@ -247,8 +307,7 @@ def average_pool(u, out_shape, mask=None):
         h_mean is set to the input, rf_u, divided by the total number units
         in the receptive field (rf_u.shape[-1])
         h_sample is set to 1 indexed at the maximum unit in h_mean
-        p_mean is set to the value of h_mean indexed at the stochastically
-        selected max unit
+        p_mean is set to the value of h_mean indexed at the maximum unit in h_mean
         p_sample is set to h_sample
     """
 
@@ -280,6 +339,9 @@ def sum_pool(u, out_shape, mask=None):
         or torch.sum(mask, -1)
     out_shape : tuple
         shape of tensor to output
+    mask : torch.Tensor or None, optional
+        mask with shape = u.shape and dtype = u.dtype with 1s indicating units
+        included in the receptive field [default: None]
 
     Returns
     -------
@@ -297,7 +359,7 @@ def sum_pool(u, out_shape, mask=None):
     -----
     Sum pooling returns the following mean-field estimates and samples for
     the hidden and pooling layers:
-        h_mean is set to the input, rf_u
+        h_mean is set to the input, u
         h_sample is set to 1 indexed at the maximum unit in the receptive field
         p_mean is set to the sum across across units in the receptive field 
         indexed at the maximum unit
@@ -319,7 +381,7 @@ def sum_pool(u, out_shape, mask=None):
     p_sample = h_sample.clone()
     return h_mean, h_sample, p_mean, p_sample
 
-def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), mask_thr=-np.inf, **kwargs):
+def rf_pool(u, t=None, rfs=None, mu=None, pool_type='max', block_size=(2,2), mask_thr=-np.inf, **kwargs):
     """
     Receptive field pooling
 
@@ -335,9 +397,13 @@ def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), mask_thr=-n
         (n_kernels, h, w) (see lattice_utils)
         kernels are element-wise multiplied with (u+t) prior to pooling
         [default: None, applies pooling over blocks]
+    mu : torch.Tensor or None
+        center locations for receptive fields with shape (n_kernels, 2)
+        [default: None, outputs are indexed at position of maximum unit in each 
+        receptive field]
     pool_type : string
-        type of pooling ('prob', 'stochastic', 'div_norm', 'average', 'sum')
-        [default: 'prob']
+        type of pooling ('prob', 'stochastic', 'div_norm', 'max', 'average', 'sum')
+        [default: 'max']
     block_size : tuple
         size of blocks in hidden layer connected to pooling units 
         [default: (2,2)]
@@ -375,6 +441,7 @@ def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), mask_thr=-n
     pool_type 'prob' refers to probabilistic max-pooling (Lee et al., 2009),
     'stochastic' refers to stochastic max-pooling (Zeiler & Fergus, 2013),
     'div_norm' performs divisive normalization with sigma=0.5 (Heeger, 1992),
+    'max_pool' performs max pooling over the units in the receptive field,
     'average' divides units by total number of units in the receptive field,
     'sum' returns sum over units in receptive field (especially for Gaussians).
     
@@ -423,6 +490,8 @@ def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), mask_thr=-n
         pool_fn = stochastic_max_pool
     elif pool_type == 'div_norm':
         pool_fn = div_norm_pool
+    elif pool_type == 'max':
+        pool_fn = max_pool
     elif pool_type == 'average':
         pool_fn = average_pool
     elif pool_type == 'sum':
@@ -434,27 +503,36 @@ def rf_pool(u, t=None, rfs=None, pool_type='prob', block_size=(2,2), mask_thr=-n
 
     # pooling across receptive fields
     if receptive_fields:
+        # elemwise multiply u_t with rf_kernels
+        u_t = u_t.unsqueeze(2)
+        rf_kernels = torch.add(torch.zeros_like(u_t), rfs)
+        rf_u = torch.mul(u_t, rf_kernels)
         # apply pool function across image dims
         if pool_fn:
-            # elemwise multiply u_t with rf_kernels
-            u_t = u_t.unsqueeze(2)
-            rf_kernels = torch.add(torch.zeros_like(u_t), rfs)
-            rf_u = torch.mul(u_t, rf_kernels)
             # create rf_mask of receptive field kernels
             mask = torch.as_tensor(torch.gt(rf_kernels, mask_thr), dtype=rf_u.dtype)
             h_mean, h_sample, p_mean, p_sample = pool_fn(rf_u.flatten(-2), rf_u.shape,
                                                          mask=mask.flatten(-2), **kwargs)
-            # max across receptive fields
-            h_mean = torch.max(h_mean, -3)[0]
-            h_sample = torch.max(h_sample, -3)[0]
-            p_mean = torch.max(p_mean, -3)[0]
-            p_sample = torch.max(p_sample, -3)[0]
+            
         else: # if no pool function, set all to rf_u
-            rf_u = torch.mul(u_t, torch.max(rfs, -3)[0])
             h_mean = rf_u.clone()
             h_sample = rf_u.clone()
             p_mean = rf_u.clone()
             p_sample = rf_u.clone()
+        
+        # set mu mask
+        if mu is not None:
+            mu_mask = lattice.mu_mask(mu, (u_h, u_w))
+            p_mean = torch.max(p_mean.flatten(-2), -1, keepdim=True)[0].unsqueeze(-1)
+            p_mean = torch.mul(mu_mask, p_mean)
+            p_sample = torch.max(p_sample.flatten(-2), -1, keepdim=True)[0].unsqueeze(-1)
+            p_sample = torch.mul(mu_mask, p_sample)
+
+        # max across receptive fields
+        h_mean = torch.max(h_mean, -3)[0]
+        h_sample = torch.max(h_sample, -3)[0]
+        p_mean = torch.max(p_mean, -3)[0]
+        p_sample = torch.max(p_sample, -3)[0]
         
         # set p_mean, p_sample if blocks larger than (1,1)
         p_mean = F.max_pool2d_with_indices(p_mean, block_size)[0]
