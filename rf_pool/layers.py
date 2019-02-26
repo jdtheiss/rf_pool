@@ -13,8 +13,8 @@ class Layer(torch.nn.Module):
         self.img_shape = None
         self.lattice_fn = None
         self.updates = None
-        self.inputs = {'t': None, 'rfs': None, 'pool_type': 'prob', 
-                       'block_size': (2,2)}
+        self.inputs = {'t': None, 'rfs': None, 'mu': self.mu,
+                       'pool_type': 'max', 'block_size': (2,2)}
         
     def __call__(self, *args):
         return self.forward(*args)
@@ -29,6 +29,7 @@ class Layer(torch.nn.Module):
         assert self.lattice_fn is not None
         assert self.mu.shape[0] == self.sigma.shape[0]
         assert self.img_shape is not None
+        self.inputs['mu'] = self.mu
         self.inputs['rfs'] = self.lattice_fn(self.mu, self.sigma, self.img_shape)
     
     def update_rfs(self, delta_mu, delta_sigma):
@@ -41,6 +42,7 @@ class Layer(torch.nn.Module):
                                    torch.as_tensor(rfs_shape, dtype=self.mu.dtype)))
         # update mu and sigma
         mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, self.updates)
+        self.inputs['mu'] = mu
         # update rfs
         self.inputs['rfs'] = self.lattice_fn(mu, sigma, self.img_shape)
     
