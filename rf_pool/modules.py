@@ -346,6 +346,7 @@ class FeedForwardNetwork(Module):
         # misc. params
         self.dropout_types = self.set_list_vars(self.dropout_types, self.n_layers)
         self.dropout_names = self.get_typenames(self.dropout_types)
+        self.control_out = []
         
         # check each list var has len == n_layers
         for key in self.attrs.keys():
@@ -430,13 +431,14 @@ class FeedForwardNetwork(Module):
 
     def forward_layer(self, layer_id, x):
         # preform computations for one layer
-        self.control_out = []
+        control_out = []
         layer_id = str(layer_id)
         x = self.apply_forward_pass(self.hidden_layers[layer_id], x)
         x = self.apply_forward_pass(self.activations[layer_id], x)
         if self.control_nets and layer_id in self.control_nets:
-            self.control_out = self.control_nets[layer_id](x)
-        x = self.apply_forward_pass(self.pool_layers[layer_id], x, *self.control_out)
+            control_out = self.control_nets[layer_id](x)
+            self.control_out = control_out
+        x = self.apply_forward_pass(self.pool_layers[layer_id], x, *control_out)
         x = self.apply_forward_pass(self.dropouts[layer_id], x)
         return x
 
@@ -498,7 +500,7 @@ class ControlNetwork(Module):
     Examples
     --------
     # creates control network to output mu and sigma deltas for a receptive field pool layer
-    >>> rf_layer = RF_Pool(torch.rand(36,2), torch.ones(36,1), img_shape=(24,24), pool_type='sum')
+    >>> rf_layer = RF_Pool(torch.rand(36,2)*24, torch.ones(36,1), img_shape=(24,24), pool_type='sum')
     >>> net = FeedForwardNetwork((1,1,28,28), ['conv'], ['relu'], [rf_layer], output_channels=[20],
                                 kernel_sizes=[5], pool_ksizes=[2])
     >>> trunk = {'layer_types': ['fc'], 'act_types': ['relu'], 'output_channels': [128]}
