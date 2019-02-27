@@ -136,9 +136,10 @@ def stochastic_max_pool(u, out_shape, mask=None):
     -----
     Stochastic max-pooling considers each receptive field to be a 
     multinomial unit in which only one unit can be on. 
-        h_mean is a softmax across all units in the receptive field
+        h_mean is set to the input, u
         h_sample is sampled from a multinomial distribution with and exactly 
-        one unit set to 1
+        one unit set to 1 based on a softmax across the units in the receptive
+        field
         p_mean is set to the element-wise multiplication of h_mean and h_sample
         p_sample is set to h_sample
 
@@ -151,14 +152,14 @@ def stochastic_max_pool(u, out_shape, mask=None):
     # get probabilities for each unit being on
     probs = local_softmax(u, -1, mask)
     # set detection mean-field estimates and samples
-    h_mean = torch.reshape(probs, out_shape)
+    h_mean = torch.reshape(u, out_shape)
     h_sample = torch.reshape(Multinomial(probs=probs).sample(), out_shape)
     # set pooling mean-field estimates and samples
     p_mean = torch.mul(h_mean, h_sample)
     p_sample = h_sample.clone()
     return h_mean, h_sample, p_mean, p_sample
 
-def div_norm_pool(u, out_shape, mask=None, n=2., sigma=0.5):
+def div_norm_pool(u, out_shape, mask=None, n=2., s=0.5):
     """
     Divisive normalization across units in a receptive field (last dim)
     
@@ -175,7 +176,7 @@ def div_norm_pool(u, out_shape, mask=None, n=2., sigma=0.5):
     n : float, optional
         exponent used in divisive normalization (see Notes)
         [default: 2.]
-    sigma : float, optional
+    s : float, optional
         constant used in divisive normalization (see Notes)
         [default: 0.5]
 
@@ -194,17 +195,14 @@ def div_norm_pool(u, out_shape, mask=None, n=2., sigma=0.5):
     Notes
     -----
     Divisive normalization raises the input to the power of n, and normalizes 
-    each unit with a constant, sigma, added in the denominator:
-        h_mean = torch.pow(rf_u, n)/torch.add(torch.pow(sigma, n),
-                 torch.sum(torch.pow(rf_u, n), dim=-1, keepdim=True))
+    each unit with a constant, s, added in the denominator:
+        h_mean = torch.pow(u, n)/torch.add(torch.pow(s, n),
+                 torch.sum(torch.pow(u, n), dim=-1, keepdim=True))
         h_sample is set to 1 indexed at the maximum unit in h_mean
         p_mean is set to the value of h_mean indexed at the stochastically
         selected max unit
         p_sample is set to h_sample
     
-    With n=2 and sigma=0.5, div_norm_pool simulates the average cortical 
-    normalization observed emprically (Heeger, 1992).
-
     References
     ----------
     Heeger, D. J. (1992). Normalization of cell responses in cat striate 
@@ -216,8 +214,8 @@ def div_norm_pool(u, out_shape, mask=None, n=2., sigma=0.5):
         u = torch.mul(u, torch.as_tensor(mask, dtype=u.dtype))
     # raise rf_u, sigma to nth power
     u_n = torch.pow(u, n)
-    sigma_n = torch.pow(torch.as_tensor(sigma, dtype=u.dtype), n)
-    probs = torch.div(u_n, sigma_n + torch.sum(u_n, dim=-1, keepdim=True))
+    s_n = torch.pow(torch.as_tensor(s, dtype=u.dtype), n)
+    probs = torch.div(u_n, s_n + torch.sum(u_n, dim=-1, keepdim=True))
     # set detection mean-field estimates and samples
     h_mean = torch.reshape(probs, out_shape)
     h_sample = torch.reshape(max_index(probs), out_shape)
