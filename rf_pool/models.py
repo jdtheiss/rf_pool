@@ -1,9 +1,9 @@
-import torch 
-import torch.nn as nn 
-import torch.optim as optim 
-import numpy as np 
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
 from IPython.display import clear_output, display
-import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt
 import pickle
 from modules import FeedForwardNetwork, ControlNetwork
 import utils.lattice as lattice
@@ -29,7 +29,7 @@ class Model(nn.Module):
     load_model(filename)
         loads a previously saved model from filename
     save_model(filename, extras = [])
-        saves a model instance 
+        saves a model instance
     show_lattice(x, figsize=(10,10))
         shows the lattice for each layer given input x
     get_trainable_params()
@@ -51,7 +51,7 @@ class Model(nn.Module):
         self.optimizer = None # optimizer must be set after the graph is initialized
 
     def set_loss_fn(self, loss_type):
-        if type(loss_type) is not str: 
+        if type(loss_type) is not str:
             loss_name = torch.typname(loss_type)
         else:
             loss_name = loss_type
@@ -80,18 +80,18 @@ class Model(nn.Module):
                 for i, v in enumerate(value):
                     params[i].update({key: v})
         [kwargs.pop(key) for key in removed_keys]
-        
+
         # get typename for optimizer
         if type(optimizer_type) is not str:
             optimizer_name = torch.typename(optimizer_type)
         else:
             optimizer_name = optimizer_type
 
-        # choose optimizer 
+        # choose optimizer
         if optimizer_name.lower() == 'sgd':
             self.optimizer = optim.SGD(params, **kwargs)
         elif optimizer_name.lower() == 'adam':
-            self.optimizer = optim.Adam(params, **kwargs) 
+            self.optimizer = optim.Adam(params, **kwargs)
         elif optimizer_name.startswith('torch.optim'):
             self.optimizer = optimizer_type(params, **kwargs)
         else:
@@ -113,7 +113,7 @@ class Model(nn.Module):
         self.loss_history.append(loss)
         plt.plot(self.loss_history)
         plt.show()
-    
+
     def show_lattice(self, x, figsize=(10,10)): #TODO: integrate with lattice.show_kernel_lattice
         assert self.net.control_nets is not None, (
             "control network must be activated to show lattice")
@@ -140,7 +140,7 @@ class Model(nn.Module):
                 for i, layer_id in enumerate(self.net.control_nets.keys()):
                     rfs = self.net.pool_layers[layer_id].inputs['rfs']
                     lattice_layer = lattice.make_kernel_lattice(rfs)
-                    ax[batch_id, i+1].imshow(lattice_layer[batch_id])                 
+                    ax[batch_id, i+1].imshow(lattice_layer[batch_id])
         plt.show()
 
     def get_trainable_params(self, prefix=''):
@@ -153,7 +153,7 @@ class Model(nn.Module):
                 trainable_params.append(param)
 
         return trainable_params
-    
+
     def get_param_names(self):
         param_names = []
         for (name, param) in self.net.named_parameters():
@@ -202,7 +202,7 @@ class Model(nn.Module):
                 loss = self.loss_criterion(outputs, labels)
                 # add penalty to loss
                 if hasattr(self, 'penalty_attr'):
-                    loss += self.loss_penalty(self.penalty_attr, 
+                    loss += self.loss_penalty(self.penalty_attr,
                                               self.penalty_cost,
                                               self.penalty_type)
                 loss.backward()
@@ -225,7 +225,7 @@ class FeedForwardModel(Model):
     Attributes
     ----------
     net : FeedForwardNetwork
-        network for running the model 
+        network for running the model
 
     Methods
     -------
@@ -249,27 +249,45 @@ class FeedForwardModel(Model):
     def control_network(self, layer_id, *args, **kwargs):
         assert self.net is not None,  (
             "Feed forward network must be initialized before the control network(s)")
-        if not hasattr(self.net, 'control_nets') or self.net.control_nets is None:
+        if not hasattr(self.net, 'control_nets') or not self.net.control_nets:
             self.net.control_nets = nn.ModuleDict()
 
         self.net.control_nets.add_module(str(layer_id), ControlNetwork(self.net, layer_id, *args, **kwargs))
 
     def loss_penalty(self, attr, cost, penalty_type):
-        assert hasattr(self.net, attr), (
-            'network does not have attribute')
-        
-        # get value for attribute
-        value = getattr(self.net, attr)
+        # get value from attribute
+        attr = attr.split('.')
+        value = self.net
+        for a in attr:
+            assert hasattr(value, a), (
+                'network does not have attribute')
+            value = getattr(value, a)
+
+        # get value as list
+        if hasattr(value, 'values'):
+            dict_values = value.values()
+            value = []
+            for v in dict_values:
+                if type(v) is list:
+                    value.extend(v)
+                else:
+                    value.append(v)
+
+        # get penalty function
         if penalty_type == 'L1':
             penalty_fn = torch.abs
 
         # add penalties
         penalty = 0.
         if type(value) is list:
+            assert len(value) != 0, (
+                'no value found for attribute'
+            )
             for v in value:
                 penalty = torch.add(penalty, torch.sum(penalty_fn(v)))
         else:
             penalty = penalty_fn(value)
+
         return torch.as_tensor(torch.mul(penalty, cost), dtype=torch.float32)
 
     def set_penalty_fn(self, attr, cost=1., penalty_type='L1'):
