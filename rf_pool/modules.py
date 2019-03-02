@@ -186,11 +186,13 @@ class Module(nn.Module):
             pool_layer = nn.MaxPool2d(self.pool_ksizes[layer_id], self.pool_ksizes[layer_id])
         elif self.pool_names[layer_id] in ['prob', 'stochastic', 'div_norm', 'average', 'sum']:
             pool_layer = RF_Pool(pool_type=self.pool_types[layer_id],
-                           block_size=(self.pool_ksizes[layer_id],)*2)
+                           block_size=self.pool_ksizes[layer_id])
         elif self.pool_names[layer_id].startswith('torch.nn.modules.pooling'):
             pool_layer = self.pool_types[layer_id]
+            self.pool_ksizes[layer_id] = pool_layer.kernel_size
         elif self.pool_names[layer_id].find('layers') >= 0:
             pool_layer = self.pool_types[layer_id]
+            self.pool_ksizes[layer_id] = pool_layer.inputs['block_size']
         elif self.pool_names[layer_id].lower() == 'nonetype':
             pool_layer = None
         else:
@@ -354,6 +356,7 @@ class FeedForwardNetwork(Module):
         if self.control_nets is None:
             self.control_nets = {}
         self.control_out = {}
+        self.layer_out = {}
 
         # check each list var has len == n_layers
         for key in self.attrs.keys():
@@ -461,6 +464,7 @@ class FeedForwardNetwork(Module):
             self.control_out[layer_id] = control_out
         x = self.apply_forward_pass(self.pool_layers[layer_id], x, *control_out)
         x = self.apply_forward_pass(self.dropouts[layer_id], x)
+        self.layer_out[layer_id] = x
         return x
 
     def forward(self, x):
@@ -561,7 +565,6 @@ class ControlNetwork(Module):
         self.update_attrs()
 
     def get_conv_shape(self, output_shape, pool_ksize):
-        #TODO: if pool_layer is set directly, pool_ksize may not be accurate
         if pool_ksize is None:
             return output_shape
         return output_shape[:2] + (output_shape[-2]*pool_ksize, output_shape[-1]*pool_ksize)
