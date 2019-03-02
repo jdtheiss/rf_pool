@@ -14,7 +14,7 @@ class Layer(torch.nn.Module):
         self.lattice_fn = None
         self.updates = None
         self.inputs = {'t': None, 'rfs': None, 'mu': self.mu,
-                       'pool_type': 'max', 'block_size': (2,2)}
+                       'pool_type': 'max', 'block_size': 2}
 
     def __call__(self, *args):
         return self.forward(*args)
