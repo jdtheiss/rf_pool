@@ -114,34 +114,25 @@ class Model(nn.Module):
         plt.plot(self.loss_history)
         plt.show()
 
-    def show_lattice(self, x, figsize=(10,10)): #TODO: integrate with lattice.show_kernel_lattice
-        assert self.net.control_nets is not None, (
-            "control network must be activated to show lattice")
+    def show_lattice(self, x=None, figsize=(5,5), cmap=None):
+        # get lattice_ids
+        lattice_ids = [layer_id for i, layer_id in enumerate(self.net.layer_ids)
+                        if self.net.pool_names[i].find('layers') >= 0]
+        n_lattices =  len(lattice_ids)
+        if n_lattices == 0:
+            raise Exception('No rf_pool layers found.')
 
-        n_examples = x.shape[0]
-        n_lattices =  len(self.net.control_nets)
-        fig, ax = plt.subplots(n_examples, n_lattices+1, figsize=figsize)
-
-        # adjust the pooling layers
+        # pass x through network, show lattices
         with torch.no_grad():
-            self.net(x)
-            for batch_id in range(n_examples):
-                img = x[batch_id]
-                if x.shape[1] == 3:
-                    img =  img / 2 + 0.5 # unnormalize
-                    img = img.numpy()
-                    img = np.transpose(img, (1, 2, 0))
-                    cmap = None
-                else:
-                    img = torch.squeeze(img).numpy()
-                    cmap = 'gray'
-                ax[batch_id, 0].imshow(img, cmap=cmap)
-
-                for i, layer_id in enumerate(self.net.control_nets.keys()):
-                    rfs = self.net.pool_layers[layer_id].inputs['rfs']
-                    lattice_layer = lattice.make_kernel_lattice(rfs)
-                    ax[batch_id, i+1].imshow(lattice_layer[batch_id])
-        plt.show()
+            if type(x) is torch.Tensor:
+                self.net(x)
+            # get lattices
+            lattices = []
+            for i, layer_id in enumerate(lattice_ids):
+                rfs = self.net.pool_layers[layer_id].inputs['rfs']
+                lattices.append(lattice.make_kernel_lattice(rfs))
+            # show lattices
+            lattice.show_kernel_lattice(lattices, x, figsize, cmap)
 
     def get_trainable_params(self, prefix=''):
         # set prefix to 'hidden_layers' to grab only net params
@@ -186,6 +177,12 @@ class Model(nn.Module):
         assert self.net is not None, (
             "network must be initialized before training")
 
+        # get kwargs for show_lattice
+        show_lattice_kwargs = {}
+        if 'figsize' in kwargs:
+            show_lattice_kwargs['figsize'] = kwargs.pop('figsize')
+        if 'cmap' in kwargs:
+            show_lattice_kwargs['cmap'] = kwargs.pop('cmap')
         #initialize optimizer for training
         kwargs.update({'lr':lr})
         self.set_optimizer(self.optimizer_type, **kwargs)
@@ -216,7 +213,7 @@ class Model(nn.Module):
                     if monitor_loss:
                         self.monitor_loss(running_loss / monitor)
                     if monitor_lattice:
-                        self.show_lattice(inputs)
+                        self.show_lattice(inputs, **show_lattice_kwargs)
                     # reset running_loss
                     running_loss = 0.
 

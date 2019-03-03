@@ -62,9 +62,10 @@ class Layer(torch.nn.Module):
             sigma = torch.max(sigma, torch.ones_like(sigma))
         return mu, sigma
 
-    def show_rfs(self):
+    def show_rfs(self, figsize=(5,5), cmap=None):
         assert self.inputs['rfs'] is not None
-        lattice.show_kernel_lattice(self.inputs['rfs'])
+        rfs = lattice.make_kernel_lattice(self.inputs['rfs'])
+        lattice.show_kernel_lattice(rfs, figsize=figsize, cmap=cmap)
 
 class RF_Pool(Layer):
     """
