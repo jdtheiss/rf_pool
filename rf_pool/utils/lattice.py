@@ -70,7 +70,7 @@ def mask_kernel_2d(mu, sigma, xy):
 def mu_mask(mu, kernel_shape):
     """
     Returns a tensor of kernels with value = 1 at each mu location
-    
+
     Parameters
     ----------
     mu : torch.Tensor
@@ -91,7 +91,7 @@ def mu_mask(mu, kernel_shape):
     >>> kernel_shape = (200,200)
     >>> kernels = mu_mask(mu, kernel_shape)
     """
-    
+
     # create the coordinates input to kernel function
     x = torch.arange(kernel_shape[0])
     y = torch.arange(kernel_shape[1])
@@ -100,7 +100,7 @@ def mu_mask(mu, kernel_shape):
     mu = mu.reshape(mu.shape + (1,1))
     # return 1s at mu locations
     return torch.as_tensor(torch.prod(torch.eq(mu.int(), xy.int()), -3), dtype=mu.dtype)
-    
+
 def exp_kernel_lattice(mu, sigma, kernel_shape):
     """
     Returns a tensor of exponential kernels with max value = 1
@@ -463,15 +463,56 @@ def make_kernel_lattice(kernels):
                                 dtype=kernels.dtype)
     norm_kerns = torch.div(kernels, max_kerns + 1e-6)
     out = torch.max(norm_kerns, dim=-3)[0]
-    if out.ndimension() > 2:
-        out = torch.flatten(out, 0, -3)
+    # ensure ndim == 4
+    new_dims = 4 - out.ndimension()
+    assert new_dims >= 0, ('number of dimensions must be <= 5')
+    for n in range(new_dims):
+        out = torch.unsqueeze(out, 0)
 
-    return out.detach().numpy()
+    return out.detach()
 
-def show_kernel_lattice(kernels):
-    out = make_kernel_lattice(kernels)
-    assert out.ndim == 2
-    plt.imshow(out)
+def show_kernel_lattice(lattices, x=None, figsize=(5, 5), cmap=None):
+    """
+    #TODO:WRITEME
+    """
+    # check that lattices is list or torch.Tensor
+    assert type(lattices) in [list, torch.Tensor], (
+        'lattices type must be list or torch.Tensor'
+    )
+    if type(lattices) is not list:
+        lattices = [lattices]
+    # get number of lattices
+    n_lattices = 0
+    for i in range(len(lattices)):
+        assert lattices[i].ndimension() == 4, (
+            'lattices must have 4 dimensions'
+        )
+        n_lattices += lattices[i].shape[1]
+    # transpose x if not None
+    if x is not None:
+        x = torch.squeeze(x.permute(0,2,3,1), -1).numpy()
+    # init figure, axes
+    n_rows = np.max([l.shape[0] for l in lattices])
+    n_cols = n_lattices
+    if x is not None:
+        n_rows = np.maximum(n_rows, x.shape[0])
+        n_cols += 1
+    fig, ax = plt.subplots(n_rows, n_cols, figsize=figsize)
+    ax = np.reshape(ax, (n_rows, n_cols))
+    # plot data and lattices
+    for r in range(n_rows):
+        # show data
+        if x is not None:
+            ax[r,0].imshow(x[r], cmap)
+            c = 1
+        else:
+            c = 0
+        # show lattices
+        for l in range(len(lattices)):
+            for ll in range(lattices[l].shape[1]):
+                batch_id = np.minimum(r, lattices[l].shape[0]-1)
+                ax[r,c].imshow(lattices[l][batch_id,ll], cmap)
+                c += 1
     plt.show()
 
 if __name__ == '__main__':
