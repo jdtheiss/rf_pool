@@ -47,8 +47,6 @@ class Model(nn.Module):
         self.loss_type = loss_type
         self.optimizer_type = optimizer_type
         self.net = None
-        self.set_loss_fn(self.loss_type) # set loss function
-        self.optimizer = None # optimizer must be set after the graph is initialized
 
     def set_loss_fn(self, loss_type):
         if type(loss_type) is not str:
@@ -58,13 +56,15 @@ class Model(nn.Module):
 
         # choose loss function
         if loss_name.lower() == 'cross_entropy':
-            self.loss_criterion = nn.CrossEntropyLoss()
+            loss_criterion = nn.CrossEntropyLoss()
         elif loss_name.lower() == 'squared_error':
-            self.loss_criterion = nn.MSELoss()
+            loss_criterion = nn.MSELoss()
         elif loss_name.startswith('torch.nn.modules.loss'):
-            self.loss_criterion = loss_type()
+            loss_criterion = loss_type()
         else:
             raise Exception('loss_type not understood')
+
+        return loss_criterion
 
     def set_optimizer(self, optimizer_type, prefix=[''], **kwargs):
         # set params dict for main, control networks
@@ -89,13 +89,15 @@ class Model(nn.Module):
 
         # choose optimizer
         if optimizer_name.lower() == 'sgd':
-            self.optimizer = optim.SGD(params, **kwargs)
+            optimizer = optim.SGD(params, **kwargs)
         elif optimizer_name.lower() == 'adam':
-            self.optimizer = optim.Adam(params, **kwargs)
+            optimizer = optim.Adam(params, **kwargs)
         elif optimizer_name.startswith('torch.optim'):
-            self.optimizer = optimizer_type(params, **kwargs)
+            optimizer = optimizer_type(params, **kwargs)
         else:
             raise Exception("optimizer_type not understood")
+
+        return optimizer
 
     def save_model(self, filename, extras=[]):
         if type(extras) is not list:
@@ -170,10 +172,44 @@ class Model(nn.Module):
 
         return 100 * correct / total
 
+    def optimize_image(self, input_image, n_steps, layer_ids, monitor=2000,
+                       lr=.001, **kwargs):
+        seed_image = torch.rand_like(input_image, requires_grad = True)
+        self.set_requires_grad("hidden_layers", requires_grad = False)
+
+        kwargs.update({'lr':lr})
+        optimizer = self.set_optimizer(self.optimizer_type, **kwargs)
+        loss_criterion = self.set_loss_fn(self.loss_type)
+
+        with torch.no_grad()
+            self.net(input_image)
+            fm_input = [self.net.layer_out[layer_id] for layer_id in layer_ids]
+
+        running_loss = 0. 
+        for i in range(n_steps)
+            optimizer.zero_grad()
+
+            self.net(seed_image)
+            fm_seed = [self.net.layer_out[layer_id] for layer_id in layer_ids]
+
+            loss = torch.zeros(1)
+            for fm_s, fm_i in zip(fm_seed, fm_input):
+                loss += loss_criterion(fm_s, fm_i)
+
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item()
+            if (i+1) % monitor == 0:
+                clear_output(wait=True)
+                display('[%5d] loss: %.3f' % (i+1, running_loss / monitor))
+
+                plt.imshow(torch.squeeze(torch.permute(seed_image[0,0], (0,2,3,1)), -1))
+                plt.show()
+                running_loss = 0
+
     def train_model(self, epochs, trainloader, lr=0.001, monitor=2000,
                     monitor_loss=False, monitor_lattice=False, **kwargs):
-        assert self.loss_criterion is not None, (
-            "loss function must be initialized before training")
         assert self.net is not None, (
             "network must be initialized before training")
 
@@ -185,7 +221,8 @@ class Model(nn.Module):
             show_lattice_kwargs['cmap'] = kwargs.pop('cmap')
         #initialize optimizer for training
         kwargs.update({'lr':lr})
-        self.set_optimizer(self.optimizer_type, **kwargs)
+        optimizer = self.set_optimizer(self.optimizer_type, **kwargs)
+        loss_criterion = self.set_loss_fn(self.loss_type)
         # train the model
         running_loss = 0.
         for epoch in range(epochs):
@@ -193,10 +230,10 @@ class Model(nn.Module):
                 # get inputs , labels
                 inputs, labels = data
                 # zero grad, get outputs
-                self.optimizer.zero_grad()
+                optimizer.zero_grad()
                 outputs = self.net(inputs)
                 # get loss
-                loss = self.loss_criterion(outputs, labels)
+                loss = loss_criterion(outputs, labels)
                 # add penalty to loss
                 if hasattr(self, 'penalty_attr'):
                     loss += self.loss_penalty(self.penalty_attr,
@@ -204,7 +241,7 @@ class Model(nn.Module):
                                               self.penalty_type)
                 loss.backward()
                 # update parameters
-                self.optimizer.step()
+                optimizer.step()
                 running_loss += loss.item()
                 # monitor loss, lattice
                 if (i+1) % monitor == 0:
