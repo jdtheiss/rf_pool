@@ -216,8 +216,8 @@ class Model(nn.Module):
 
         return 100 * correct / total
 
-    def optimize_image(self, input_image, n_steps, layer_ids, lr=0.001, monitor=2000,
-                       monitor_texture=False, **kwargs):
+    def optimize_image(self, input_image, n_steps, layer_ids, lr=0.001,
+                       monitor=2000, monitor_texture=False, **kwargs):
         seed_image = torch.rand_like(input_image, requires_grad = True)
         self.set_requires_grad("hidden_layers", requires_grad = False)
 
@@ -225,6 +225,7 @@ class Model(nn.Module):
         optimizer = self.set_optimizer(self.optimizer_type, **kwargs)
         loss_criterion = self.set_loss_fn(self.loss_type)
 
+        layer_ids = [str(layer_id) for layer_id in layer_ids]
         with torch.no_grad():
             self.net(input_image)
             fm_input = [self.net.layer_out[layer_id] for layer_id in layer_ids]
