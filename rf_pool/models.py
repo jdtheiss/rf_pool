@@ -109,11 +109,55 @@ class Model(nn.Module):
         model = pickle.load(open(filename, 'rb'))
         return model
 
-    def monitor_loss(self, loss):
-        if not hasattr(self, 'loss_history'):
+    def load_weights(self):
+        raise NotImplementedError
+
+    def monitor_loss(self, loss, iter, **kwargs):
+        if not hasattr(self, 'loss_history') or 'reset' in kwargs:
             self.loss_history = []
+
+        # display loss
+        clear_output(wait=True)
+        display('[%5d] loss: %.3f' % (iter, loss))
+
+        # append loss and show history
         self.loss_history.append(loss)
         plt.plot(self.loss_history)
+        plt.show()
+
+        # pass kwargs to other functions
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                fn = getattr(self, key)
+                if type(value) is list:
+                    fn(*value)
+                elif type(value) is dict:
+                    fn(**value)
+                else:
+                    raise Exception('type not understood')
+
+    def show_texture(self, input_image, seed_image):
+        assert input_image.shape == seed_image.shape, (
+            'input_image and seed_image shapes must match'
+        )
+        # get number of input images
+        n_images = input_image.shape[0]
+
+        # set cmap
+        if input_image.shape[0] == 3:
+            cmap = None
+        else:
+            cmap = 'gray'
+
+        # permute, squeeze input_image and seed_image
+        input_image = torch.squeeze(input_image.permute(0,2,3,1), -1)
+        seed_image = torch.squeeze(seed_image.permute(0,2,3,1), -1)
+
+        # init figure, axes
+        fig, ax = plt.subplots(n_images, 2)
+        for n in range(n_images):
+            ax[n,0].imshow(input_image[n], cmap=cmap)
+            ax[n,1].imshow(seed_image[n], cmap=cmap)
         plt.show()
 
     def show_lattice(self, x=None, figsize=(5,5), cmap=None):
@@ -173,7 +217,7 @@ class Model(nn.Module):
         return 100 * correct / total
 
     def optimize_image(self, input_image, n_steps, layer_ids, monitor=2000,
-                       lr=.001, **kwargs):
+                       lr=0.001, **kwargs):
         seed_image = torch.rand_like(input_image, requires_grad = True)
         self.set_requires_grad("hidden_layers", requires_grad = False)
 
@@ -181,12 +225,12 @@ class Model(nn.Module):
         optimizer = self.set_optimizer(self.optimizer_type, **kwargs)
         loss_criterion = self.set_loss_fn(self.loss_type)
 
-        with torch.no_grad()
+        with torch.no_grad():
             self.net(input_image)
             fm_input = [self.net.layer_out[layer_id] for layer_id in layer_ids]
 
-        running_loss = 0. 
-        for i in range(n_steps)
+        running_loss = 0.
+        for i in range(n_steps):
             optimizer.zero_grad()
 
             self.net(seed_image)
@@ -201,12 +245,9 @@ class Model(nn.Module):
 
             running_loss += loss.item()
             if (i+1) % monitor == 0:
-                clear_output(wait=True)
-                display('[%5d] loss: %.3f' % (i+1, running_loss / monitor))
-
-                plt.imshow(torch.squeeze(torch.permute(seed_image[0,0], (0,2,3,1)), -1))
-                plt.show()
-                running_loss = 0
+                self.monitor_loss(running_loss, i+1, monitor,
+                                show_texture=[input_image, seed_image])
+                running_loss = 0.
 
     def train_model(self, epochs, trainloader, lr=0.001, monitor=2000,
                     monitor_loss=False, monitor_lattice=False, **kwargs):
@@ -243,16 +284,11 @@ class Model(nn.Module):
                 # update parameters
                 optimizer.step()
                 running_loss += loss.item()
-                # monitor loss, lattice
+                # monitor loss, show lattice
                 if (i+1) % monitor == 0:
-                    clear_output(wait=True)
-                    display('[%d, %5d] loss: %.3f' % (epoch, i+1, running_loss / monitor))
-                    if monitor_loss:
-                        self.monitor_loss(running_loss / monitor)
-                    if monitor_lattice:
-                        self.show_lattice(inputs, **show_lattice_kwargs)
-                    # reset running_loss
-                    running_loss = 0.
+                    show_lattice_kwargs['x'] = inputs
+                    self.monitor_loss(running_loss / monitor, i+1,
+                        show_lattice=show_lattice_kwargs)
 
 class FeedForwardModel(Model):
     """
