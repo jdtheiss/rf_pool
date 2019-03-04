@@ -216,8 +216,8 @@ class Model(nn.Module):
 
         return 100 * correct / total
 
-    def optimize_image(self, input_image, n_steps, layer_ids, monitor=2000,
-                       lr=0.001, **kwargs):
+    def optimize_image(self, input_image, n_steps, layer_ids, lr=0.001, monitor=2000,
+                       monitor_texture=False, **kwargs):
         seed_image = torch.rand_like(input_image, requires_grad = True)
         self.set_requires_grad("hidden_layers", requires_grad = False)
 
@@ -245,12 +245,16 @@ class Model(nn.Module):
 
             running_loss += loss.item()
             if (i+1) % monitor == 0:
+                if monitor_texture:
+                    show_texture_args = [input_image, seed_image]
+                else:
+                    show_texture_args = []
                 self.monitor_loss(running_loss, i+1, monitor,
-                                show_texture=[input_image, seed_image])
+                                show_texture=show_texture_args)
                 running_loss = 0.
 
     def train_model(self, epochs, trainloader, lr=0.001, monitor=2000,
-                    monitor_loss=False, monitor_lattice=False, **kwargs):
+                    monitor_lattice=False, **kwargs):
         assert self.net is not None, (
             "network must be initialized before training")
 
@@ -286,9 +290,13 @@ class Model(nn.Module):
                 running_loss += loss.item()
                 # monitor loss, show lattice
                 if (i+1) % monitor == 0:
-                    show_lattice_kwargs['x'] = inputs
+                    if monitor_lattice:
+                        show_lattice_kwargs['x'] = inputs
+                    else:
+                        show_lattice_kwargs = {}
                     self.monitor_loss(running_loss / monitor, i+1,
                         show_lattice=show_lattice_kwargs)
+                    running_loss = 0.
 
 class FeedForwardModel(Model):
     """
