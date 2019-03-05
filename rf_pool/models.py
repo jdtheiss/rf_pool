@@ -57,7 +57,7 @@ class Model(nn.Module):
         # choose loss function
         if loss_name.lower() == 'cross_entropy':
             loss_criterion = nn.CrossEntropyLoss()
-        elif loss_name.lower() == 'squared_error':
+        elif loss_name.lower() == 'mse':
             loss_criterion = nn.MSELoss()
         elif loss_name.startswith('torch.nn.modules.loss'):
             loss_criterion = loss_type()
@@ -113,7 +113,7 @@ class Model(nn.Module):
         raise NotImplementedError
 
     def monitor_loss(self, loss, iter, **kwargs):
-        if not hasattr(self, 'loss_history') or 'reset' in kwargs:
+        if not hasattr(self, 'loss_history'):
             self.loss_history = []
 
         # display loss
@@ -150,8 +150,8 @@ class Model(nn.Module):
             cmap = 'gray'
 
         # permute, squeeze input_image and seed_image
-        input_image = torch.squeeze(input_image.permute(0,2,3,1), -1)
-        seed_image = torch.squeeze(seed_image.permute(0,2,3,1), -1)
+        input_image = torch.squeeze(input_image.permute(0,2,3,1), -1).detach()
+        seed_image = torch.squeeze(seed_image.permute(0,2,3,1), -1).detach()
 
         # init figure, axes
         fig, ax = plt.subplots(n_images, 2)
@@ -197,7 +197,7 @@ class Model(nn.Module):
             param_names.append(name)
         return param_names
 
-    def set_requires_grad(self, net_type, requires_grad = True):
+    def set_requires_grad(self, net_type, requires_grad=True):
         # set a net's parameters to require gradient or not
         for (name, param) in self.net.named_parameters():
             if name.startswith(net_type):
@@ -216,42 +216,44 @@ class Model(nn.Module):
 
         return 100 * correct / total
 
-    def optimize_image(self, input_image, n_steps, layer_ids, lr=0.001,
-                       monitor=2000, monitor_texture=False, **kwargs):
-        seed_image = torch.rand_like(input_image, requires_grad = True)
-        self.set_requires_grad("hidden_layers", requires_grad = False)
-
+    def optimize_image(self, input_image, n_steps, layer_ids, loss_type='mse',
+                       optimizer_type='sgd', lr=0.001, monitor=2000,
+                       monitor_texture=False, **kwargs):
+        # set seed_image to random, turn off model gradients
+        seed_image = torch.rand_like(input_image, requires_grad=True)
+        self.set_requires_grad('hidden', requires_grad=False)
+        # set optimizer, loss_criterion
         kwargs.update({'lr':lr})
-        optimizer = self.set_optimizer(self.optimizer_type, **kwargs)
-        loss_criterion = self.set_loss_fn(self.loss_type)
-
+        optimizer = self.set_optimizer(optimizer_type, **kwargs)
+        loss_criterion = self.set_loss_fn(loss_type)
+        # get layer_out for each layer_id with input_image
         layer_ids = [str(layer_id) for layer_id in layer_ids]
         with torch.no_grad():
             self.net(input_image)
             fm_input = [self.net.layer_out[layer_id] for layer_id in layer_ids]
-
+        # optimize
         running_loss = 0.
         for i in range(n_steps):
             optimizer.zero_grad()
-
+            # pass seed_image through network
             self.net(seed_image)
             fm_seed = [self.net.layer_out[layer_id] for layer_id in layer_ids]
-
+            # set loss
             loss = torch.zeros(1)
             for fm_s, fm_i in zip(fm_seed, fm_input):
                 loss += loss_criterion(fm_s, fm_i)
-
+            # update seed_image
             loss.backward()
             optimizer.step()
-
             running_loss += loss.item()
+            # monitor loss, show_texture
             if (i+1) % monitor == 0:
                 if monitor_texture:
                     show_texture_args = [input_image, seed_image]
                 else:
                     show_texture_args = []
-                self.monitor_loss(running_loss, i+1, monitor,
-                                show_texture=show_texture_args)
+                self.monitor_loss(running_loss / monitor, i+1,
+                                  show_texture=show_texture_args)
                 running_loss = 0.
 
     def train_model(self, epochs, trainloader, lr=0.001, monitor=2000,
@@ -296,7 +298,7 @@ class Model(nn.Module):
                     else:
                         show_lattice_kwargs = {}
                     self.monitor_loss(running_loss / monitor, i+1,
-                        show_lattice=show_lattice_kwargs)
+                                      show_lattice=show_lattice_kwargs)
                     running_loss = 0.
 
 class FeedForwardModel(Model):
