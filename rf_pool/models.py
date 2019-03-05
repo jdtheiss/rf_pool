@@ -69,12 +69,15 @@ class Model(nn.Module):
     def set_optimizer(self, optimizer_type, prefix=[''], params=[], **kwargs):
         # set params dict for main, control networks
         for net_prefix in prefix:
-            trainable_params = self.get_trainable_params(net_prefix)
-            if len(trainable_params) > 0:
-                params.append({'params': trainable_params})
-        assert len(params) > 0, (
-            'no trainable parameters found'
-        )
+            params.append({'params': self.get_trainable_params(net_prefix)})
+
+        # check that all 
+        all_empty = True
+        for param in params:
+            if len(param['params']) > 0:
+                all_empty = False
+        if all_empty:
+            raise Exception('No trainable parameters found.')
 
         # remove kwargs and set to params if list
         removed_keys = []
@@ -148,11 +151,14 @@ class Model(nn.Module):
         n_images = input_image.shape[0]
 
         # set cmap
-        if input_image.shape[0] == 3:
+        if input_image.shape[1] == 3:
             cmap = None
+            input_image = input_image - torch.min(input_image)
+            input_image = input_image / torch.max(input_image)
+            seed_image = seed_image - torch.min(seed_image)
+            seed_image = seed_image / torch.max(seed_image)
         else:
             cmap = 'gray'
-
         # permute, squeeze input_image and seed_image
         input_image = torch.squeeze(input_image.permute(0,2,3,1), -1).detach()
         seed_image = torch.squeeze(seed_image.permute(0,2,3,1), -1).detach()
