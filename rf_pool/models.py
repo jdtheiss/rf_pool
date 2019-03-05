@@ -66,11 +66,15 @@ class Model(nn.Module):
 
         return loss_criterion
 
-    def set_optimizer(self, optimizer_type, prefix=[''], **kwargs):
+    def set_optimizer(self, optimizer_type, prefix=[''], params=[], **kwargs):
         # set params dict for main, control networks
-        params = []
         for net_prefix in prefix:
-            params.append({'params': self.get_trainable_params(net_prefix)})
+            trainable_params = self.get_trainable_params(net_prefix)
+            if len(trainable_params) > 0:
+                params.append({'params': trainable_params})
+        assert len(params) > 0, (
+            'no trainable parameters found'
+        )
 
         # remove kwargs and set to params if list
         removed_keys = []
@@ -224,7 +228,8 @@ class Model(nn.Module):
         self.set_requires_grad('hidden', requires_grad=False)
         # set optimizer, loss_criterion
         kwargs.update({'lr':lr})
-        optimizer = self.set_optimizer(optimizer_type, **kwargs)
+        params = [{'params': seed_image}]
+        optimizer = self.set_optimizer(optimizer_type, params=params, **kwargs)
         loss_criterion = self.set_loss_fn(loss_type)
         # get layer_out for each layer_id with input_image
         layer_ids = [str(layer_id) for layer_id in layer_ids]
@@ -250,7 +255,7 @@ class Model(nn.Module):
             if (i+1) % monitor == 0:
                 if monitor_texture:
                     self.monitor_loss(running_loss / monitor, i+1,
-                                    show_texture_args=[input_image, seed_image])
+                                      show_texture=[input_image, seed_image])
                 else:
                     self.monitor_loss(running_loss / monitor, i+1)
                 running_loss = 0.
