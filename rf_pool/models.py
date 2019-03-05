@@ -249,11 +249,10 @@ class Model(nn.Module):
             # monitor loss, show_texture
             if (i+1) % monitor == 0:
                 if monitor_texture:
-                    show_texture_args = [input_image, seed_image]
+                    self.monitor_loss(running_loss / monitor, i+1,
+                                    show_texture_args=[input_image, seed_image])
                 else:
-                    show_texture_args = []
-                self.monitor_loss(running_loss / monitor, i+1,
-                                  show_texture=show_texture_args)
+                    self.monitor_loss(running_loss / monitor, i+1)
                 running_loss = 0.
 
     def train_model(self, epochs, trainloader, lr=0.001, monitor=2000,
@@ -295,10 +294,10 @@ class Model(nn.Module):
                 if (i+1) % monitor == 0:
                     if monitor_lattice:
                         show_lattice_kwargs['x'] = inputs
+                        self.monitor_loss(running_loss / monitor, i+1,
+                                          show_lattice=show_lattice_kwargs)
                     else:
-                        show_lattice_kwargs = {}
-                    self.monitor_loss(running_loss / monitor, i+1,
-                                      show_lattice=show_lattice_kwargs)
+                        self.monitor_loss(running_loss / monitor, i+1)
                     running_loss = 0.
 
 class FeedForwardModel(Model):
