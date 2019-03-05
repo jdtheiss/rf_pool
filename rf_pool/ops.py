@@ -533,8 +533,9 @@ def rf_pool(u, t=None, rfs=None, mu=None, pool_type='max', block_size=2, mask_th
         p_sample = torch.max(p_sample, -3)[0]
 
         # set p_mean, p_sample if blocks larger than (1,1)
-        p_mean = F.max_pool2d_with_indices(p_mean, block_size)[0]
-        p_sample = F.max_pool2d_with_indices(p_sample, block_size)[0]
+        if block_size > 1:
+            p_mean = F.max_pool2d_with_indices(p_mean, block_size)[0]
+            p_sample = F.max_pool2d_with_indices(p_sample, block_size)[0]
 
     # pooling across blocks
     elif rfs is None:
