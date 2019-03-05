@@ -214,6 +214,12 @@ class Module(nn.Module):
             raise Exception('dropout_type not understood')
         return dropout
 
+    def init_weights(self):
+        raise NotImplementedError
+
+    def init_layers(self):
+        raise NotImplementedError
+
     def make_layers(self):
         pass
 
