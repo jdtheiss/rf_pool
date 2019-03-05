@@ -159,6 +159,7 @@ class Model(nn.Module):
 
         # init figure, axes
         fig, ax = plt.subplots(n_images, 2)
+        ax = np.reshape(ax, (n_images, 2))
         for n in range(n_images):
             ax[n,0].imshow(input_image[n], cmap=cmap)
             ax[n,1].imshow(seed_image[n], cmap=cmap)
