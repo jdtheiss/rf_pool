@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 import ops
 from utils import lattice
 
@@ -205,3 +206,38 @@ class RF_Window(Layer):
             self.inputs.pop('mu')
         # return pooling outputs
         return self.apply(u, **self.inputs)[2]
+
+class RF_Same(Layer):
+    """
+    """
+    def __init__(self, mu=None, sigma=None, img_shape=None,
+                 lattice_fn=lattice.mask_kernel_lattice, **kwargs):
+        super(RF_Same, self).__init__()
+        self.mu = mu
+        self.sigma = sigma
+        if self.inputs['rfs'] is not None and self.img_shape is None:
+            self.img_shape = self.inputs['rfs'].shape[-2:]
+        else:
+            self.img_shape = img_shape
+        self.lattice_fn = lattice_fn
+        # set block_size in inputs to 1, get block_size
+        self.inputs.update(kwargs)
+        self.block_size = self.inputs['block_size']
+        self.init_rfs()
+
+    def forward(self, u, delta_mu=None, delta_sigma=None, **kwargs):
+        # update inputs
+        self.inputs.update(kwargs)
+        # set img_shape
+        self.img_shape = u.shape[-2:]
+        # update rfs, mu, sigma
+        if delta_mu is not None and delta_sigma is not None:
+            self.update_rfs(delta_mu, delta_sigma)
+        # remove mu from inputs
+        if 'mu' in self.inputs:
+            self.inputs.pop('mu')
+        # return pooling outputs
+        h_mean = self.apply(u, **self.inputs)[0]
+        if self.block_size > 1:
+            h_mean = F.max_pool2d_with_indices(h_mean, self.block_size)[0]
+        return h_mean
