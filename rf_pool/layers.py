@@ -14,7 +14,7 @@ class Layer(torch.nn.Module):
         self.img_shape = None
         self.lattice_fn = None
         self.updates = None
-        self.inputs = {'t': None, 'rfs': None, 'mu': self.mu,
+        self.inputs = {'t': None, 'rfs': None, 'mu_mask': None,
                        'pool_type': 'max', 'block_size': 2}
 
     def __call__(self, *args):
@@ -30,7 +30,7 @@ class Layer(torch.nn.Module):
         assert self.lattice_fn is not None
         assert self.mu.shape[0] == self.sigma.shape[0]
         assert self.img_shape is not None
-        self.inputs['mu'] = self.mu
+        self.inputs['mu_mask'] = lattice.mu_mask(self.mu, self.img_shape)
         self.inputs['rfs'] = self.lattice_fn(self.mu, self.sigma, self.img_shape)
 
     def update_rfs(self, delta_mu, delta_sigma):
@@ -43,7 +43,7 @@ class Layer(torch.nn.Module):
                                    torch.as_tensor(rfs_shape, dtype=self.mu.dtype)))
         # update mu and sigma
         mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, self.updates)
-        self.inputs['mu'] = mu
+        self.inputs['mu_mask'] = lattice.mu_mask(mu, self.img_shape)
         # update rfs
         self.inputs['rfs'] = self.lattice_fn(mu, sigma, self.img_shape)
 
@@ -63,7 +63,7 @@ class Layer(torch.nn.Module):
             sigma = torch.max(sigma, torch.ones_like(sigma))
         return mu, sigma
 
-    def show_rfs(self, figsize=(5,5), cmap=None):
+    def show_lattice(self, figsize=(5,5), cmap=None):
         assert self.inputs['rfs'] is not None
         rfs = lattice.make_kernel_lattice(self.inputs['rfs'])
         lattice.show_kernel_lattice(rfs, figsize=figsize, cmap=cmap)
@@ -114,7 +114,7 @@ class RF_Pool(Layer):
         creating a new rfs attribute using lattice_fn.
     update_mu_sigma(delta_mu, delta_sigma)
         Update mu and sigma by adding delta_mu, delta_sigma
-    show_rfs()
+    show_lattice()
         Display receptive field lattice from rfs kernel
     """
     def __init__(self, mu=None, sigma=None, img_shape=None, updates=False,
@@ -129,6 +129,8 @@ class RF_Pool(Layer):
         self.updates = updates
         self.lattice_fn = lattice_fn
         self.inputs.update(kwargs)
+        if mu is not None and sigma is not None:
+            self.init_rfs()
 
     def forward(self, u, delta_mu=None, delta_sigma=None, **kwargs):
         # update inputs with kwargs
@@ -139,7 +141,7 @@ class RF_Pool(Layer):
         if delta_mu is not None and delta_sigma is not None:
             self.update_rfs(delta_mu, delta_sigma)
         # return pooling outputs
-        return self.apply(u, **self.inputs)[2]
+        return self.apply(u, **self.inputs)[1]
 
 class RF_Uniform(Layer):
     """
@@ -174,7 +176,7 @@ class RF_Uniform(Layer):
        if delta_mu is not None and delta_sigma is not None:
            self.update_rfs(delta_mu, delta_sigma)
        # return pooling outputs
-       return self.apply(u, **self.inputs)[2]
+       return self.apply(u, **self.inputs)[1]
 
 class RF_Window(Layer):
     """
@@ -202,10 +204,10 @@ class RF_Window(Layer):
         if delta_mu is not None:
             self.update_rfs(delta_mu, None)
         # remove mu from inputs
-        if 'mu' in self.inputs:
-            self.inputs.pop('mu')
+        if 'mu_mask' in self.inputs:
+            self.inputs.pop('mu_mask')
         # return pooling outputs
-        return self.apply(u, **self.inputs)[2]
+        return self.apply(u, **self.inputs)[1]
 
 class RF_Same(Layer):
     """
@@ -234,8 +236,8 @@ class RF_Same(Layer):
         if delta_mu is not None and delta_sigma is not None:
             self.update_rfs(delta_mu, delta_sigma)
         # remove mu from inputs
-        if 'mu' in self.inputs:
-            self.inputs.pop('mu')
+        if 'mu_mask' in self.inputs:
+            self.inputs.pop('mu_mask')
         # return pooling outputs
         h_mean = self.apply(u, **self.inputs)[0]
         if self.block_size > 1:
