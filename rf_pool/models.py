@@ -66,12 +66,11 @@ class Model(nn.Module):
 
         return loss_criterion
 
-    def set_optimizer(self, optimizer_type, prefix=[''], params=[], **kwargs):
-        # set params dict for main, control networks
+    def set_optimizer(self, optimizer_type, params=[], prefix=[''], **kwargs):
+        # set params dict for optimizer
         for net_prefix in prefix:
             params.append({'params': self.get_trainable_params(net_prefix)})
-
-        # check that all 
+        # check for any trainiable parameters
         all_empty = True
         for param in params:
             if len(param['params']) > 0:
@@ -280,7 +279,7 @@ class Model(nn.Module):
             show_lattice_kwargs['cmap'] = kwargs.pop('cmap')
         #initialize optimizer for training
         kwargs.update({'lr':lr})
-        optimizer = self.set_optimizer(self.optimizer_type, **kwargs)
+        optimizer = self.set_optimizer(self.optimizer_type, params=[], **kwargs)
         loss_criterion = self.set_loss_fn(self.loss_type)
         # train the model
         running_loss = 0.
