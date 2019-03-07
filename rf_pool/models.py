@@ -207,10 +207,10 @@ class Model(nn.Module):
             param_names.append(name)
         return param_names
 
-    def set_requires_grad(self, net_type, requires_grad=True):
+    def set_requires_grad(self, prefix, requires_grad=True):
         # set a net's parameters to require gradient or not
         for (name, param) in self.net.named_parameters():
-            if name.startswith(net_type):
+            if name.startswith(prefix):
                 param.requires_grad = requires_grad
 
     def get_accuracy(self, dataloader):
@@ -231,7 +231,7 @@ class Model(nn.Module):
                        monitor_texture=False, **kwargs):
         # set seed_image to random, turn off model gradients
         seed_image = torch.rand_like(input_image, requires_grad=True)
-        self.set_requires_grad('hidden', requires_grad=False)
+        self.set_requires_grad('', requires_grad=False)
         # set optimizer, loss_criterion
         kwargs.update({'lr':lr})
         params = [{'params': seed_image}]
@@ -265,6 +265,8 @@ class Model(nn.Module):
                 else:
                     self.monitor_loss(running_loss / monitor, i+1)
                 running_loss = 0.
+        # turn on model gradients 
+        self.set_requires_grad('', requires_grad=True)
 
     def train_model(self, epochs, trainloader, lr=0.001, monitor=2000,
                     monitor_lattice=False, **kwargs):
