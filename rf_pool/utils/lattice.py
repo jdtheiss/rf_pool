@@ -212,7 +212,7 @@ def mask_kernel_lattice(mu, sigma, kernel_shape):
 
     return mask_kernel_2d(mu, sigma, xy)
 
-def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1.):
+def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1., offset=[0.,0.]):
     """
     Creates a foveated lattice of kernel centers (mu) and
     stantard deviations (sigma)
@@ -258,7 +258,7 @@ def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1.):
     assert min_ecc > 0.
 
     # set max/minimum eccentricity
-    max_ecc = np.max(tuple(img_shape))/2.
+    max_ecc = np.max(tuple(img_shape))
 
     assert min_ecc < max_ecc/(1. + scale)
 
@@ -299,6 +299,8 @@ def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1.):
     # set mu, sigma
     mu = torch.as_tensor(torch.cat(mu, dim=0), dtype=torch.float32)
     sigma = torch.cat(sigma, 0).unsqueeze(1)
+    # set offset of mu
+    mu = mu + torch.as_tensor(offset, dtype=mu.dtype)
     # add img_shape//2 to mu, set sigma to max(sigma, 1.)
     half_img_shape = torch.as_tensor(img_shape, dtype=mu.dtype).unsqueeze(0)/2
     return torch.add(mu, half_img_shape), torch.max(sigma, torch.ones_like(sigma))
