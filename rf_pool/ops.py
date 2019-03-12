@@ -6,7 +6,7 @@ from torch.distributions import Multinomial
 from utils import lattice
 
 def max_index(u):
-    u_s = np.prod(u.shape[:-1])
+    u_s = int(np.prod(u.shape[:-1]))
     m = torch.zeros((u_s, u.shape[-1]), dtype=u.dtype)
     m[np.arange(u_s), np.argmax(u.detach(), -1).flatten()] = 1.
     return m.reshape(u.shape)
@@ -433,7 +433,7 @@ def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type='max', block_size=2, **
             for c in xrange(b_s):
                 if top_down:
                     u[:,:,r::b_s,c::b_s] = u[:,:,r::b_s,c::b_s] + t
-                b.append(u[:, :, r::b_s, c::b_s].unsqueeze(-1))
+                b.append(u[:,:,r::b_s,c::b_s].unsqueeze(-1))
         b = torch.cat(b, -1)
 
     # set pool_fn
@@ -457,32 +457,40 @@ def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type='max', block_size=2, **
     # pooling across receptive fields
     if receptive_fields:
         # elemwise multiply u with rf_kernels (batch_size, ch, rf, u_h, u_w)
-        u = u.unsqueeze(2)
-        rf_u = torch.mul(u, rfs)
-        # apply pool function across image dims
-        if pool_fn:
-            h_mean, p_mean = pool_fn(rf_u.flatten(-2), rf_u.shape, **kwargs)
+        rf_u = torch.mul(u.unsqueeze(2), rfs)
 
-        else: # if no pool function, set all to rf_u
+        # apply pooling function
+        if pool_fn:
+            h_mean, p_mean = pool_fn(rf_u, rf_u.shape, **kwargs)
+        else:
             h_mean = rf_u
             p_mean = rf_u
+
         # apply mu_mask
         if mu_mask is not None:
+            assert mu_mask.shape[-3] == p_mean.shape[-3]
             p_mean = torch.max(p_mean.flatten(-2), -1, keepdim=True)[0].unsqueeze(-1)
             p_mean = torch.mul(mu_mask, p_mean)
-        # max across receptive fields
-        h_mean = torch.sum(h_mean, -3)
-        p_mean = torch.sum(p_mean, -3)
-        # set p_mean, p_sample if blocks larger than (1,1)
-        if block_size > 1:
-            p_mean = F.max_pool2d_with_indices(p_mean, block_size)[0]
+            p_mean = torch.max(p_mean, -3)[0]
+        # get max index in each RF
+        elif pool_fn is None:
+            h_sample = max_index(h_mean.flatten(-2)).reshape(h_mean.shape)
+            h_sample = torch.max(h_sample, -3)[0]
+            h_mean = torch.max(h_mean, -3)[0]
+            p_mean = torch.mul(h_sample, h_mean)
+        else: # max across RFs
+            h_mean = torch.max(h_mean, -3)[0]
+            p_mean = torch.max(p_mean, -3)[0]
 
+        # max pool across blocks
+        if block_size > 1:
+            p_mean = F.max_pool2d(p_mean, block_size)
     # pooling across blocks
     elif rfs is None:
-        # init h_mean, h_sample, p_mean, p_sample
+        # init h_mean
         h_mean = torch.zeros_like(u)
-        p_mean = torch.zeros_like(u)
         # pool across blocks
+        assert pool_fn is not None, ('pool_type cannot be None if rfs is None')
         h_mean_b, p_mean_b = pool_fn(b, b.shape, **kwargs)
         for r in xrange(b_s):
             for c in xrange(b_s):
