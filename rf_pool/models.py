@@ -167,7 +167,7 @@ class Model(nn.Module):
         ax = np.reshape(ax, (n_images, 2))
         for n in range(n_images):
             ax[n,0].imshow(input_image[n], cmap=cmap)
-            ax[n,1].imshow(seed_image[n], cmap=cmap, vmin=0.)
+            ax[n,1].imshow(seed_image[n], cmap=cmap)
         plt.show()
 
     def show_lattice(self, x=None, figsize=(5,5), cmap=None):
@@ -220,6 +220,9 @@ class Model(nn.Module):
             for data in dataloader:
                 images, labels = data
                 outputs = self.net(images)
+                # squeeze image dims if 4 dimensional
+                if outputs.ndimension() == 4:
+                    outputs = torch.squeeze(torch.squeeze(outputs, -1), -1)
                 _, predicted = torch.max(outputs.data, 1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
@@ -227,9 +230,14 @@ class Model(nn.Module):
         return 100 * correct / total
 
     def optimize_image(self, input_image, n_steps, layer_ids, loss_type='mse',
-                       optimizer_type='sgd', lr=0.001, monitor=2000,
-                       monitor_texture=False, **kwargs):
+                       optimizer_type='sgd', transform=None, lr=0.001,
+                       monitor=2000, monitor_texture=False, **kwargs):
+        """
+        #TODO:WRITEME
+        """
         # set seed_image to random, turn off model gradients
+        if transform:
+            seed_image = torch.rand_like(transform(input_image.squeeze(1))
         seed_image = torch.rand_like(input_image, requires_grad=True)
         self.set_requires_grad('', requires_grad=False)
         # set optimizer, loss_criterion
@@ -239,13 +247,17 @@ class Model(nn.Module):
         loss_criterion = self.set_loss_fn(loss_type)
         # get layer_out for each layer_id with input_image
         layer_ids = [str(layer_id) for layer_id in layer_ids]
-        with torch.no_grad():
+        if transform is None:
             self.net(input_image)
             fm_input = [self.net.layer_out[layer_id] for layer_id in layer_ids]
         # optimize
         running_loss = 0.
         for i in range(n_steps):
             optimizer.zero_grad()
+            # if transform given, apply transforms
+            if transform:
+                self.net(transform(input_image.squeeze(1)).reshape(seed_image.shape))
+                fm_input = [self.net.layer_out[layer_id] for layer_id in layer_ids]
             # pass seed_image through network
             self.net(seed_image)
             fm_seed = [self.net.layer_out[layer_id] for layer_id in layer_ids]
@@ -265,6 +277,7 @@ class Model(nn.Module):
                 running_loss = 0.
         # turn on model gradients
         self.set_requires_grad('', requires_grad=True)
+        return seed_image
 
     def train_model(self, epochs, trainloader, lr=0.001, monitor=2000,
                     monitor_lattice=False, **kwargs):
@@ -290,7 +303,7 @@ class Model(nn.Module):
                 # zero grad, get outputs
                 optimizer.zero_grad()
                 outputs = self.net(inputs)
-                # squeeze image dims if 4 dimensional 
+                # squeeze image dims if 4 dimensional
                 if outputs.ndimension() == 4:
                     outputs = torch.squeeze(torch.squeeze(outputs, -1), -1)
                 # get loss
