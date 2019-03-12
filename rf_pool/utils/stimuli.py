@@ -29,8 +29,8 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
         
     Examples
     --------
-    >>>target = np.random.randn((28,28))
-    >>>flankers = np.random((2, 28,28))
+    >>>target = np.random.randn(28,28)
+    >>>flankers = np.random(2,28,28)
     >>>make_crowded_stimuli(target, flankers, 2, 200, axis=0.) # 2-flanker horizontal layout
     >>>make_crowded_stimuli(target, flankers, 2, 200, axis=np.pi/2) # 2-flanker vertical layout
     """
