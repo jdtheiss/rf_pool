@@ -167,7 +167,7 @@ class Model(nn.Module):
         ax = np.reshape(ax, (n_images, 2))
         for n in range(n_images):
             ax[n,0].imshow(input_image[n], cmap=cmap)
-            ax[n,1].imshow(seed_image[n], cmap=cmap)
+            ax[n,1].imshow(seed_image[n], cmap=cmap, vmin=0.)
         plt.show()
 
     def show_lattice(self, x=None, figsize=(5,5), cmap=None):
@@ -265,7 +265,7 @@ class Model(nn.Module):
                 else:
                     self.monitor_loss(running_loss / monitor, i+1)
                 running_loss = 0.
-        # turn on model gradients 
+        # turn on model gradients
         self.set_requires_grad('', requires_grad=True)
 
     def train_model(self, epochs, trainloader, lr=0.001, monitor=2000,
@@ -292,6 +292,9 @@ class Model(nn.Module):
                 # zero grad, get outputs
                 optimizer.zero_grad()
                 outputs = self.net(inputs)
+                # squeeze image dims if 4 dimensional 
+                if outputs.ndimension() == 4:
+                    outputs = torch.squeeze(torch.squeeze(outputs, -1), -1)
                 # get loss
                 loss = loss_criterion(outputs, labels)
                 # add penalty to loss
