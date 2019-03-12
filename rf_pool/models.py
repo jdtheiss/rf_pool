@@ -237,7 +237,7 @@ class Model(nn.Module):
         """
         # set seed_image to random, turn off model gradients
         if transform:
-            seed_image = torch.rand_like(transform(input_image.squeeze(1))
+            seed_image = torch.rand_like(transform(input_image.squeeze(1)))
         seed_image = torch.rand_like(input_image, requires_grad=True)
         self.set_requires_grad('', requires_grad=False)
         # set optimizer, loss_criterion

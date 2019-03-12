@@ -13,8 +13,9 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
     spacing: float
         distance between target center and flanker
         center as proportion of target size
-    background_size: int
-        size of the square blank background in pixels
+    background_size: int or tuple
+        size of the blank background in pixels
+        if type is int, then assumes background is square 
     axis: float 
         initialization axis for flankers in radians 
         [initialized as 0]
@@ -37,7 +38,9 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
     n_flank = len(flankers)
     target_size = int(target.shape[0])
     center = int(background_size // 2 - target_size // 2)
-    stimuli = np.zeros((background_size, background_size, n_flank+1))
+    if type(background_size) is int:
+        background_size = (background_size,)*2    
+    stimuli = np.zeros(background_size+(n_flank+1,))
     stimuli[center:center + target_size, center:center + target_size, 0] = target
     space_size = int(spacing * target_size)
     
