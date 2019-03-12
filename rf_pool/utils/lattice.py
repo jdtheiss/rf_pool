@@ -212,7 +212,8 @@ def mask_kernel_lattice(mu, sigma, kernel_shape):
 
     return mask_kernel_2d(mu, sigma, xy)
 
-def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1., offset=[0.,0.]):
+def init_foveated_lattice(img_shape, scale, spacing, n_rf=None, n_rings=None,
+                          min_ecc=1., offset=[0.,0.]):
     """
     Creates a foveated lattice of kernel centers (mu) and
     stantard deviations (sigma)
@@ -222,7 +223,7 @@ def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1., offset=[0.,0.])
     img_shape : tuple
         shape of image
     scale : float
-        rate at which receptive field size scales with eccentricity
+        rate at which receptive field radius scales with eccentricity
     spacing : float
         spacing between receptive field centers (as fraction of radius)
     min_ecc : float
@@ -252,18 +253,16 @@ def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1., offset=[0.,0.])
     References
     ----------
     (Winawer & Horiguchi, 2015) https://archive.nyu.edu/handle/2451/33887
-    """
-
+    """#TODO: ensure center is filled with ones if min_ecc > 0.
+    #TODO: also remove completely overlapping mus
     assert scale > 0.
     assert min_ecc > 0.
 
-    # set max/minimum eccentricity
-    max_ecc = np.max(tuple(img_shape))
-
-    assert min_ecc < max_ecc/(1. + scale)
-
     # get number of receptive fields in ring
-    n_rf = np.floor(np.pi/scale)
+    if n_rf is None:
+        n_rf = np.floor(np.pi/scale)
+    else:
+        n_rf = n_rf + 1
 
     # get angular positions for each receptive field
     angles = 2. * np.pi * torch.linspace(0., 1., int(n_rf))
@@ -284,18 +283,16 @@ def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1., offset=[0.,0.])
     y_mu_rot = -torch.sin(rot_angle)*x_mu + torch.cos(rot_angle)*y_mu
 
     # append mu, sigma for each eccentricity
-    ecc = max_ecc/(1. + scale)
+    ecc = min_ecc / ((1 + scale) * eFactor)
     mu = []
     sigma = []
-    cnt = 0
-    while (ecc > min_ecc and cnt < 100):
-        if np.mod(cnt, 2):
+    for n in range(n_rings):
+        if np.mod(n, 2):
             mu.append(torch.stack([ecc*x_mu_rot, ecc*y_mu_rot], dim=-1))
         else:
             mu.append(torch.stack([ecc*x_mu, ecc*y_mu], dim=-1))
         sigma.append(torch.mul(ecc, base_sigma).repeat(mu[-1].shape[0]))
-        ecc *= eFactor
-        cnt += 1
+        ecc /= eFactor
     # set mu, sigma
     mu = torch.as_tensor(torch.cat(mu, dim=0), dtype=torch.float32)
     sigma = torch.cat(sigma, 0).unsqueeze(1)
@@ -303,7 +300,13 @@ def init_foveated_lattice(img_shape, scale, spacing, min_ecc=1., offset=[0.,0.])
     mu = mu + torch.as_tensor(offset, dtype=mu.dtype)
     # add img_shape//2 to mu, set sigma to max(sigma, 1.)
     half_img_shape = torch.as_tensor(img_shape, dtype=mu.dtype).unsqueeze(0)/2
-    return torch.add(mu, half_img_shape), torch.max(sigma, torch.ones_like(sigma))
+    mu = torch.add(mu, half_img_shape)
+    sigma = torch.max(sigma, 0.5 * torch.ones_like(sigma))
+    # remove mu, sigma outside image frame
+    remove_idx = np.where(torch.sum(torch.lt(mu + 2 * sigma, 0.), -1))[0]
+    mu = torch.as_tensor([m for i, m in enumerate(mu.tolist()) if i not in remove_idx])
+    sigma = torch.as_tensor([s for i, s in enumerate(sigma.tolist()) if i not in remove_idx])
+    return mu, sigma
 
 def init_uniform_lattice(center, n_kernel_side, spacing, sigma_init=1.):
     """
