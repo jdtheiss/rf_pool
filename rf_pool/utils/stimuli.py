@@ -1,80 +1,60 @@
 import numpy as np
 
-def make_crowded_stimuli(target, flankers, spacing, background_size, layout_type=None, random=False):
+def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., random=False):
     """
-    TODO
+    makes a crowded stimulus: central target with evenly-spaced flankers
+    
+    Parameters
+    ----------
+    target: numpy.array
+        the target image
+    flankers: numpy.array_like
+        list of flanker images
+    spacing: float
+        distance between target center and flanker
+        center as proportion of target size
+    background_size: int
+        size of the square blank background in pixels
+    axis: float 
+        initialization axis for flankers in radians 
+        [initialized as 0]
+    random: bool 
+        flankers are placed in clockwise fashion if False 
+        [initialized as False]. 
+        
+    Returns
+    -------
+    stimuli: nump.array
+        stimulus image with shape (background_size,background_size)    
+        
+    Examples
+    --------
+    >>>target = np.random.randn((28,28))
+    >>>flankers = np.random((2, 28,28))
+    >>>make_crowded_stimuli(target, flankers, 2, 200, axis=0.) # 2-flanker horizontal layout
+    >>>make_crowded_stimuli(target, flankers, 2, 200, axis=np.pi/2) # 2-flanker vertical layout
     """
-    # make background
+    n_flank = len(flankers)
     target_size = int(target.shape[0])
     center = int(background_size // 2 - target_size // 2)
-    stimuli_base = np.zeros((background_size, background_size, 1))
-    stimuli_base[center:center + target_size, center:center + target_size, 0] = target
+    stimuli = np.zeros((background_size, background_size, n_flank+1))
+    stimuli[center:center + target_size, center:center + target_size, 0] = target
     space_size = int(spacing * target_size)
-
-    if random:
-        np.random.shuffle(flankers)
-
-    # target with horizontal flankers
-    if layout_type == 'h':
-        stimuli = h_layout(stimuli_base, flankers, center, space_size)
-    # target with vertical flankers
-    elif layout_type == 'v':
-        stimuli = v_layout(stimuli_base, flankers, center, space_size)
-    # target with horizontal and vertical flankers
-    elif layout_type == 't':
-        stimuli = t_layout(stimuli_base, flankers, center, space_size)
-    # target with hexagonal flankers
-    elif layout_type == 'o':
-        stimuli = o_layout(stimuli_base, flankers, center, target_size, space_size)
-    # target with no flankers
-    elif layout_type is None:
-        stimuli = stimuli_base
-    else:
-        raise Exception("layout_type must be in (h, v, t, o, None)")
-
-    return np.max(stimuli, -1)
-
-def h_layout(base, flankers, c, s):
-    # get shifts, flanker shape
-    left_shift = c-s
-    right_shift = c+s
-    f_h, f_w = flankers.shape[-2:]
-    # stack each new flanker onto base
-    new_flankers = np.zeros(base.shape[:2] + (2,))
-    new_flankers[:f_h, :f_w, 0] = flankers[0]
-    new_flankers[:, :, 0] = np.roll(new_flankers[:,:,0], (c, left_shift), (0,1))
-    new_flankers[:f_h, :f_w, 1] = flankers[1]
-    new_flankers[:, :, 1] = np.roll(new_flankers[:,:,1], (c, right_shift), (0,1))
-    base = np.concatenate((base, new_flankers), -1)
-    return base
-
-def v_layout(base, flankers, c, s):
-    # get shifts, flanker shape
-    up_shift = c-s
-    down_shift = c+s
-    f_h, f_w = flankers.shape[-2:]
-    # stack each new flanker onto base
-    new_flankers = np.zeros(base.shape[:2] + (2,))
-    new_flankers[:f_h, :f_w, 0] = flankers[0]
-    new_flankers[:, :, 0] = np.roll(new_flankers[:,:,0], (up_shift, c), (0,1))
-    new_flankers[:f_h, :f_w, 1] = flankers[1]
-    new_flankers[:, :, 1] = np.roll(new_flankers[:,:,1], (down_shift, c), (0,1))
-    base = np.concatenate((base, new_flankers), -1)
-    return base
-
-def t_layout(base, flankers, c, s):
-    base = h_layout(base, flankers[:2], c, s) # left and right
-    base = v_layout(base, flankers[2:], c, s) # top and bottom
-    return base
-
-def o_layout(base, flankers, c, t, s):
-    left_shift = c-(s+t)
-    right_shift = c+(s+t)
-    up_shift = c-s
-    down_shift = c+s
-    base = v_layout(base, flankers[:2], c, t, s) # top and bottom
-    base[up_shift:up_shift+t, left_shift:left_shift+t] = flankers[2] # top-left
-    base[up_shift:up_shift+t, right_shift:right_shift+t] = flankers[3] # top-right
-    base[down_shift:down_shift+t, right_shift:right_shift+t] = flankers[4] # bottom-right
-    base[down_shift:down_shift+t, left_shift:left_shift+t] = flankers[5] # bottom-left
-    return base
+    
+    if n_flank != 0:
+        theta = (2.*np.pi) / n_flank
+        theta_shift = [axis + (theta * i) for i in range(n_flank)]
+        x_shift = [int(space_size*np.cos(ang)) for ang in theta_shift]
+        y_shift = [int(space_size*np.sin(ang)) for ang in theta_shift]
+        if random:
+            np.random.shuffle(flankers)
+            
+        flankers = np.array(flankers)
+        f_h, f_w = flankers.shape[-2:]
+        for i, flank in enumerate(flankers,1):
+            stimuli[:f_h,:f_w,i] = flank
+            stimuli[:,:,i] = np.roll(stimuli[:,:,i], (center, x_shift[i-1]), (0,1))
+            stimuli[:,:,i] = np.roll(stimuli[:,:,i], (y_shift[i-1], center), (0,1))           
+    stimuli = np.max(stimuli, -1)
+    
+    return stimuli
