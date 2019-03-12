@@ -50,7 +50,7 @@ class Model(nn.Module):
 
     def set_loss_fn(self, loss_type):
         if type(loss_type) is not str:
-            loss_name = torch.typname(loss_type)
+            loss_name = torch.typename(loss_type)
         else:
             loss_name = loss_type
 
@@ -250,9 +250,7 @@ class Model(nn.Module):
             self.net(seed_image)
             fm_seed = [self.net.layer_out[layer_id] for layer_id in layer_ids]
             # set loss
-            loss = torch.zeros(1)
-            for fm_s, fm_i in zip(fm_seed, fm_input):
-                loss += loss_criterion(fm_s, fm_i)
+            loss = sum([loss_criterion(fm_s, fm_i) for fm_s, fm_i in zip(fm_seed, fm_input)])
             # update seed_image
             loss.backward()
             optimizer.step()
