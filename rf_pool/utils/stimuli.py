@@ -26,7 +26,7 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
     Returns
     -------
     stimuli: nump.array
-        stimulus image with shape (background_size,background_size)    
+        stimulus image with shape (background_size,)    
         
     Examples
     --------
@@ -37,11 +37,11 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
     """
     n_flank = len(flankers)
     target_size = int(target.shape[0])
-    center = int(background_size // 2 - target_size // 2)
     if type(background_size) is int:
-        background_size = (background_size,)*2    
+        background_size = (background_size,)*2   
+    center = tuple(int(edge_size // 2 - target_size // 2) for edge_size in background_size)
     stimuli = np.zeros(background_size+(n_flank+1,))
-    stimuli[center:center + target_size, center:center + target_size, 0] = target
+    stimuli[center[0]:center[0] + target_size, center[1]:center[1] + target_size, 0] = target
     space_size = int(spacing * target_size)
     
     if n_flank != 0:
@@ -57,7 +57,7 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
         for i, flank in enumerate(flankers,1):
             stimuli[:f_h,:f_w,i] = flank
             stimuli[:,:,i] = np.roll(stimuli[:,:,i],
-                                    (center+y_shift[i-1], center+x_shift[i-1]), (0,1))        
+                                    (center[0]+y_shift[i-1], center[1]+x_shift[i-1]), (0,1))        
     stimuli = np.max(stimuli, -1)
     
     return stimuli
