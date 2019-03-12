@@ -53,8 +53,8 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
         f_h, f_w = flankers.shape[-2:]
         for i, flank in enumerate(flankers,1):
             stimuli[:f_h,:f_w,i] = flank
-            stimuli[:,:,i] = np.roll(stimuli[:,:,i], (center, x_shift[i-1]), (0,1))
-            stimuli[:,:,i] = np.roll(stimuli[:,:,i], (y_shift[i-1], center), (0,1))           
+            stimuli[:,:,i] = np.roll(stimuli[:,:,i],
+                                    (center+y_shift[i-1], center+x_shift[i-1]), (0,1))        
     stimuli = np.max(stimuli, -1)
     
     return stimuli
