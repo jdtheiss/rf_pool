@@ -65,8 +65,12 @@ class Layer(torch.nn.Module):
 
     def show_lattice(self, figsize=(5,5), cmap=None):
         assert self.inputs['rfs'] is not None
-        rfs = lattice.make_kernel_lattice(self.inputs['rfs'])
-        lattice.show_kernel_lattice(rfs, figsize=figsize, cmap=cmap)
+        if self.lattice_fn is lattice.mask_kernel_lattice:
+            rfs = lattice.exp_kernel_lattice(self.mu, self.sigma, self.img_shape)
+        else:
+            rfs = self.inputs['rfs']
+        rf_lattice = lattice.make_kernel_lattice(rfs)
+        lattice.show_kernel_lattice(rf_lattice, figsize=figsize, cmap=cmap)
 
 class RF_Pool(Layer):
     """
