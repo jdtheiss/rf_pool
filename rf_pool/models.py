@@ -185,15 +185,7 @@ class Model(nn.Module):
             # get lattices
             lattices = []
             for i, layer_id in enumerate(lattice_ids):
-                if self.net.pool_layers[layer_id].lattice_fn is lattice.mask_kernel_lattice:
-                    rfs = lattice.exp_kernel_lattice(self.net.pool_layers[layer_id].mu,
-                                                     self.net.pool_layers[layer_id].sigma,
-                                                     self.net.pool_layers[layer_id].img_shape)
-                else:
-                    rfs = self.net.pool_layers[layer_id].inputs['rfs']
-                lattices.append(lattice.make_kernel_lattice(rfs))
-            # show lattices
-            lattice.show_kernel_lattice(lattices, x, figsize, cmap)
+                self.net.pool_layers[layer_id].show_lattice(x, figsize, cmap)
 
     def get_trainable_params(self, prefix=''):
         # set prefix to 'hidden_layers' to grab only net params

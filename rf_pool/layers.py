@@ -11,9 +11,10 @@ class Layer(torch.nn.Module):
         super(Layer, self).__init__()
         self.mu = None
         self.sigma = None
+        self.delta_mu = None
+        self.delta_sigma = None
         self.img_shape = None
         self.lattice_fn = None
-        self.updates = None
         self.inputs = {'t': None, 'rfs': None, 'mu_mask': None,
                        'pool_type': 'max', 'block_size': 2}
 
@@ -42,13 +43,13 @@ class Layer(torch.nn.Module):
             self.mu.add_(torch.sub(torch.as_tensor(self.img_shape, dtype=self.mu.dtype),
                                    torch.as_tensor(rfs_shape, dtype=self.mu.dtype)))
         # update mu and sigma
-        mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, self.updates)
+        mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma)
         self.inputs['mu_mask'] = lattice.mu_mask(mu, self.img_shape)
         # update rfs
         self.inputs['rfs'] = self.lattice_fn(mu, sigma, self.img_shape)
 
-    def update_mu_sigma(self, delta_mu, delta_sigma, updates=False):
-        img_hw = torch.as_tensor(self.img_shape, dtype=delta_mu.dtype)
+    def update_mu_sigma(self, delta_mu, delta_sigma):
+        img_hw = torch.as_tensor(self.img_shape, dtype=self.mu.dtype)
         mu = self.mu
         sigma = self.sigma
         # add delta_mu to mu
@@ -56,21 +57,24 @@ class Layer(torch.nn.Module):
             mu = torch.add(mu, delta_mu)
             mu = torch.min(mu, img_hw)
             mu = torch.max(mu, torch.zeros_like(mu))
+            self.delta_mu = delta_mu
         # multiply sigma by delta_sigma
         if delta_sigma is not None:
             sigma = torch.mul(sigma, (1. + delta_sigma))
             sigma = torch.min(sigma, torch.min(img_hw))
             sigma = torch.max(sigma, torch.ones_like(sigma))
+            self.delta_sigma = delta_sigma
         return mu, sigma
 
-    def show_lattice(self, figsize=(5,5), cmap=None):
+    def show_lattice(self, x=None, figsize=(5,5), cmap=None):
         assert self.inputs['rfs'] is not None
         if self.lattice_fn is lattice.mask_kernel_lattice:
-            rfs = lattice.exp_kernel_lattice(self.mu, self.sigma, self.img_shape)
+            mu, sigma = self.update_mu_sigma(self.delta_mu, self.delta_sigma)
+            rfs = lattice.exp_kernel_lattice(mu, sigma, self.img_shape)
         else:
             rfs = self.inputs['rfs']
         rf_lattice = lattice.make_kernel_lattice(rfs)
-        lattice.show_kernel_lattice(rf_lattice, figsize=figsize, cmap=cmap)
+        lattice.show_kernel_lattice(rf_lattice, x=x, figsize=figsize, cmap=cmap)
 
 class RF_Pool(Layer):
     """
@@ -90,9 +94,6 @@ class RF_Pool(Layer):
         (n_kernels, 1) [default: None]
     img_shape : tuple
         receptive field/detection layer shape [default: None]
-    updates : bool
-        update mu and sigma on each call to update_rfs (True) or keep mu and
-        sigma static (False [default])
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and delta_sigma
         [default: lattice.gaussian_kernel_lattice]
@@ -121,7 +122,7 @@ class RF_Pool(Layer):
     show_lattice()
         Display receptive field lattice from rfs kernel
     """
-    def __init__(self, mu=None, sigma=None, img_shape=None, updates=False,
+    def __init__(self, mu=None, sigma=None, img_shape=None,
                  lattice_fn=lattice.gaussian_kernel_lattice, **kwargs):
         super(RF_Pool, self).__init__()
         self.mu = mu
@@ -130,7 +131,6 @@ class RF_Pool(Layer):
             self.img_shape = self.inputs['rfs'].shape[-2:]
         else:
             self.img_shape = img_shape
-        self.updates = updates
         self.lattice_fn = lattice_fn
         self.inputs.update(kwargs)
         if mu is not None and sigma is not None:
