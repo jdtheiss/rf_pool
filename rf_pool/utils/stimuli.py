@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., random=False):
     """
@@ -61,3 +62,56 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
     stimuli = np.max(stimuli, -1)
     
     return stimuli
+
+
+def crowded_MNIST(dataset, n_flank, **kwargs):
+    """
+    Converts an MNIST dataset into crowded stimuli with flankers
+    
+    Paramaters
+    ----------
+    dataset: torchvision.datasets.mnist.MNIST
+        pytorch MNIST trainset or testset object
+    n_flank: int
+        number of flankers for the crowded stimuli
+    **kwargs: dict
+        The crowded stimul arguments
+        see make_crowded_stimuli for details
+        
+    Returns
+    -------
+    dataset: torchvision.datasets.mnist.MNIST
+        pytorch MNIST dataset with crowded stimuli
+    """
+    
+    # get dataset images and labels
+    if dataset.train:
+        inputs = dataset.train_data
+        labels = dataset.train_labels
+    else:
+        inputs = dataset.test_data
+        labels = dataset.test_labels  
+    if type(inputs) is torch.Tensor:
+        inputs = inputs.numpy()
+    # get the targets
+    n_set = inputs.shape[0]
+    target_indices = np.arange(0, n_set, n_flank+1)
+    # crowd the input images
+    crowded_inputs = []
+    for i in target_indices:
+        target = inputs[i]
+        flankers = inputs[i+1:i+n_flank+1]
+        s = make_crowded_stimuli(target, flankers,  **kwargs)
+        crowded_inputs.append(s)
+    # get the labels
+    crowded_labels = labels[target_indices]
+    
+    # reassign to the dataset
+    if dataset.train:
+        dataset.train_data = torch.tensor(crowded_inputs, dtype=torch.uint8)
+        dataset.train_labels = crowded_labels
+    else:
+        dataset.test_data = torch.tensor(crowded_inputs, dtype=torch.uint8)
+        dataset.test_labels = crowded_labels
+    
+    return dataset
