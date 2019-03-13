@@ -185,7 +185,12 @@ class Model(nn.Module):
             # get lattices
             lattices = []
             for i, layer_id in enumerate(lattice_ids):
-                rfs = self.net.pool_layers[layer_id].inputs['rfs']
+                if self.net.pool_layers[layer_id].lattice_fn is lattice.mask_kernel_lattice:
+                    rfs = lattice.exp_kernel_lattice(self.net.pool_layers[layer_id].mu,
+                                                     self.net.pool_layers[layer_id].sigma,
+                                                     self.net.pool_layers[layer_id].img_shape)
+                else:
+                    rfs = self.net.pool_layers[layer_id].inputs['rfs']
                 lattices.append(lattice.make_kernel_lattice(rfs))
             # show lattices
             lattice.show_kernel_lattice(lattices, x, figsize, cmap)
@@ -213,7 +218,7 @@ class Model(nn.Module):
             if name.startswith(prefix):
                 param.requires_grad = requires_grad
 
-    def get_accuracy(self, dataloader):
+    def get_accuracy(self, dataloader, crop=None):
         correct = 0
         total = 0
         with torch.no_grad():
@@ -221,8 +226,10 @@ class Model(nn.Module):
                 images, labels = data
                 outputs = self.net(images)
                 # squeeze image dims if 4 dimensional
-                if outputs.ndimension() == 4:
-                    outputs = torch.squeeze(torch.squeeze(outputs, -1), -1)
+                if crop:
+                    outputs = outputs[:,:,crop[0],crop[1]]
+                elif outputs.ndimension() == 4:
+                    outputs = torch.mean(outputs, dim=[-2,-1])
                 _, predicted = torch.max(outputs.data, 1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
@@ -303,9 +310,9 @@ class Model(nn.Module):
                 # zero grad, get outputs
                 optimizer.zero_grad()
                 outputs = self.net(inputs)
-                # squeeze image dims if 4 dimensional
+                # mean across image dims if 4 dimensional
                 if outputs.ndimension() == 4:
-                    outputs = torch.squeeze(torch.squeeze(outputs, -1), -1)
+                    outputs = torch.mean(outputs, dim=[-2,-1])
                 # get loss
                 loss = loss_criterion(outputs, labels)
                 # add penalty to loss
