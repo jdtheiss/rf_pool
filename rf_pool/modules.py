@@ -61,11 +61,13 @@ class Module(nn.Module):
                 new_attrs[key] = getattr(self, key)
         self.attrs.update(new_attrs)
 
-    def set_from_attrs(self):
+    def set_from_attrs(self, attr=None):
         # setattr(self, key, value) for (key,value) in self.attrs.items()
         if not hasattr(self, 'attrs'):
             self.attrs = {}
-        for (key, value) in self.attrs.items():
+        if attr is None:
+            attr = self.attrs
+        for (key, value) in attrs.items():
             setattr(self, key, value)
 
     def set_list_vars(self, var, n_layers):
