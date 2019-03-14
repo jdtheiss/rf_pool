@@ -11,6 +11,7 @@ class Layer(torch.nn.Module):
         super(Layer, self).__init__()
         self.mu = None
         self.sigma = None
+        self.ratio = None
         self.delta_mu = None
         self.delta_sigma = None
         self.img_shape = None
@@ -32,7 +33,11 @@ class Layer(torch.nn.Module):
         assert self.mu.shape[0] == self.sigma.shape[0]
         assert self.img_shape is not None
         self.inputs['mu_mask'] = lattice.mu_mask(self.mu, self.img_shape)
-        self.inputs['rfs'] = self.lattice_fn(self.mu, self.sigma, self.img_shape)
+        if self.ratio is not None:
+            self.inputs['rfs'] = self.lattice_fn(self.mu, self.sigma,
+                                                 self.img_shape, self.ratio)
+        else:
+            self.inputs['rfs'] = self.lattice_fn(self.mu, self.sigma, self.img_shape)
 
     def update_rfs(self, delta_mu, delta_sigma):
         assert self.inputs['rfs'] is not None
@@ -127,6 +132,8 @@ class RF_Pool(Layer):
         super(RF_Pool, self).__init__()
         self.mu = mu
         self.sigma = sigma
+        if 'ratio' in kwargs:
+            self.ratio = kwargs.pop('ratio')
         if self.inputs['rfs'] is not None and self.img_shape is None:
             self.img_shape = self.inputs['rfs'].shape[-2:]
         else:
@@ -161,6 +168,8 @@ class RF_Uniform(Layer):
         self.n_kernels = n_kernels
         self.img_shape = img_shape
         self.lattice_fn = lattice_fn
+        if 'ratio' in kwargs:
+            self.ratio = kwargs.pop('ratio')
         self.inputs.update(kwargs)
         # set mu, sigma
         centers = torch.as_tensor(self.img_shape)/2.
@@ -191,6 +200,8 @@ class RF_Window(Layer):
         super(RF_Window, self).__init__()
         self.mu = mu
         self.sigma = sigma
+        if 'ratio' in kwargs:
+            self.ratio = kwargs.pop('ratio')
         if self.inputs['rfs'] is not None and self.img_shape is None:
             self.img_shape = self.inputs['rfs'].shape[-2:]
         else:
@@ -221,6 +232,8 @@ class RF_Same(Layer):
         super(RF_Same, self).__init__()
         self.mu = mu
         self.sigma = sigma
+        if 'ratio' in kwargs:
+            self.ratio = kwargs.pop('ratio')
         if self.inputs['rfs'] is not None and self.img_shape is None:
             self.img_shape = self.inputs['rfs'].shape[-2:]
         else:

@@ -59,6 +59,11 @@ def gaussian_kernel_2d(mu, sigma, xy):
     sigma = sigma.unsqueeze(-1).float()
     return (1./(2.*np.pi*sigma**2)) * torch.exp(-torch.sum((xy - mu)**2., dim=-3)/ (2*sigma**2))
 
+def dog_kernel_2d(mu, sigma, ratio, xy):
+    kernel_0 = gaussian_kernel_2d(mu, sigma, xy)
+    kernel_1 = gaussian_kernel_2d(mu, ratio * sigma, xy)
+    return kernel_0 - kernel_1
+
 def mask_kernel_2d(mu, sigma, xy):
     kernels = exp_kernel_2d(mu, sigma, xy)
     thr = torch.exp(torch.as_tensor(-1, dtype=kernels.dtype))
@@ -174,6 +179,46 @@ def gaussian_kernel_lattice(mu, sigma, kernel_shape):
     xy = torch.stack(torch.meshgrid(x, y), dim=0).unsqueeze(0).float()
 
     return gaussian_kernel_2d(mu, sigma, xy)
+
+def dog_kernel_lattice(mu, sigma, kernel_shape, ratio=4.):
+    """
+    Returns a tensor of difference of gaussian (DoG) kernels
+
+    Parameters
+    ----------
+    mu : torch.Tensor
+        kernel centers with shape (n_kernels, 2)
+    sigma : torch.Tensor
+        kernel standard deviations with shape (n_kernels, 1)
+    kernel_shape : tuple
+        shape of input feature map
+    ratio : float or torch.Tensor
+        ratio of second gaussian to first gaussian [default: 4]
+
+    Returns
+    -------
+    kernels : torch.Tensor
+        output kernels with shape
+        mu.shape[:-1] + (kernel_shape[0], kernel_shape[1])
+
+    Examples
+    --------
+    # Create tensor of 10 kernels with random centers and sigma=1.
+    >>> mu = torch.rand(10, 2)
+    >>> sigma = torch.ones(10, 1)
+    >>> kernel_shape = (200,200)
+    >>> ratio = 4.
+    >>> mu = mu * torch.as_tensor(kernel_shape, dtype=mu.dtype)
+    >>> kernels = dog_kernel_lattice(mu, sigma, kernel_shape, ratio)
+    """
+
+    assert mu.shape[-2] == sigma.shape[-2]
+    # create the coordinates input to kernel function
+    x = torch.arange(kernel_shape[0])
+    y = torch.arange(kernel_shape[1])
+    xy = torch.stack(torch.meshgrid(x, y), dim=0).unsqueeze(0).float()
+
+    return dog_kernel_2d(mu, sigma, ratio, xy)
 
 def mask_kernel_lattice(mu, sigma, kernel_shape):
     """
