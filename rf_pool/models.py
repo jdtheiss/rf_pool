@@ -210,27 +210,33 @@ class Model(nn.Module):
             if name.startswith(prefix):
                 param.requires_grad = requires_grad
 
-    def get_accuracy(self, dataloader, crop=None):
+    def get_accuracy(self, dataloader, crop=None, monitor=100):
         correct = 0
         total = 0
         with torch.no_grad():
-            for data in dataloader:
+            for i, data in enumerate(dataloader):
+                # get images, labels, and outputs
                 images, labels = data
                 outputs = self.net(images)
                 # squeeze image dims if 4 dimensional
                 if crop:
                     outputs = outputs[:,:,crop[0],crop[1]]
-                elif outputs.ndimension() == 4:
-                    outputs = torch.mean(outputs, dim=[-2,-1])
-                _, predicted = torch.max(outputs.data, 1)
+                if outputs.ndimension() == 4:
+                    outputs = torch.max(outputs.flatten(-2), -1)[0]
+                # get predicted label and update accuracy
+                predicted = torch.max(outputs, -1)[1]
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
+                # monitor accuracy
+                if (i+1) % monitor == 0:
+                    clear_output(wait=True)
+                    display('[%5d] accuracy: %.2f%%' % (i+1, 100*correct/total))
 
         return 100 * correct / total
 
-    def optimize_image(self, input_image, n_steps, layer_ids, loss_type='mse',
-                       optimizer_type='sgd', transform=None, lr=0.001,
-                       monitor=2000, monitor_texture=False, **kwargs):
+    def optimize_texture(self, input_image, n_steps, layer_ids, loss_type='mse',
+                        optimizer_type='sgd', transform=None, lr=0.001,
+                        monitor=2000, monitor_texture=False, **kwargs):
         """
         #TODO:WRITEME
         """
