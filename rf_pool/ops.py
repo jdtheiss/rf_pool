@@ -43,7 +43,7 @@ def local_softmax(u, dim=-1, mask=None):
 
 def prob_max_pool(u, out_shape, mask=None):
     """
-    Probabilistic max-pooling across units in a receptive field (last dim)
+    Probabilistic max-pooling across units in a receptive field (dim=-1)
 
     Parameters
     ----------
@@ -102,7 +102,7 @@ def prob_max_pool(u, out_shape, mask=None):
 
 def stochastic_max_pool(u, out_shape, mask=None):
     """
-    Stochastic max-pooling across units in a receptive field (last dim)
+    Stochastic max-pooling across units in a receptive field (dim=-1)
 
     Parameters
     ----------
@@ -149,7 +149,7 @@ def stochastic_max_pool(u, out_shape, mask=None):
 
 def div_norm_pool(u, out_shape, mask=None, n=2., s=0.5):
     """
-    Divisive normalization across units in a receptive field (last dims)
+    Divisive normalization across units in all receptive fields (dim=[-2,-1])
 
     Parameters
     ----------
@@ -201,7 +201,7 @@ def div_norm_pool(u, out_shape, mask=None, n=2., s=0.5):
     else:
         u_n = u
         s_n = s
-    probs = torch.div(u_n, s_n + torch.sum(u_n, dim=-1, keepdim=True))
+    probs = torch.div(u_n, s_n + torch.sum(u_n, dim=[-2,-1], keepdim=True))
     # set detection mean-field estimates and samples
     h_mean = torch.reshape(probs, out_shape)
     h_sample = torch.reshape(max_index(probs), out_shape)
@@ -211,7 +211,7 @@ def div_norm_pool(u, out_shape, mask=None, n=2., s=0.5):
 
 def max_pool(u, out_shape, mask=None):
     """
-    Max pooling across units in a receptive field (last dim)
+    Max pooling across units in a receptive field (dim=-1)
 
     Parameters
     ----------
@@ -251,7 +251,7 @@ def max_pool(u, out_shape, mask=None):
 
 def average_pool(u, out_shape, mask=None):
     """
-    Average pooling across units in a receptive field (last dim)
+    Average pooling across units in a receptive field (dim=-1)
 
     Parameters
     ----------
@@ -300,7 +300,7 @@ def average_pool(u, out_shape, mask=None):
 
 def sum_pool(u, out_shape, mask=None):
     """
-    Sum pooling across units in a receptive field (last dim)
+    Sum pooling across units in a receptive field (dim=-1)
 
     Parameters
     ----------
