@@ -310,7 +310,7 @@ class Model(nn.Module):
                 outputs = self.net(inputs)
                 # mean across image dims if 4 dimensional
                 if outputs.ndimension() == 4:
-                    outputs = torch.mean(outputs, dim=[-2,-1])
+                    outputs = torch.max(outputs.flatten(-2), -1)[0]
                 # get loss
                 loss = loss_criterion(outputs, labels)
                 # add penalty to loss
