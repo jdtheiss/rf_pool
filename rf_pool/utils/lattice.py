@@ -47,6 +47,7 @@ Examples
 import warnings
 import torch
 import numpy as np
+import imageio
 import matplotlib.pyplot as plt
 
 def exp_kernel_2d(mu, sigma, xy):
@@ -506,6 +507,18 @@ def plot_size_ecc(mu, sigma, img_shape):
     ecc = torch.max(ecc, dim=1)[0]
     plt.plot(ecc.numpy(), sigma.numpy())
     plt.show()
+
+def make_lattice_gif(filename, kernels):
+    # save kernels as gif
+    assert kernels.ndimension() >= 3
+    if not filename.endswith('.gif'):
+        filename += '.gif'
+    # flatten if greater than 3 dims, then divide by max and set to uint8
+    kernels = kernels.flatten(0, -3).detach().numpy()
+    kernels = np.divide(kernels, np.max(kernels, axis=(-2,-1), keepdims=True))
+    kernels = np.multiply(kernels, 255).astype('uint8')
+    # save gif
+    imageio.mimsave(filename, kernels)
 
 def make_kernel_lattice(kernels):
     #normalize each kernel to max 1, then max across kernels to show
