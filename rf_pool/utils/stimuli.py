@@ -11,7 +11,7 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
         the target image
     flankers: numpy.array_like
         list of flanker images
-    spacing: float
+    spacing: int
         distance between target center and flanker
         center in pixels
     background_size: int or tuple
