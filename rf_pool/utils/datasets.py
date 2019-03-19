@@ -81,7 +81,11 @@ class CrowdedCircles(torch.utils.data.Dataset):
         self.transform = transform
         self.data = []
         self.labels = []
-        
+        try:
+            self.offset = kwargs["radius_range"][0]
+        except KeyError:
+            self.offset = 0
+         
         self.train_data_file = None
         self.test_data_file = None 
         # load in previously saved dataset (TODO)
@@ -112,7 +116,7 @@ class CrowdedCircles(torch.utils.data.Dataset):
        
     def __getitem__(self, index):
         img = self.data[index]
-        label = self.labels[index]
+        label = int(self.labels[index] - self.offset)
         img = Image.fromarray(img.numpy(), mode='L') 
         if self.transform:
             img = self.transform(img)
@@ -120,6 +124,5 @@ class CrowdedCircles(torch.utils.data.Dataset):
     
     def __len__(self):
         return len(self.labels)
-
 
 
