@@ -289,7 +289,7 @@ class Model(nn.Module):
         return seed_image
 
     def train_model(self, epochs, trainloader, lr=0.001, monitor=2000,
-                    monitor_lattice=False, **kwargs):
+                    monitor_lattice=False, params=[], **kwargs):
         assert self.net is not None, (
             "network must be initialized before training")
 
@@ -301,7 +301,7 @@ class Model(nn.Module):
             show_lattice_kwargs['cmap'] = kwargs.pop('cmap')
         #initialize optimizer for training
         kwargs.update({'lr':lr})
-        optimizer = self.set_optimizer(self.optimizer_type, params=[], **kwargs)
+        optimizer = self.set_optimizer(self.optimizer_type, **kwargs)
         loss_criterion = self.set_loss_fn(self.loss_type)
         # train the model
         running_loss = 0.
