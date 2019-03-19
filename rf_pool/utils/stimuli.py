@@ -63,56 +63,24 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
 
     return stimuli
 
-
-def crowded_MNIST(dataset, n_flank, **kwargs):
+def make_crowded_circles(n_flank, radius_range, image_size, **kwargs):
     """
-    Converts an MNIST dataset into crowded stimuli with flankers
-
-    Paramaters
-    ----------
-    dataset: torchvision.datasets.mnist.MNIST
-        pytorch MNIST trainset or testset object
-    n_flank: int
-        number of flankers for the crowded stimuli
-    **kwargs: dict
-        The crowded stimul arguments
-        see make_crowded_stimuli for details
-
-    Returns
-    -------
-    dataset: torchvision.datasets.mnist.MNIST
-        pytorch MNIST dataset with crowded stimuli
+    TODO
     """
+    assert n_flank < len(radius_range)
+    np.random.shuffle(radius_range)
+    target_radius = radius_range[0]
+    average_radius = np.mean(radius_range[:n_flank]) 
+    
+    circles = [make_circle(r, image_size) for r in radius_range]
+    s = stimuli.make_crowded_stimuli(circles[0], circles[1:n_flank], **kwargs)
+    
+    return s, target_radius, average_radius
 
-    # get dataset images and labels
-    out_dataset = dataset
-    if dataset.train:
-        inputs = dataset.train_data
-        labels = dataset.train_labels
-    else:
-        inputs = dataset.test_data
-        labels = dataset.test_labels
-    if type(inputs) is torch.Tensor:
-        inputs = inputs.numpy()
-    # get the targets
-    n_set = inputs.shape[0]
-    target_indices = np.arange(0, n_set, n_flank+1)
-    # crowd the input images
-    crowded_inputs = []
-    for i in target_indices:
-        target = inputs[i]
-        flankers = inputs[i+1:i+n_flank+1]
-        s = make_crowded_stimuli(target, flankers, **kwargs)
-        crowded_inputs.append(s)
-    # get the labels
-    crowded_labels = labels[target_indices]
+def make_circle(radius, image_size):
+    c = int(image_size/2)
+    xx, yy = np.mgrid[:image_size, :image_size]
+    circle = (xx - c)**2 + (yy - c)**2 
+    return (circle < radius**2).astype(int) 
 
-    # reassign to the dataset
-    if dataset.train:
-        out_dataset.train_data = torch.tensor(crowded_inputs, dtype=torch.uint8)
-        out_dataset.train_labels = crowded_labels
-    else:
-        out_dataset.test_data = torch.tensor(crowded_inputs, dtype=torch.uint8)
-        out_dataset.test_labels = crowded_labels
 
-    return out_dataset
