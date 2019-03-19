@@ -72,8 +72,8 @@ def make_crowded_circles(n_flank, radius_range, image_size, **kwargs):
     n_flank: int
         the number of flankers surrounding a single target
         decides the equally-spaced layout
-    radius_range: list
-        the range of radii to be randomly sampled
+    radius_range: tuple 
+        the range of radii to be randomly sampled [low, high)
     image_size: int
         the size of the circle image 
     **kwargs: dict
@@ -88,15 +88,14 @@ def make_crowded_circles(n_flank, radius_range, image_size, **kwargs):
     mean_radius: float
         the average radius of all the circles
     """
-    assert image_size >= 2.*np.max(radius_range)
-    assert n_flank < len(radius_range)
+    assert image_size >= 2.*radius_range[1]
     
-    np.random.shuffle(radius_range) # TODO: add a random sampling function for picking the radii from the radius_range
-    target_radius = radius_range[0]
-    mean_radius = np.mean(radius_range[:n_flank]) 
+    radii = np.random.randint(low=radius_range[0], high=radius_range[1], size=n_flank+1)
+    target_radius = radii[0]
+    mean_radius = np.mean(radii) 
     
-    circles = [make_circle(r, image_size) for r in radius_range]
-    s = make_crowded_stimuli(circles[0], circles[1:n_flank], **kwargs)
+    circles = [make_circle(r, image_size) for r in radii]
+    s = make_crowded_stimuli(circles[0], circles[1:n_flank+1], **kwargs)
     
     return s, target_radius, mean_radius
 
