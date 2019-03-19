@@ -151,6 +151,9 @@ class RF_Pool(Layer):
         # update rfs, mu, sigma
         if delta_mu is not None and delta_sigma is not None:
             self.update_rfs(delta_mu, delta_sigma)
+        # for updating mu, sigma directly as part of the graph
+        if self.mu.requires_grad or self.sigma.requires_grad:
+             self.init_rfs()
         # return pooling outputs
         return self.apply(u, **self.inputs)[1]
 
