@@ -2,6 +2,7 @@ import numpy as np
 import torch 
 import torchvision
 import utils.stimuli as stimuli
+from PIL import Image
 
 class CrowdedMNIST(torchvision.datasets.MNIST):
     """
@@ -9,14 +10,11 @@ class CrowdedMNIST(torchvision.datasets.MNIST):
 
     Attributes
     ----------
-    dataset: torchvision.datasets.mnist.MNIST
-        pytorch MNIST trainset or testset object
     n_flank: int
         number of flankers for the crowded stimuli
     **kwargs: dict
         The crowded stimul arguments
-        see make_crowded_stimuli for details
-
+        see stimuli.make_crowded_stimuli for details
     """
 
     def __init__(self, root, n_flank, download=True, 
@@ -57,7 +55,21 @@ class CrowdedMNIST(torchvision.datasets.MNIST):
 
 class CrowdedCircles(torch.utils.data.Dataset):
     """
-    TODO
+    Class for creating a dataset of crowded circles stimuli
+    
+    Attributes
+    ----------
+    n: int
+        number of total images to be made
+    label_type: str
+        decides the label for training
+    **kwargs: dict
+        see stimuli.make_crowded_circles()
+        
+    Methods
+    -------
+    make_stimuli(self, **kwargs)
+        makes self.n random crowded circle stimuli
     """
     def __init__(self, root, n, label_type, train=True, download=False,
                  transform=None, **kwargs):
@@ -67,23 +79,25 @@ class CrowdedCircles(torch.utils.data.Dataset):
         self.train = train
         self.download = download
         self.transform = transform
+        self.data = []
+        self.labels = []
         
+        self.train_data_file = None
+        self.test_data_file = None 
+        # load in previously saved dataset (TODO)
         if self.download:
             if self.train:
-                data_file = self.root + "/train_data.npz"
-                label_file = self.root + "/train_labels_"+label_type+".npz"
+                self.data, self.labels = torch.load(os.path.join(self.root, self.train_data_file))
             else:
-                data_file = self.root + "/test_data.npz"
-                label_file = self.root + "/test_labels_"+label_type+".npz"
+                self.data, self.labels = torch.load(os.path.join(self.root, self.test_data_file))
 
-            self.data = np.load(data_file)
-            self.labels = np.load(label_fle)
+            self.data = torch.load(data_file)
+            self.labels = torch.load(label_fle)
+        # make new dataset of size self.n from keyword arguments 
         else:
             self.make_stimuli(**kwargs)
 
     def make_stimuli(self, **kwargs):
-        self.data = []
-        self.labels = []
         for i in range(self.n):
             s, target_r, mean_r = stimuli.make_crowded_circles(**kwargs)
             self.data.append(s)
@@ -93,12 +107,13 @@ class CrowdedCircles(torch.utils.data.Dataset):
                 self.labels.append(mean_r)
             else:
                 raise Exception("label type not undetstood")
-        self.data = np.transpose(self.data, (1,2,0))
-        self.labels = np.array(self.labels)
+        self.data = torch.tensor(self.data, dtype=torch.uint8)
+        self.labels = torch.tensor(self.labels)
        
     def __getitem__(self, index):
-        img = self.data[:, :, index, None]
+        img = self.data[index]
         label = self.labels[index]
+        img = Image.fromarray(img.numpy(), mode='L') 
         if self.transform:
             img = self.transform(img)
         return (img, label)

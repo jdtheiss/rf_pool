@@ -65,22 +65,45 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
 
 def make_crowded_circles(n_flank, radius_range, image_size, **kwargs):
     """
-    TODO
+    Makes a crowded stimulus with circle of random size
+    
+    Parameters
+    ----------
+    n_flank: int
+        the number of flankers surrounding a single target
+        decides the equally-spaced layout
+    radius_range: list
+        the range of radii to be randomly sampled
+    image_size: int
+        the size of the circle image 
+    **kwargs: dict
+        see make_crowded_stimuli
+    
+    Returns
+    -------
+    s: numpy.array
+        the crowded stimulus
+    target_radius: float
+        the radius of the central circle
+    mean_radius: float
+        the average radius of all the circles
     """
+    assert image_size >= 2.*np.max(radius_range)
     assert n_flank < len(radius_range)
-    np.random.shuffle(radius_range)
+    
+    np.random.shuffle(radius_range) # TODO: add a random sampling function for picking the radii from the radius_range
     target_radius = radius_range[0]
-    average_radius = np.mean(radius_range[:n_flank]) 
+    mean_radius = np.mean(radius_range[:n_flank]) 
     
     circles = [make_circle(r, image_size) for r in radius_range]
     s = make_crowded_stimuli(circles[0], circles[1:n_flank], **kwargs)
     
-    return s, target_radius, average_radius
+    return s, target_radius, mean_radius
 
 def make_circle(radius, image_size):
     c = int(image_size/2)
     xx, yy = np.mgrid[:image_size, :image_size]
     circle = (xx - c)**2 + (yy - c)**2 
-    return (circle < radius**2).astype(int)
+    return np.uint8(255*(circle < radius**2).astype(int)) 
 
 
