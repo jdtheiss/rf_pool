@@ -289,7 +289,7 @@ class Model(nn.Module):
         return seed_image
 
     def train_model(self, epochs, trainloader, lr=0.001, monitor=2000,
-                    monitor_lattice=False, params=[], **kwargs):
+                    monitor_lattice=False, **kwargs):
         assert self.net is not None, (
             "network must be initialized before training")
 
