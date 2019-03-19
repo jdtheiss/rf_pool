@@ -63,7 +63,7 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
 
     return stimuli
 
-def make_crowded_circles(n_flank, radius_range, **kwargs):
+def make_crowded_circles(n_flank, radius_range, dtype=np.float, **kwargs):
     """
     Makes a crowded stimulus with circle of random size
 
@@ -74,8 +74,8 @@ def make_crowded_circles(n_flank, radius_range, **kwargs):
         decides the equally-spaced layout
     radius_range: tuple
         the range of radii to be randomly sampled [low, high)
-    image_size: int
-        the size of the circle image
+    dtype: np.float or np.int
+        dtype of output labels [default: np.float]
     **kwargs: dict
         see make_crowded_stimuli
 
@@ -83,17 +83,17 @@ def make_crowded_circles(n_flank, radius_range, **kwargs):
     -------
     s: numpy.array
         the crowded stimulus
-    target_radius: float
-        the radius of the central circle
-    mean_radius: float
-        the average radius of all the circles
+    target_radius: float or int
+        the radius of the central circle with dtype given
+    mean_radius: float or int
+        the average radius of all the circles with dtype given
     """
     image_size = 2.*radius_range[1]
 
     radii = np.random.randint(low=radius_range[0], high=radius_range[1],
                               size=n_flank+1)
-    target_radius = np.float32(radii[0])
-    mean_radius = np.mean(radii, dtype='float32')
+    target_radius = dtype(radii[0])
+    mean_radius = np.mean(radii, dtype=dtype)
 
     circles = [make_circle(r, image_size) for r in radii]
     s = make_crowded_stimuli(circles[0], circles[1:n_flank+1], **kwargs)
