@@ -73,7 +73,7 @@ def make_crowded_circles(n_flank, radius_range, image_size, **kwargs):
     average_radius = np.mean(radius_range[:n_flank]) 
     
     circles = [make_circle(r, image_size) for r in radius_range]
-    s = stimuli.make_crowded_stimuli(circles[0], circles[1:n_flank], **kwargs)
+    s = make_crowded_stimuli(circles[0], circles[1:n_flank], **kwargs)
     
     return s, target_radius, average_radius
 
@@ -81,6 +81,6 @@ def make_circle(radius, image_size):
     c = int(image_size/2)
     xx, yy = np.mgrid[:image_size, :image_size]
     circle = (xx - c)**2 + (yy - c)**2 
-    return (circle < radius**2).astype(int) 
+    return (circle < radius**2).astype(int)
 
 

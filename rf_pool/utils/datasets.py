@@ -1,10 +1,10 @@
+import numpy as np
 import torch 
-import torch.utils.data.Dataset as Dataset
 import torchvision
-import stimuli
+import utils.stimuli as stimuli
 
 class CrowdedMNIST(torchvision.datasets.MNIST):
-	"""
+    """
     Converts an MNIST dataset into crowded stimuli with flankers
 
     Attributes
@@ -90,19 +90,17 @@ class CrowdedCircles(torch.utils.data.Dataset):
             if self.label_type.lower() == "center":
                 self.labels.append(target_r)
             elif self.label_type.lower() == "mean":
-                self.label.append(mean_r)
+                self.labels.append(mean_r)
             else:
                 raise Exception("label type not undetstood")
-        self.data = np.array(self.data)
+        self.data = np.transpose(self.data, (1,2,0))
         self.labels = np.array(self.labels)
-        
+       
     def __getitem__(self, index):
-        img = self.data[index]
+        img = self.data[:, :, index, None]
         label = self.labels[index]
-        
         if self.transform:
             img = self.transform(img)
-        
         return (img, label)
     
     def __len__(self):
