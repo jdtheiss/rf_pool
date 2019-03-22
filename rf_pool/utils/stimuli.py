@@ -7,26 +7,26 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
 
     Parameters
     ----------
-    target: numpy.array
+    target : numpy.array
         the target image
-    flankers: numpy.array_like
+    flankers : numpy.array_like
         list of flanker images
-    spacing: int
+    spacing : int
         distance between target center and flanker
         center in pixels
-    background_size: int or tuple
+    background_size : int or tuple
         size of the blank background in pixels
         if type is int, then assumes background is square
-    axis: float
+    axis : float
         initialization axis for flankers in radians
         [initialized as 0]
-    random: bool
+    random : bool
         flankers are placed in clockwise fashion if False
         [initialized as False].
 
     Returns
     -------
-    stimuli: nump.array
+    stimuli : nump.array
         stimulus image with shape (background_size,)
 
     Examples
@@ -69,32 +69,39 @@ def make_crowded_circles(n_flank, radius_range, dtype=np.float, **kwargs):
 
     Parameters
     ----------
-    n_flank: int
+    n_flank : int
         the number of flankers surrounding a single target
         decides the equally-spaced layout
-    radius_range: tuple
-        the range of radii to be randomly sampled [low, high)
-    dtype: np.float or np.int
+    radius_range : tuple or list
+        if tuple, the range of radii to be randomly sampled [low, high)
+        if list, the radii randomly assigned for each circle
+        (len(radius_range) >= n_flank+1)
+    dtype : type
         dtype of output labels [default: np.float]
-    **kwargs: dict
+    **kwargs : dict
         see make_crowded_stimuli
 
     Returns
     -------
-    s: numpy.array
+    s : numpy.array
         the crowded stimulus
-    target_radius: float or int
+    target_radius : float or int
         the radius of the central circle with dtype given
-    mean_radius: float or int
+    mean_radius : float or int
         the average radius of all the circles with dtype given
     """
-    image_size = 2.*radius_range[1]
-
-    radii = np.random.randint(low=radius_range[0], high=radius_range[1],
-                              size=n_flank+1)
+    image_size = 2.*np.max(radius_range)
+    if type(radius_range) is tuple:
+        radii = np.random.randint(low=radius_range[0], high=radius_range[1],
+                                  size=n_flank+1)
+    elif type(radius_range) is list:
+        radii = np.random.permutation(radius_range)[:n_flank+1]
+    else:
+        raise Exception('radius_range type not understood')
+    # set target_radius and mean_radius
     target_radius = dtype(radii[0])
     mean_radius = np.mean(radii, dtype=dtype)
-
+    # make circle stimuli
     circles = [make_circle(r, image_size) for r in radii]
     s = make_crowded_stimuli(circles[0], circles[1:n_flank+1], **kwargs)
 
