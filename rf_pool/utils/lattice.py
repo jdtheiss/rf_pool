@@ -50,6 +50,15 @@ import numpy as np
 import imageio
 import matplotlib.pyplot as plt
 
+def multiply_gaussians(mu0, mu1, sigma0, sigma1):
+    sigma0_2 = torch.pow(sigma0, 2)
+    sigma1_2 = torch.pow(sigma1, 2)
+    mu = (sigma1_2 * mu0 + sigma0_2 * mu1) / (sigma0_2 + sigma1_2)
+    sigma = torch.sqrt(sigma0_2 * sigma1_2 / (sigma0_2 + sigma1_2))
+    w = 1. / (torch.sqrt(torch.sum(torch.pow(mu0 - mu1, 2), -1)) + 1e-6)
+    w = torch.reshape(w / w.sum(), (1, -1))
+    return torch.matmul(w, mu), torch.matmul(w, sigma)
+
 def exp_kernel_2d(mu, sigma, xy):
     mu = mu.reshape(mu.shape + (1,1)).float()
     sigma = sigma.unsqueeze(-1).float()
@@ -72,6 +81,61 @@ def mask_kernel_2d(mu, sigma, xy):
     with torch.no_grad():
         kernels_no_grad = torch.add(kernels, 1e-6)
     return torch.div(torch.mul(kernels, mask), kernels_no_grad)
+
+def update_mu_sigma(mu, sigma, priority_map):
+    """
+    Returns updated mu and sigma after multiplication with a map of gaussian
+    precision values
+
+    Parameters
+    ----------
+    mu : torch.Tensor
+        kernel centers with shape (n_kernels, 2)
+    sigma : torch.Tensor
+        kernel standard deviations with shape (n_kernels, 1)
+    priority_map : torch.Tensor
+        map of precisions to update mu, sigma with shape kernel_shape
+
+    Returns
+    -------
+    new_mu : torch.Tensor
+        updated kernel centers with shape (n_kernels, 2)
+    new_sigma : torch.Tensor
+        updated standard deviations with shape (n_kernels, 1)
+
+    Examples
+    --------
+    >>> kernel_shape = torch.as_tensor((24,24), dtype=torch.float32)
+    >>> mu, sigma = init_uniform_lattice(kernel_shape//2, 3, 8, 2)
+    >>> priority_map = torch.rand(kernel_shape)
+    >>> new_mu, new_sigma = update_mu_sigma(mu, sigma, priority_map)
+
+    Notes
+    -----
+    Each location within priority_map should contain the precision associated
+    with the gaussian at that location. Zero-valued locations will be ignored.
+    """
+    # get mu and sigma for map
+    x = torch.arange(priority_map.shape[0])
+    y = torch.arange(priority_map.shape[1])
+    map_mu = torch.stack(torch.meshgrid(x, y), dim=0).reshape(2, -1).t()
+    map_sigma = priority_map.reshape(-1, 1)
+    # remove nonzero values
+    keep_indices = map_sigma.nonzero()[:,0]
+    if keep_indices.numel() == 0:
+        return mu, sigma
+    map_mu = map_mu[keep_indices].type(mu.dtype)
+    map_sigma = 1. / map_sigma[keep_indices].type(sigma.dtype)
+    # return weighted sum of multiplied gaussians for each mu, sigma
+    new_mu = []
+    new_sigma = []
+    for (m, s) in zip(mu, sigma):
+        mu_, sigma_ = multiply_gaussians(m, map_mu, s, map_sigma)
+        new_mu.append(mu_)
+        new_sigma.append(sigma_)
+    new_mu = torch.stack(new_mu).reshape(-1, 2)
+    new_sigma = torch.stack(new_sigma).reshape(-1, 1)
+    return new_mu, new_sigma
 
 def mu_mask(mu, kernel_shape):
     """
@@ -136,7 +200,6 @@ def exp_kernel_lattice(mu, sigma, kernel_shape):
     >>> kernels = exp_kernel_lattice(mu, sigma, kernel_shape)
     """
 
-    assert mu.shape[-2] == sigma.shape[-2]
     # create the coordinates input to kernel function
     x = torch.arange(kernel_shape[0])
     y = torch.arange(kernel_shape[1])
@@ -173,7 +236,6 @@ def gaussian_kernel_lattice(mu, sigma, kernel_shape):
     >>> kernels = gaussian_kernel_lattice(mu, sigma, kernel_shape)
     """
 
-    assert mu.shape[-2] == sigma.shape[-2]
     # create the coordinates input to kernel function
     x = torch.arange(kernel_shape[0])
     y = torch.arange(kernel_shape[1])
@@ -213,7 +275,6 @@ def dog_kernel_lattice(mu, sigma, kernel_shape, ratio=4.):
     >>> kernels = dog_kernel_lattice(mu, sigma, kernel_shape, ratio)
     """
 
-    assert mu.shape[-2] == sigma.shape[-2]
     # create the coordinates input to kernel function
     x = torch.arange(kernel_shape[0])
     y = torch.arange(kernel_shape[1])
@@ -250,7 +311,6 @@ def mask_kernel_lattice(mu, sigma, kernel_shape):
     >>> kernels = mask_kernel_lattice(mu, sigma, kernel_shape)
     """
 
-    assert mu.shape[-2] == sigma.shape[-2]
     # create the coordinates input to kernel function
     x = torch.arange(kernel_shape[0])
     y = torch.arange(kernel_shape[1])
@@ -513,9 +573,13 @@ def make_lattice_gif(filename, kernels):
     assert kernels.ndimension() >= 3
     if not filename.endswith('.gif'):
         filename += '.gif'
+    # flat kernels to show entire lattice for 5 frames
+    flat_kernels = make_kernel_lattice(kernels).flatten(0, -3).numpy()
+    flat_kernels = np.repeat(flat_kernels, 5, axis=0)
     # flatten if greater than 3 dims, then divide by max and set to uint8
     kernels = kernels.flatten(0, -3).detach().numpy()
     kernels = np.divide(kernels, np.max(kernels, axis=(-2,-1), keepdims=True))
+    kernels = np.concatenate([flat_kernels, kernels], 0)
     kernels = np.multiply(kernels, 255).astype('uint8')
     # save gif
     imageio.mimsave(filename, kernels)
