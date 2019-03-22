@@ -30,7 +30,7 @@ class Layer(torch.nn.Module):
 
     def init_rfs(self):
         assert self.lattice_fn is not None
-        assert self.mu.shape[0] == self.sigma.shape[0]
+        # assert self.mu.shape[0] == self.sigma.shape[0]
         assert self.img_shape is not None
         self.inputs['mu_mask'] = lattice.mu_mask(self.mu, self.img_shape)
         if self.ratio is not None:
