@@ -60,7 +60,7 @@ class Model(nn.Module):
         elif loss_name.lower() == 'mse':
             loss_criterion = nn.MSELoss()
         elif loss_name.startswith('torch.nn.modules.loss'):
-            loss_criterion = loss_type()
+            loss_criterion = loss_type
         else:
             raise Exception('loss_type not understood')
 
