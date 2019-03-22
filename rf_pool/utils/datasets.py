@@ -1,5 +1,5 @@
 import numpy as np
-import torch 
+import torch
 import torchvision
 import utils.stimuli as stimuli
 from PIL import Image
@@ -12,15 +12,15 @@ class CrowdedMNIST(torchvision.datasets.MNIST):
     ----------
     n_flank: int
         number of flankers for the crowded stimuli
-    **kwargs: dict
+    **kwargs : dict
         The crowded stimul arguments
         see stimuli.make_crowded_stimuli for details
     """
 
-    def __init__(self, root, n_flank, download=True, 
+    def __init__(self, root, n_flank, download=True,
                  train=True, transform=None, **kwargs):
 
-        super(CrowdedMNIST, self).__init__(root=root, train=train, 
+        super(CrowdedMNIST, self).__init__(root=root, train=train,
                                            download=download, transform=transform)
         self.n_flank = n_flank
         if self.train:
@@ -56,38 +56,38 @@ class CrowdedMNIST(torchvision.datasets.MNIST):
 class CrowdedCircles(torch.utils.data.Dataset):
     """
     Class for creating a dataset of crowded circles stimuli
-    
+
     Attributes
     ----------
-    n: int
+    n : int
         number of total images to be made
-    label_type: str
-        decides the label for training
-    **kwargs: dict
+    label_type : str
+        decides the label for training ('center' or 'mean')
+    offset : int
+        offset to subtract from target labels to reduce number of classes for
+        cross entropy [default: 0]
+    **kwargs : dict
         see stimuli.make_crowded_circles()
-        
+
     Methods
     -------
     make_stimuli(self, **kwargs)
         makes self.n random crowded circle stimuli
     """
-    def __init__(self, root, n, label_type, train=True, download=False,
+    def __init__(self, root, n, label_type, offset=0, train=True, download=False,
                  transform=None, **kwargs):
         self.root = root
         self.n = n
         self.label_type = label_type
+        self.offset = offset
         self.train = train
         self.download = download
         self.transform = transform
         self.data = []
         self.labels = []
-        try:
-            self.offset = kwargs["radius_range"][0]
-        except KeyError:
-            self.offset = 0
-         
+
         self.train_data_file = None
-        self.test_data_file = None 
+        self.test_data_file = None
         # load in previously saved dataset (TODO)
         if self.download:
             if self.train:
@@ -97,7 +97,7 @@ class CrowdedCircles(torch.utils.data.Dataset):
 
             self.data = torch.load(data_file)
             self.labels = torch.load(label_fle)
-        # make new dataset of size self.n from keyword arguments 
+        # make new dataset of size self.n from keyword arguments
         else:
             self.make_stimuli(**kwargs)
 
@@ -113,16 +113,14 @@ class CrowdedCircles(torch.utils.data.Dataset):
                 raise Exception("label type not undetstood")
         self.data = torch.tensor(self.data, dtype=torch.uint8)
         self.labels = torch.tensor(self.labels)
-       
+
     def __getitem__(self, index):
         img = self.data[index]
         label = int(self.labels[index] - self.offset)
-        img = Image.fromarray(img.numpy(), mode='L') 
+        img = Image.fromarray(img.numpy(), mode='L')
         if self.transform:
             img = self.transform(img)
         return (img, label)
-    
+
     def __len__(self):
         return len(self.labels)
-
-
