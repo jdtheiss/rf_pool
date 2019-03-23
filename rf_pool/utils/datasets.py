@@ -116,7 +116,7 @@ class CrowdedCircles(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         img = self.data[index]
-        label = int(self.labels[index] - self.offset)
+        label = self.labels[index] - self.offset
         img = Image.fromarray(img.numpy(), mode='L')
         if self.transform:
             img = self.transform(img)
