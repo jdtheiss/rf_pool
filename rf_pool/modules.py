@@ -186,14 +186,14 @@ class Module(nn.Module):
             pool_layer = nn.MaxPool2d(self.pool_ksizes[layer_id], self.pool_ksizes[layer_id])
         elif self.pool_names[layer_id] in ['prob', 'stochastic', 'div_norm', 'average', 'sum']:
             pool_layer = RF_Pool(pool_type=self.pool_types[layer_id],
-                           block_size=self.pool_ksizes[layer_id])
+                                 kernel_size=self.pool_ksizes[layer_id])
         elif self.pool_names[layer_id].startswith('torch.nn.modules.pooling'):
             pool_layer = self.pool_types[layer_id]
             if hasattr(pool_layer, 'kernel_size'):
                 self.pool_ksizes[layer_id] = pool_layer.kernel_size
         elif self.pool_names[layer_id].find('layers') >= 0:
             pool_layer = self.pool_types[layer_id]
-            self.pool_ksizes[layer_id] = pool_layer.inputs['block_size']
+            self.pool_ksizes[layer_id] = pool_layer.kernel_size
         elif self.pool_names[layer_id].lower() == 'nonetype':
             pool_layer = None
         else:

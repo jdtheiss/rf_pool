@@ -16,8 +16,13 @@ class Layer(torch.nn.Module):
         self.delta_sigma = None
         self.img_shape = None
         self.lattice_fn = None
-        self.inputs = {'t': None, 'rfs': None, 'mu_mask': None,
-                       'pool_type': 'max', 'block_size': 2}
+        self.t = None
+        self.rfs = None
+        self.mu_mask = None
+        self.pool_type = 'max'
+        self.kernel_size = 2
+        self.input_keys = ['t', 'rfs', 'mu_mask', 'pool_type', 'kernel_size']
+        self.inputs = self.get_inputs(self.input_keys)
 
     def __call__(self, *args):
         return self.forward(*args)
@@ -25,32 +30,41 @@ class Layer(torch.nn.Module):
     def apply(self, *args, **kwargs):
         return ops.rf_pool(*args, **kwargs)
 
+    def get_inputs(self, keys):
+        inputs = {}
+        for key in keys:
+            if hasattr(self, key)
+                inputs.update({key: getattr(self, key)})
+            else:
+                inputs.setdefault(key, None)
+        return inputs
+
     def forward(self):
         pass
 
     def init_rfs(self):
         assert self.lattice_fn is not None
         assert self.img_shape is not None
-        self.inputs['mu_mask'] = lattice.mu_mask(self.mu, self.img_shape)
+        self.mu_mask = lattice.mu_mask(self.mu, self.img_shape)
         if self.ratio is not None:
-            self.inputs['rfs'] = self.lattice_fn(self.mu, self.sigma,
+            self.rfs = self.lattice_fn(self.mu, self.sigma,
                                                  self.img_shape, self.ratio)
         else:
-            self.inputs['rfs'] = self.lattice_fn(self.mu, self.sigma, self.img_shape)
+            self.rfs = self.lattice_fn(self.mu, self.sigma, self.img_shape)
 
     def update_rfs(self, delta_mu, delta_sigma):
-        assert self.inputs['rfs'] is not None
+        assert self.rfs is not None
         assert self.img_shape is not None
-        rfs_shape = self.inputs['rfs'].shape[-2:]
+        rfs_shape = self.rfs.shape[-2:]
         # update mu if img_shape doesnt match rfs.shape[-2:]
         if rfs_shape != self.img_shape:
             self.mu.add_(torch.sub(torch.as_tensor(self.img_shape, dtype=self.mu.dtype),
                                    torch.as_tensor(rfs_shape, dtype=self.mu.dtype)))
         # update mu and sigma
         mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma)
-        self.inputs['mu_mask'] = lattice.mu_mask(mu, self.img_shape)
+        self.mu_mask = lattice.mu_mask(mu, self.img_shape)
         # update rfs
-        self.inputs['rfs'] = self.lattice_fn(mu, sigma, self.img_shape)
+        self.rfs = self.lattice_fn(mu, sigma, self.img_shape)
 
     def update_mu_sigma(self, delta_mu, delta_sigma):
         img_hw = torch.as_tensor(self.img_shape, dtype=self.mu.dtype)
@@ -71,12 +85,12 @@ class Layer(torch.nn.Module):
         return mu, sigma
 
     def show_lattice(self, x=None, figsize=(5,5), cmap=None):
-        assert self.inputs['rfs'] is not None
+        assert self.rfs is not None
         if self.lattice_fn is lattice.mask_kernel_lattice:
             mu, sigma = self.update_mu_sigma(self.delta_mu, self.delta_sigma)
             rfs = lattice.exp_kernel_lattice(mu, sigma, self.img_shape)
         else:
-            rfs = self.inputs['rfs']
+            rfs = self.rfs
         rf_lattice = lattice.make_kernel_lattice(rfs)
         lattice.show_kernel_lattice(rf_lattice, x=x, figsize=figsize, cmap=cmap)
 
@@ -106,8 +120,7 @@ class RF_Pool(Layer):
 
     Attributes
     ----------
-    inputs : dict
-        inputs passed to ops.rf_pool
+    #TODO:WRITEME
 
     Methods
     -------
@@ -133,11 +146,12 @@ class RF_Pool(Layer):
         self.sigma = sigma
         if 'ratio' in kwargs:
             self.ratio = kwargs.pop('ratio')
-        if self.inputs['rfs'] is not None and self.img_shape is None:
-            self.img_shape = self.inputs['rfs'].shape[-2:]
+        if self.rfs is not None and self.img_shape is None:
+            self.img_shape = self.rfs.shape[-2:]
         else:
             self.img_shape = img_shape
         self.lattice_fn = lattice_fn
+        self.inputs = self.get_inputs(self.input_keys)
         self.inputs.update(kwargs)
         if mu is not None and sigma is not None:
             self.init_rfs()
@@ -172,6 +186,7 @@ class RF_Uniform(Layer):
         self.lattice_fn = lattice_fn
         if 'ratio' in kwargs:
             self.ratio = kwargs.pop('ratio')
+        self.inputs = self.get_inputs(self.input_keys)
         self.inputs.update(kwargs)
         # set mu, sigma
         centers = torch.as_tensor(self.img_shape)/2.
@@ -204,11 +219,12 @@ class RF_Window(Layer):
         self.sigma = sigma
         if 'ratio' in kwargs:
             self.ratio = kwargs.pop('ratio')
-        if self.inputs['rfs'] is not None and self.img_shape is None:
-            self.img_shape = self.inputs['rfs'].shape[-2:]
+        if self.rfs is not None and self.img_shape is None:
+            self.img_shape = self.rfs.shape[-2:]
         else:
             self.img_shape = img_shape
         self.lattice_fn = lattice_fn
+        self.inputs = self.get_inputs(self.input_keys)
         self.inputs.update(kwargs)
         self.init_rfs()
 
@@ -236,14 +252,13 @@ class RF_Same(Layer):
         self.sigma = sigma
         if 'ratio' in kwargs:
             self.ratio = kwargs.pop('ratio')
-        if self.inputs['rfs'] is not None and self.img_shape is None:
-            self.img_shape = self.inputs['rfs'].shape[-2:]
+        if self.rfs is not None and self.img_shape is None:
+            self.img_shape = self.rfs.shape[-2:]
         else:
             self.img_shape = img_shape
         self.lattice_fn = lattice_fn
-        # set block_size in inputs to 1, get block_size
+        self.inputs = self.get_inputs(self.input_keys)
         self.inputs.update(kwargs)
-        self.block_size = self.inputs['block_size']
         self.init_rfs()
 
     def forward(self, u, delta_mu=None, delta_sigma=None, **kwargs):
@@ -259,6 +274,6 @@ class RF_Same(Layer):
             self.inputs.pop('mu_mask')
         # return pooling outputs
         h_mean = self.apply(u, **self.inputs)[0]
-        if self.block_size > 1:
-            h_mean = F.max_pool2d_with_indices(h_mean, self.block_size)[0]
+        if self.kernel_size > 1:
+            h_mean = F.max_pool2d_with_indices(h_mean, self.kernel_size)[0]
         return h_mean
