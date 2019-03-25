@@ -370,8 +370,9 @@ def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type='max', kernel_size=2, *
     kernel_size : int or tuple
         size of blocks in hidden layer connected to pooling units
         [default: 2]
-    mask_thr : float
-        threshold for creating a mask from rfs tensor (if input) [default: 0.]
+    return_indices : bool
+        boolean whether to return indices of max-pooling (for kernel_size > 1)
+        [default: False]
     **kwargs : dict
         extra arguments passed to pooling function indicated by pool_type
 
@@ -379,9 +380,11 @@ def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type='max', kernel_size=2, *
     -------
     h_mean : torch.Tensor
         hidden layer mean-field estimates with shape (batch_size, ch, h, w)
-    p_mean : torch.Tensor
+    p_mean : torch.Tensor or tuple
         pooling layer mean-field estimates with shape
         (batch_size, ch, h//kernel_size, w//kernel_size)
+        if return_indices is True and kernel_size > 1, p_mean is tuple:
+        (p_mean, p_mean_indices)
 
     Examples
     --------
@@ -486,9 +489,6 @@ def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type='max', kernel_size=2, *
             h_mean = torch.max(h_mean, -3)[0]
             p_mean = torch.max(p_mean, -3)[0]
 
-        # max pool across blocks
-        if kernel_size > 1:
-            p_mean = F.max_pool2d(p_mean, kernel_size)
     # pooling across blocks
     elif rfs is None:
         # init h_mean
@@ -499,10 +499,17 @@ def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type='max', kernel_size=2, *
         for r in xrange(b_w):
             for c in xrange(b_h):
                 h_mean[:, :, r::b_w, c::b_h] = h_mean_b[:,:,:,:,(r*b_w) + c]
-        p_mean = torch.max(p_mean_b, -1)[0]
+        p_mean = h_mean
+
     else:
         raise Exception('rfs type not understood')
 
+    # max pool across blocks
+    if (b_w > 1 or b_h > 1) and return_indices:
+        p_mean = F.max_pool2d_with_indices(p_mean, kernel_size)
+    elif (b_w > 1 or b_h > 1):
+        p_mean = F.max_pool2d(p_mean, kernel_size)
+    
     return h_mean, p_mean
 
 if __name__ == '__main__':
