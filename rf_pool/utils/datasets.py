@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torchvision
-import utils.stimuli as stimuli
+from . import stimuli
 from PIL import Image
 
 class CrowdedMNIST(torchvision.datasets.MNIST):

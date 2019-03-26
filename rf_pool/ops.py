@@ -3,7 +3,7 @@ from six.moves import xrange
 import torch
 import torch.nn.functional as F
 from torch.distributions import Multinomial
-from utils import lattice, functions
+from .utils import lattice, functions
 
 def max_index(u):
     u_s = int(np.prod(u.shape[:-1]))
@@ -344,7 +344,8 @@ def sum_pool(u, out_shape, mask=None):
     p_mean = torch.mul(sum_val, h_sample)
     return h_mean, p_mean
 
-def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type='max', kernel_size=2, **kwargs):
+def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type='max', kernel_size=2,
+            return_indices=False, **kwargs):
     """
     Receptive field pooling
 
@@ -509,7 +510,7 @@ def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type='max', kernel_size=2, *
         p_mean = F.max_pool2d_with_indices(p_mean, kernel_size)
     elif (b_w > 1 or b_h > 1):
         p_mean = F.max_pool2d(p_mean, kernel_size)
-    
+
     return h_mean, p_mean
 
 if __name__ == '__main__':

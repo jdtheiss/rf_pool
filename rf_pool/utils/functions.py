@@ -27,7 +27,7 @@ def repeat(x, repeats):
             [3., 3., 3., 4., 4., 4.],
             [3., 3., 3., 4., 4., 4.]])
     """
-    y = x.numpy()
+    y = x.detach().numpy()
     for i, r in enumerate(repeats):
         y = np.repeat(y, r, i)
     return torch.as_tensor(y)

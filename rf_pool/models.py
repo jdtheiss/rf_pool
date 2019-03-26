@@ -5,8 +5,8 @@ import numpy as np
 from IPython.display import clear_output, display
 import matplotlib.pyplot as plt
 import pickle
-from modules import FeedForwardNetwork, ControlNetwork
-import utils.lattice as lattice
+from .modules import FeedForwardNetwork, ControlNetwork
+from .utils import lattice
 
 class Model(nn.Module):
     """

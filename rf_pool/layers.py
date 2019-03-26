@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
-import ops
-from utils import lattice
+from . import ops
+from .utils import lattice
 
 class Layer(torch.nn.Module):
     """
@@ -33,7 +33,7 @@ class Layer(torch.nn.Module):
     def get_inputs(self, keys):
         inputs = {}
         for key in keys:
-            if hasattr(self, key)
+            if hasattr(self, key):
                 inputs.update({key: getattr(self, key)})
             else:
                 inputs.setdefault(key, None)
@@ -165,7 +165,8 @@ class RF_Pool(Layer):
         if delta_mu is not None and delta_sigma is not None:
             self.update_rfs(delta_mu, delta_sigma)
         # for updating mu, sigma directly as part of the graph
-        if self.mu.requires_grad or self.sigma.requires_grad:
+        if (self.mu and self.mu.requires_grad) or \
+           (self.sigma and self.sigma.requires_grad):
              self.init_rfs()
         # return pooling outputs
         return self.apply(u, **self.inputs)[1]
