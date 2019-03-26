@@ -1,10 +1,12 @@
+import pickle
+
+from IPython.display import clear_output, display
+import numpy as np
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import numpy as np
-from IPython.display import clear_output, display
-import matplotlib.pyplot as plt
-import pickle
+
 from .modules import FeedForwardNetwork, ControlNetwork
 from .utils import lattice
 

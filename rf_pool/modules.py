@@ -1,7 +1,7 @@
-#TODO: perhaps use nn.Sequential?
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
+
 from .layers import RF_Pool
 
 class Module(nn.Module):

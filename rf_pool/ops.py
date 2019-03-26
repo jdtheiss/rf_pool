@@ -1,8 +1,9 @@
 import numpy as np
 from six.moves import xrange
 import torch
-import torch.nn.functional as F
 from torch.distributions import Multinomial
+import torch.nn.functional as F
+
 from .utils import lattice, functions
 
 def max_index(u):
