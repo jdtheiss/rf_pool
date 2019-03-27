@@ -32,6 +32,21 @@ def repeat(x, repeats):
         y = np.repeat(y, r, i)
     return torch.as_tensor(y)
 
+def getattr_dict(obj, keys):
+    out = {}
+    for key in keys:
+        if hasattr(obj, 'get') and key in obj:
+            out.update({key: obj.get(key)})
+        elif hasattr(obj, key):
+            out.update({key: getattr(obj, key)})
+        else:
+            out.setdefault(key, None)
+    return out
+
+def setattr_dict(obj, **kwargs):
+    for key, value in kwargs.items():
+        setattr(obj, key, value)
+
 if __name__ == '__main__':
     import doctest
     doctest.testmod()
