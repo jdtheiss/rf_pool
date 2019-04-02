@@ -120,6 +120,9 @@ class Model(nn.Module):
     def load_weights(self):
         raise NotImplementedError
 
+    def init_weights(self):
+        raise NotImplementedError
+
     def monitor_loss(self, loss, iter, **kwargs):
         if not hasattr(self, 'loss_history'):
             self.loss_history = []
