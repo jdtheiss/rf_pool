@@ -182,7 +182,7 @@ def div_norm_pool(u, out_shape, mask=None, n=2., s=0.5):
     Divisive normalization raises the input to the power of n, and normalizes
     each unit with a constant, s, added in the denominator:
         h_mean = torch.pow(u, n)/torch.add(torch.pow(s, n),
-                 torch.sum(torch.pow(u, n), dim=-1, keepdim=True))
+                 torch.sum(torch.pow(u, n), dim=[-2,-1], keepdim=True))
         p_mean is set to the value of h_mean indexed at the stochastically
         selected max unit
 
