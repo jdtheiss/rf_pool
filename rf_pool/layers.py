@@ -70,14 +70,18 @@ class Layer(torch.nn.Module):
         assert self.img_shape is not None
         # update mu if img_shape doesnt match rfs.shape[-2:]
         if self.rfs.shape[-2:] != self.img_shape:
-            self.mu.add_(torch.sub(torch.as_tensor(self.img_shape,
-                                                   dtype=self.mu.dtype),
-                                   torch.as_tensor(rfs_shape,
-                                                   dtype=self.mu.dtype)))
+            with torch.no_grad():
+                self.mu.add_(torch.sub(torch.as_tensor(self.img_shape,
+                                                       dtype=self.mu.dtype),
+                                       torch.as_tensor(self.rfs.shape[-2:],
+                                                       dtype=self.mu.dtype)))
         # update mu and sigma
         mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma)
         # update rfs
-        rfs = self.lattice_fn(mu, sigma, self.img_shape)
+        if self.ratio is not None:
+            rfs = self.lattice_fn(mu, sigma, self.img_shape, self.ratio)
+        else:
+            rfs = self.lattice_fn(mu, sigma, self.img_shape)
         return rfs
 
     def show_lattice(self, x=None, figsize=(5,5), cmap=None):
@@ -148,10 +152,6 @@ class RF_Pool(Layer):
     def forward(self, u, delta_mu=None, delta_sigma=None, **kwargs):
         # set img_shape
         self.img_shape = u.shape[-2:]
-        # for updating mu, sigma directly as part of the graph
-        if (self.mu and self.mu.requires_grad) or \
-           (self.sigma and self.sigma.requires_grad):
-             self.rfs = self.init_rfs()
         # update rfs, mu, sigma
         self.rfs = self.update_rfs(delta_mu, delta_sigma)
         # update mu_mask if given
@@ -183,6 +183,9 @@ class RF_Uniform(Layer):
        self.img_shape = u.shape[-2:]
        # update rfs, mu, sigma
        self.rfs = self.update_rfs(delta_mu, delta_sigma)
+       # update mu_mask if given
+       if hasattr(self, 'mu_mask'):
+           self.mu_mask = lattice.mu_mask(self.mu, self.img_shape)
        # return pooling outputs
        return self.apply(u, **kwargs)[1]
 
@@ -200,7 +203,10 @@ class RF_Window(Layer):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
-        self.update_rfs(delta_mu, None)
+        self.rfs = self.update_rfs(delta_mu, None)
+        # update mu_mask if given
+        if hasattr(self, 'mu_mask'):
+            self.mu_mask = lattice.mu_mask(self.mu, self.img_shape)
         # return pooling outputs
         return self.apply(u, **kwargs)[1]
 
@@ -218,7 +224,10 @@ class RF_Same(Layer):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
-        self.update_rfs(delta_mu, delta_sigma)
+        self.rfs = self.update_rfs(delta_mu, delta_sigma)
+        # update mu_mask if given
+        if hasattr(self, 'mu_mask'):
+            self.mu_mask = lattice.mu_mask(self.mu, self.img_shape)
         # return h_mean output and
         h_mean = self.apply(u, **kwargs)[0]
         # pool if kernel_size > 1
