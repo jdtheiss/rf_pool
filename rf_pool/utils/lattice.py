@@ -618,7 +618,7 @@ def show_kernel_lattice(lattices, x=None, figsize=(5, 5), cmap=None):
     # transpose x if not None
     if x is not None:
         x = torch.squeeze(x.permute(0,2,3,1), -1).numpy()
-        x = x + np.abs(np.min(x, axis=(1,2), keepdims=True))
+        x = x - np.min(x, axis=(1,2), keepdims=True)
         x = x / np.max(x, axis=(1,2), keepdims=True)
     # init figure, axes
     n_rows = np.max([l.shape[0] for l in lattices])
