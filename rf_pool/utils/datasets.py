@@ -5,31 +5,44 @@ import torchvision
 
 from . import stimuli
 
-class CrowdedMNIST(torchvision.datasets.MNIST):
+class CrowdedDataset(torch.utils.data.Datasets):
     """
     Converts an MNIST dataset into crowded stimuli with flankers
 
     Attributes
     ----------
+    dataset : torchvision.datasets
+        #TODO:WRITEME
     n_flank: int
         number of flankers for the crowded stimuli
+    target_labels : list, optional
+        #TODO:WRITEME
+    flank_labels : list, optional
+        #TODO:WRITEME
     **kwargs : dict
         The crowded stimul arguments
         see stimuli.make_crowded_stimuli for details
     """
 
-    def __init__(self, root, n_flank, download=True,
-                 train=True, transform=None, **kwargs):
+    def __init__(self, root, dataset, n_flank, target_labels=[], flank_labels=[],
+                 download=True, train=True, transform=None, **kwargs):
 
-        super(CrowdedMNIST, self).__init__(root=root, train=train,
+        super(CrowdedDataset, self).__init__(root=root, train=train,
                                            download=download, transform=transform)
         self.n_flank = n_flank
-        if self.train:
-            inputs = self.train_data
-            labels = self.train_labels
+        if self.train and hasattr(dataset, 'train_data'):
+            inputs = dataset.train_data
+            labels = dataset.train_labels
+        elif not self.train and hasattr(dataset, 'test_data'):
+            inputs = dataset.test_data
+            labels = dataset.test_labels
+        elif hasattr(dataset, 'data'):
+            input = dataset.data
+            labels = dataset.labels
         else:
-            inputs = self.test_data
-            labels = self.test_labels
+            raise Exception(
+                'dataset has no attribute data, train_data, or test_data'
+            )
 
         if type(inputs) is torch.Tensor:
             inputs = inputs.numpy()
@@ -52,7 +65,6 @@ class CrowdedMNIST(torchvision.datasets.MNIST):
         else:
             self.test_data = torch.tensor(crowded_inputs, dtype=torch.uint8)
             self.test_labels = crowded_labels
-
 
 class CrowdedCircles(torch.utils.data.Dataset):
     """
