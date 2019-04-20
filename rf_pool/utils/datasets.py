@@ -37,7 +37,7 @@ class CrowdedDataset(torch.utils.data.Datasets):
             inputs = dataset.test_data
             labels = dataset.test_labels
         elif hasattr(dataset, 'data'):
-            input = dataset.data
+            inputs = dataset.data
             labels = dataset.labels
         else:
             raise Exception(
