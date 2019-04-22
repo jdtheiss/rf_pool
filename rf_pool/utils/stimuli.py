@@ -104,7 +104,7 @@ def make_crowded_circles(n_flank, radius_range, dtype=np.float, **kwargs):
     # make circle stimuli
     circles = [make_circle(r, image_size) for r in radii]
     s = make_crowded_stimuli(circles[0], circles[1:n_flank+1], **kwargs)
-    
+
     return s, target_radius, mean_radius
 
 def make_circle(radius, image_size):
