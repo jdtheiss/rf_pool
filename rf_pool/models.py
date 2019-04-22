@@ -1,5 +1,6 @@
 import pickle
 
+import IPython.display
 from IPython.display import clear_output, display
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,12 +8,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from .modules import FeedForwardNetwork, ControlNetwork
-from .utils import lattice
+from .modules import RBM
+from .utils import functions
 
 class Model(nn.Module):
     """
-    Base class for initializing, training, saving, loading, visualizing, and running models
+    Base class for initializing, training, saving, loading, visualizing models
 
     Attributes
     ----------
@@ -23,206 +24,214 @@ class Model(nn.Module):
 
     Methods
     -------
-    set_loss_fn()
-        sets a torch.nn.modules.loss function
-    set_optimizer(**kwargs)
-        sets a torch.optim optimizer
-        see torch.optim for **kwargs
+    n_layers()
+        return number of layers
+    output_shapes(input_shape)
+        return output_shape for each layer
+    append(layer)
+        append a new layer to the model
+    get_layers(layer_ids)
+        return list of layers with given layer_ids
+    apply_layers(input, layer_ids, forward=True)
+        return result from applying specific layers
+        Note: if forward=False, layer_ids will be reversed and reconstruct will
+        be called for each layer
+    forward(input)
+        return result of forward pass through layers
+    reconstruct(input)
+        return result of backward pass through layers
+        Note: requires that layers have reconstruct function
+    train(n_epochs, trainloader, lr=0.001, monitor=100, **kwargs)
+        trains the model with a given torch.utils.data.DataLoader and loss_fn
+    pre_layer_ids(layer_id)
+        return layer_ids before layer_id
+    post_layer_ids(layer_id)
+        return layer_ids after layer_id
+    save_model(filename, extras=[])
+        saves parameters from model and extras in pickle format
+        Note: first saves model parameters as dictionary (see download_weights)
     load_model(filename)
-        loads a previously saved model from filename
-    save_model(filename, extras = [])
-        saves a model instance
-    show_lattice(x, figsize=(10,10))
-        shows the lattice for each layer given input x
-    get_trainable_params()
-        gets the trainable parameters from the network
-    set_requires_grad(net_type, requires_grad)
-        sets net_type params to require gradient or not
+        loads a previously saved model from filename in pickle format
+        will load either a model instance or model dictionary
+        (see download_weights)
+    download_weights(pattern='')
+        return parameters as dictionary (i.e. {name: parameter})
+    load_weights(model_dict, param_dict={})
+        load parameters from a dictionary (see download_weights)
+        Note: use param_dict to associate keys in model_dict to parameter names
+        in the current model (e.g., {'layers.0.hidden_weight': 'W_0'})
+    init_weights(suffix='weight', fn=torch.randn_like)
+        initialze weights for parameter names that end with suffix using fn
+    get_trainable_params(pattern='')
+        return trainable parameters (requires_grad=True) that contains pattern
+    get_param_names():
+        return name for each parameter
+    set_requires_grad(pattern, requires_grad=True)
+        set requires_grad attribute for parameters that contains pattern
+    monitor_loss()
+        #TODO:WRITEME
+    get_prediction(input, crop=None)
+        return prediction (max across output layer) for given input
+        Note: if crop is given, max will be across cropped region of output
+        layer (i.e. output[:,:,crop[0],crop[1]])
     get_accuracy(dataLoader)
-        gets the model's accuracy given a torch.utils.data.DataLoader
-    train_model(epochs, trainloader, monitor=2000, **kwargs)
-        trains the model with a given torch.utils.data.DataLoader
-
+        return model accuracy given a torch.utils.data.DataLoader with labels
     """
-    def __init__(self, loss_type, optimizer_type):
+    def __init__(self):
         super(Model, self).__init__()
-        self.loss_type = loss_type
-        self.optimizer_type = optimizer_type
-        self.net = None
+        self.data_shape = None
+        self.layers = nn.ModuleDict({})
 
-    def set_loss_fn(self, loss_type):
-        if type(loss_type) is not str:
-            loss_name = torch.typename(loss_type)
-        else:
-            loss_name = loss_type
+    def n_layers(self):
+        return len(self.layers)
 
-        # choose loss function
-        if loss_name.lower() == 'cross_entropy':
-            loss_criterion = nn.CrossEntropyLoss()
-        elif loss_name.lower() == 'mse':
-            loss_criterion = nn.MSELoss()
-        elif loss_name.startswith('torch.nn.modules.loss'):
-            loss_criterion = loss_type
-        else:
-            raise Exception('loss_type not understood')
+    def output_shapes(self, input_shape=None):
+        if input_shape is None:
+            input_shape = self.data_shape
+        # create dummy input
+        input = torch.zeros(input_shape)
+        # get each layer output shape
+        output_shapes = []
+        for layer_id, layer in self.layers.named_children():
+            input = layer(input)
+            if type(input) is list:
+                output_shapes.append([i.shape for i in input])
+            else:
+                output_shapes.append(input.shape)
+        return output_shapes
 
-        return loss_criterion
+    def append(self, layer_id, layer):
+        layer_id = str(layer_id)
+        self.layers.add_module(layer_id, layer)
 
-    def set_optimizer(self, optimizer_type, params=[], prefix=[''], **kwargs):
-        # set params dict for optimizer
-        for net_prefix in prefix:
-            params.append({'params': self.get_trainable_params(net_prefix)})
-        # check for any trainiable parameters
-        all_empty = True
-        for param in params:
-            if len(param['params']) > 0:
-                all_empty = False
-        if all_empty:
-            raise Exception('No trainable parameters found.')
+    def get_layers(self, layer_ids):
+        layers = []
+        for layer_id in layer_ids:
+            layers.append(self.layers[layer_id])
+        return layers
 
-        # remove kwargs and set to params if list
-        removed_keys = []
-        for (key, value) in kwargs.items():
-            if type(value) is list:
-                removed_keys.append(key)
-                for i, v in enumerate(value):
-                    params[i].update({key: v})
-        [kwargs.pop(key) for key in removed_keys]
+    def apply_layers(self, input, layer_ids, forward=True):
+        if not forward:
+            layer_ids.reverse()
+        layers = self.get_layers(layer_ids)
+        for layer in layers:
+            if forward:
+                input = layer.forward(input)
+            else:
+                input = layer.reconstruct(input)
+        return input
 
-        # get typename for optimizer
-        if type(optimizer_type) is not str:
-            optimizer_name = torch.typename(optimizer_type)
-        else:
-            optimizer_name = optimizer_type
+    def forward(self, input):
+        for name, layer in self.layers.named_children():
+            input = layer.forward(input)
+        return input
 
-        # choose optimizer
-        if optimizer_name.lower() == 'sgd':
-            optimizer = optim.SGD(params, **kwargs)
-        elif optimizer_name.lower() == 'adam':
-            optimizer = optim.Adam(params, **kwargs)
-        elif optimizer_name.startswith('torch.optim'):
-            optimizer = optimizer_type(params, **kwargs)
-        else:
-            raise Exception("optimizer_type not understood")
+    def reconstruct(self, input):
+        for name, layer in self.layers.named_children():
+            input = layer.reconstruct(input)
+        return input
 
-        return optimizer
+    def pre_layer_ids(self, layer_id):
+        # get layer_ids prior to layer_id
+        layer_id = str(layer_id)
+        pre_layer_ids = []
+        for pre_layer_id, _ in self.layers.named_children():
+            if pre_layer_id != layer_id:
+                pre_layer_ids.append(pre_layer_id)
+            else:
+                break
+        return pre_layer_ids
+
+    def post_layer_ids(self, layer_id):
+        # get layer_ids after layer_id
+        layer_id = str(layer_id)
+        # append layer ids starting at end, then reverse post_layer_ids
+        layer_ids = [name for name, _ in self.layers.named_children()]
+        layer_ids.reverse()
+        post_layer_ids = []
+        for post_layer_id in layer_ids:
+            if post_layer_id != layer_id:
+                post_layer_ids.append(post_layer_id)
+            else:
+                break
+        post_layer_ids.reverse()
+        return post_layer_ids
 
     def save_model(self, filename, extras=[]):
         if type(extras) is not list:
             extras = [extras]
+        model_dict = self.download_weights()
         with open(filename, 'wb') as f:
-            pickle.dump([self,] + extras, f)
+            pickle.dump([model_dict,] + extras, f)
 
     def load_model(self, filename):
         model = pickle.load(open(filename, 'rb'))
+        if type(model) is list:
+            model = model[0]
+        if type(model) is dict:
+            self.load_weights(model)
+            model = self
         return model
 
-    def load_weights(self):
-        raise NotImplementedError
+    def download_weights(self, pattern=''):
+        model_dict = {}
+        for name, param in self.named_parameters():
+            if name.find(pattern) >=0:
+                model_dict.update({name: param.detach().numpy()})
+        return model_dict
 
-    def init_weights(self):
-        raise NotImplementedError
+    def load_weights(self, model_dict, param_dict={}):
+        # for each param, register new param from model_dict
+        for name, param in self.named_parameters():
+            # get layer to register parameter
+            fields = name.split('.')
+            layer = self
+            for field in fields[:-1]:
+                layer = getattr(layer, field)
+            # get param name in model_dict
+            if param_dict.get(name):
+                model_key = param_dict.get(name)
+            elif model_dict.get(name) is not None:
+                model_key = name
+            else: # skip param
+                continue
+            # register parameter
+            new_param = torch.nn.Parameter(torch.as_tensor(model_dict.get(model_key)))
+            layer.register_parameter(fields[-1], new_param)
 
-    def monitor_loss(self, loss, iter, **kwargs):
-        if not hasattr(self, 'loss_history'):
-            self.loss_history = []
+    def init_weights(self, suffix='weight', fn=torch.randn_like):
+        for name, param in self.named_parameters():
+            with torch.no_grad():
+                if name.endswith(suffix):
+                    param.set_(fn(param))
 
-        # display loss
-        clear_output(wait=True)
-        display('[%5d] loss: %.3f' % (iter, loss))
-
-        # append loss and show history
-        self.loss_history.append(loss)
-        plt.plot(self.loss_history)
-        plt.show()
-
-        # pass kwargs to other functions
-        for key, value in kwargs.items():
-            if hasattr(self, key):
-                fn = getattr(self, key)
-                if type(value) is list:
-                    fn(*value)
-                elif type(value) is dict:
-                    fn(**value)
-                else:
-                    raise Exception('type not understood')
-
-    def show_texture(self, input_image, seed_image):
-        assert input_image.shape == seed_image.shape, (
-            'input_image and seed_image shapes must match'
-        )
-        # get number of input images
-        n_images = input_image.shape[0]
-
-        # set cmap
-        if input_image.shape[1] == 3:
-            cmap = None
-            input_image = input_image - torch.min(input_image)
-            input_image = input_image / torch.max(input_image)
-            seed_image = seed_image - torch.min(seed_image)
-            seed_image = seed_image / torch.max(seed_image)
-        else:
-            cmap = 'gray'
-        # permute, squeeze input_image and seed_image
-        input_image = torch.squeeze(input_image.permute(0,2,3,1), -1).detach()
-        seed_image = torch.squeeze(seed_image.permute(0,2,3,1), -1).detach()
-
-        # init figure, axes
-        fig, ax = plt.subplots(n_images, 2)
-        ax = np.reshape(ax, (n_images, 2))
-        for n in range(n_images):
-            ax[n,0].imshow(input_image[n], cmap=cmap)
-            ax[n,1].imshow(seed_image[n], cmap=cmap)
-        plt.show()
-
-    def show_lattice(self, x=None, figsize=(5,5), cmap=None):
-        # get lattice_ids
-        lattice_ids = [layer_id for i, layer_id in enumerate(self.net.layer_ids)
-                        if self.net.pool_names[i].find('layers') >= 0]
-        n_lattices =  len(lattice_ids)
-        if n_lattices == 0:
-            raise Exception('No rf_pool layers found.')
-
-        # pass x through network, show lattices
-        with torch.no_grad():
-            if type(x) is torch.Tensor:
-                self.net(x)
-            # get lattices
-            lattices = []
-            for i, layer_id in enumerate(lattice_ids):
-                self.net.pool_layers[layer_id].show_lattice(x, figsize, cmap)
-
-    def get_trainable_params(self, prefix=''):
-        # set prefix to 'hidden_layers' to grab only net params
-        # or set prefix to 'control_nets' to grab only control params
-        #grabs only parameters with 'requires_grad' set to True
+    def get_trainable_params(self, pattern=''):
         trainable_params = []
-        for (name, param) in self.net.named_parameters():
-            if param.requires_grad == True and name.startswith(prefix):
+        for (name, param) in self.named_parameters():
+            if param.requires_grad == True and name.find(pattern) >=0:
                 trainable_params.append(param)
 
         return trainable_params
 
     def get_param_names(self):
         param_names = []
-        for (name, param) in self.net.named_parameters():
+        for (name, param) in self.named_parameters():
             param_names.append(name)
         return param_names
 
-    def set_requires_grad(self, prefix, requires_grad=True):
-        # set a net's parameters to require gradient or not
-        for (name, param) in self.net.named_parameters():
-            if name.startswith(prefix):
+    def set_requires_grad(self, pattern, requires_grad=True):
+        for (name, param) in self.named_parameters():
+            if name.find(pattern) >=0:
                 param.requires_grad = requires_grad
 
-    def get_pred(self, input_image, crop=None):
+    def get_prediction(self, input, crop=None):
         with torch.no_grad():
-            outputs = self.net(input_image)
+            output = self.forward(input)
             if crop:
-                outputs = outputs[:,:,crop[0],crop[1]]
-            if outputs.ndimension() == 4:
-                outputs = torch.max(outputs.flatten(-2), -1)[0]
-            pred = torch.max(outputs, -1)[1]
+                output = output[:,:,crop[0],crop[1]]
+            if output.ndimension() == 4:
+                output = torch.max(output.flatten(-2), -1)[0]
+            pred = torch.max(output, -1)[1]
         return pred
 
     def get_accuracy(self, dataloader, crop=None, monitor=100):
@@ -233,7 +242,7 @@ class Model(nn.Module):
                 # get images, labels
                 images, labels = data
                 # get predicted labels, update accuracy
-                pred = self.get_pred(images, crop=crop)
+                pred = self.get_prediction(images, crop=crop)
                 total += labels.size(0)
                 correct += (pred == labels).sum().item()
                 # monitor accuracy
@@ -243,179 +252,334 @@ class Model(nn.Module):
 
         return 100 * correct / total
 
-    def optimize_texture(self, input_image, n_steps, layer_ids, loss_type='mse',
-                        optimizer_type='sgd', transform=None, lr=0.001,
-                        monitor=2000, monitor_texture=False, **kwargs):
-        """
-        #TODO:WRITEME
-        """
-        # set seed_image to random, turn off model gradients
-        if transform:
-            seed_image = torch.rand_like(transform(input_image.squeeze(1)))
-        seed_image = torch.rand_like(input_image, requires_grad=True)
-        self.set_requires_grad('', requires_grad=False)
-        # set optimizer, loss_criterion
-        kwargs.update({'lr':lr})
-        params = [{'params': seed_image}]
-        optimizer = self.set_optimizer(optimizer_type, params=params, **kwargs)
-        loss_criterion = self.set_loss_fn(loss_type)
-        # get layer_out for each layer_id with input_image
-        layer_ids = [str(layer_id) for layer_id in layer_ids]
-        if transform is None:
-            self.net(input_image)
-            fm_input = [self.net.layer_out[layer_id] for layer_id in layer_ids]
-        # optimize
+    def train(self, n_epochs, trainloader, loss_fn, optimizer, monitor=100,
+              **kwargs):
+        loss_history = []
         running_loss = 0.
-        for i in range(n_steps):
-            optimizer.zero_grad()
-            # if transform given, apply transforms
-            if transform:
-                self.net(transform(input_image.squeeze(1)).reshape(seed_image.shape))
-                fm_input = [self.net.layer_out[layer_id] for layer_id in layer_ids]
-            # pass seed_image through network
-            self.net(seed_image)
-            fm_seed = [self.net.layer_out[layer_id] for layer_id in layer_ids]
-            # set loss
-            loss = sum([loss_criterion(fm_s, fm_i) for fm_s, fm_i in zip(fm_seed, fm_input)])
-            # update seed_image
-            loss.backward()
-            optimizer.step()
-            running_loss += loss.item()
-            # monitor loss, show_texture
-            if (i+1) % monitor == 0:
-                if monitor_texture:
-                    self.monitor_loss(running_loss / monitor, i+1,
-                                      show_texture=[input_image, seed_image])
-                else:
-                    self.monitor_loss(running_loss / monitor, i+1)
-                running_loss = 0.
-        # turn on model gradients
-        self.set_requires_grad('', requires_grad=True)
-        return seed_image
-
-    def train_model(self, epochs, trainloader, lr=0.001, monitor=2000,
-                    monitor_lattice=False, **kwargs):
-        assert self.net is not None, (
-            "network must be initialized before training")
-
-        # get kwargs for show_lattice
-        show_lattice_kwargs = {}
-        if 'figsize' in kwargs:
-            show_lattice_kwargs['figsize'] = kwargs.pop('figsize')
-        if 'cmap' in kwargs:
-            show_lattice_kwargs['cmap'] = kwargs.pop('cmap')
-        #initialize optimizer for training
-        kwargs.update({'lr':lr})
-        optimizer = self.set_optimizer(self.optimizer_type, **kwargs)
-        loss_criterion = self.set_loss_fn(self.loss_type)
-        # train the model
-        running_loss = 0.
-        for epoch in range(epochs):
-            for i, data in  enumerate(trainloader, 0):
-                # get inputs , labels
-                inputs, labels = data
-                # zero grad, get outputs
+        for epoch in range(n_epochs):
+            for i, data in enumerate(trainloader):
+                # get inputs, zero gradients
+                inputs = data[:-1]
+                label = data[-1]
                 optimizer.zero_grad()
-                outputs = self.net(inputs)
-                # mean across image dims if 4 dimensional
-                if outputs.ndimension() == 4:
-                    outputs = torch.max(outputs.flatten(-2), -1)[0]
+                # get outputs
+                output = self.forward(inputs[0])
                 # get loss
-                loss = loss_criterion(outputs, labels)
-                # add penalty to loss
-                if hasattr(self, 'penalty_attr'):
-                    loss += self.loss_penalty(self.penalty_attr,
-                                              self.penalty_cost,
-                                              self.penalty_type)
+                loss = loss_fn(output, label)
+                # additional loss
+                if 'add_loss' in kwargs.keys():
+                    add_loss_kwargs = kwargs.pop('add_loss')
+                    added_loss = self.add_loss(inputs, **add_loss_kwargs)
+                    loss = loss + added_loss
+                # sparsity
+                if 'sparsity' in kwargs.keys():
+                    sparsity_kwargs = kwargs.pop('sparsity')
+                    raise NotImplementedError #TODO: add sparsity function
                 loss.backward()
                 # update parameters
                 optimizer.step()
                 running_loss += loss.item()
-                # monitor loss, show lattice
                 if (i+1) % monitor == 0:
-                    if monitor_lattice:
-                        show_lattice_kwargs['x'] = inputs
-                        self.monitor_loss(running_loss / monitor, i+1,
-                                          show_lattice=show_lattice_kwargs)
-                    else:
-                        self.monitor_loss(running_loss / monitor, i+1)
+                    # display loss
+                    clear_output(wait=True)
+                    display('[%5d] loss: %.3f' % (i+1, running_loss / monitor))
+                    # append loss and show history
+                    loss_history.append(running_loss / monitor)
+                    plt.plot(loss_history)
+                    plt.show()
                     running_loss = 0.
+                    # call other monitoring functions
+                    functions.kwarg_fn([IPython.display, self], None, **kwargs)
+        return loss_history
 
-class FeedForwardModel(Model):
+    def optimize_texture(self, n_steps, input, seed, loss_fn, optimizer,
+                         layer_ids, module_name=None, transform=None,
+                         monitor=100, show_texture=[], **kwargs):
+        """
+        #TODO:WRITEME
+        """
+        # turn off model gradients
+        self.set_requires_grad('', requires_grad=False)
+        loss_input = input
+        # optimize texture
+        loss_history = []
+        running_loss = 0.
+        for i in range(n_steps):
+            optimizer.zero_grad()
+            # transform input, get loss
+            if transform:
+                loss_input = transform(input.squeeze(1)).reshape(seed.shape)
+            loss = self.add_loss([input, seed], loss_fn, layer_ids, module_name,
+                                 **kwargs)
+            loss.backward()
+            # update seed
+            optimizer.step()
+            running_loss += loss.item()
+            # monitor loss, show_texture
+            if (i+1) % monitor == 0:
+                # display loss
+                clear_output(wait=True)
+                display('[%5d] loss: %.3f' % (i+1, running_loss / monitor))
+                # append loss and show history
+                loss_history.append(running_loss / monitor)
+                plt.plot(loss_history)
+                plt.show()
+                running_loss = 0.
+                # monitor texture
+                if show_texture:
+                    self.show_texture(*show_texture)
+                # functions.kwarg_fn([IPython.display, self], None, **kwargs)
+        # turn on model gradients
+        self.set_requires_grad('', requires_grad=True)
+        return seed
+
+    def add_loss(self, inputs, loss_fn, layer_ids, module_name=None, **kwargs):
+        """
+        #TODO:WRITEME
+        """
+        # get loss/update inputs for each layer
+        loss = 0.
+        for i, (name, layer) in enumerate(self.layers.named_children()):
+            if name in layer_ids:
+                kwargs_i = {}
+                for key, value in kwargs.items():
+                    if type(value) is list:
+                        kwargs_i.update({key: value[i]})
+                    else:
+                        kwargs_i.update({key: value})
+                loss += layer.add_loss(inputs, loss_fn, module_name, **kwargs_i)
+            for ii, input in enumerate(inputs):
+                inputs[ii] = layer.forward(input)
+        return loss
+
+    def sparsity(self, input, layer_ids, module_name, target, cost=1.):
+        for i, (name, layer) in enumerate(self.layers.named_children()):
+            if name in layer_ids:
+                if type(target) is list:
+                    target_i = target[i]
+                else:
+                    target_i = target
+                if type(cost) is list:
+                    cost_i = cost[i]
+                else:
+                    cost_i = cost
+                layer.sparsity(input, module_name, target_i, cost_i)
+            input = layer.forward(input)
+
+    def show_texture(self, input, seed):
+        assert input.shape == seed.shape, (
+            'input and seed shapes must match'
+        )
+        # get number of input images
+        n_images = input.shape[0]
+
+        # permute, squeeze input and seed
+        input = torch.squeeze(input.permute(0,2,3,1), -1).detach()
+        seed = torch.squeeze(seed.permute(0,2,3,1), -1).detach()
+
+        # set cmap
+        if input.shape[-1] == 3:
+            cmap = None
+            input = functions.normalize_range(input)
+            seed = functions.normalize_range(seed)
+        else:
+            cmap = 'gray'
+
+        # init figure, axes
+        fig, ax = plt.subplots(n_images, 2)
+        ax = np.reshape(ax, (n_images, 2))
+        for n in range(n_images):
+            ax[n,0].imshow(input[n], cmap=cmap)
+            ax[n,1].imshow(seed[n], cmap=cmap)
+        plt.show()
+        return fig
+
+    def show_lattice(self, x=None, figsize=(5,5), cmap=None):
+        # get rf_layers
+        rf_layers = []
+        for layer_id, layer in self.layers.named_children():
+            pool = layer.get_modules(layer.forward_layer, ['pool'])
+            if len(pool) ==1 and torch.typename(pool[0]).find('layers') >=0:
+                rf_layers.append(pool[0])
+        n_lattices =  len(rf_layers)
+        if n_lattices == 0:
+            raise Exception('No rf_pool layers found.')
+
+        # pass x through network, show lattices
+        with torch.no_grad():
+            if type(x) is torch.Tensor:
+                self.forward(x)
+            # get lattices
+            lattices = []
+            for pool in rf_layers:
+                pool.show_lattice(x, figsize, cmap)
+
+    def show_weights(self, layer_id, img_shape=None, figsize=(5, 5), cmap=None):
+        """
+        #TODO:WRITEME
+        """
+        # get weights reconstructed down if not first layer
+        layer_id = str(layer_id)
+        pre_layer_ids = self.pre_layer_ids(layer_id)
+        w = self.layers[layer_id].hidden_weight.clone().detach()
+        if len(pre_layer_ids) > 0:
+            w[w < 0.] = 0.
+            w[w > 1.] = 1.
+            w = self.apply_layers(w, pre_layer_ids, forward=False)
+        # if channels > 3, reshape
+        if w.shape[1] > 3:
+            w = torch.flatten(w, 0, 1).unsqueeze(1)
+        # get columns and rows
+        n_cols = np.ceil(np.sqrt(w.shape[0])).astype('int')
+        n_rows = np.ceil(w.shape[0] / n_cols).astype('int')
+        # init figure and axes
+        fig, ax = plt.subplots(n_rows, n_cols, figsize=figsize)
+        ax = np.reshape(ax, (n_rows, n_cols))
+        # plot weights
+        cnt = 0
+        for r in range(n_rows):
+            for c in range(n_cols):
+                if cnt >= w.shape[0]:
+                    w_n = torch.zeros_like(w[0])
+                else:
+                    w_n = w[cnt].detach()
+                if img_shape:
+                    w_n = torch.reshape(w_n, (-1,) + img_shape)
+                w_n = torch.squeeze(w_n.permute(1,2,0), -1).numpy()
+                w_n = functions.normalize_range(w_n, dims=(0,1))
+                ax[r,c].axis('off')
+                ax[r,c].imshow(w_n, cmap=cmap)
+                cnt += 1
+        plt.show()
+        return fig
+
+class FeedForwardNetwork(Model):
     """
+    #TODO:WRITEME
+    """
+    def __init__(self):
+        super(FeedForwardNetwork, self).__init__()
+
+class DeepBeliefNetwork(Model):
+    """
+    #TODO:WRITEME
+
     Attributes
     ----------
-    net : FeedForwardNetwork
-        network for running the model
+    data_shape : shape of input data (optional, default: None)
+    layers : torch.nn.ModuleDict
+        RBM layers in deep belief network (each layer is RBM class)
 
     Methods
     -------
-    ff_network(*args)
-        adds a FeedForwardNetwork to the graph
-        see modules.FeedForwardNetwork for arguments
-    control_network(*args)
-        adds a ControlNetwork to the graph
-        see modules.ControlNetwork for arguments
+    train(layer_id, n_epochs, trainloader, optimizer, monitor=100, **kwargs)
+        train deep belief network with greedy layer-wise contrastive divergence
+
+    References
+    ----------
+    #TODO:WRITEME
     """
-    def __init__(self, loss_type, optimizer_type):
-        super(FeedForwardModel, self).__init__(loss_type, optimizer_type)
-        self.net = None
+    def __init__(self):
+        super(DeepBeliefNetwork, self).__init__()
 
-    def __call__(self, x):
-        return self.net(x)
+    def show_negative(self, v, layer_id, k=1, img_shape=None, figsize=(5,5),
+                      cmap=None):
+        """
+        #TODO:WRITEME
+        """
+        layer_id = str(layer_id)
+        pre_layer_ids = self.pre_layer_ids(layer_id)
+        # prop up, gibbs sample, then reconstruct down
+        with torch.no_grad():
+            neg = self.apply_layers(v, pre_layer_ids)
+            neg = self.layers[layer_id].gibbs_vhv(neg, k=k)[-2]
+            neg = self.apply_layers(neg, pre_layer_ids, forward=False)
+        # reshape, permute for plotting
+        if img_shape:
+            v = torch.reshape(v, (-1,1) + img_shape)
+            neg = torch.reshape(neg, (-1,1) + img_shape)
+        v = torch.squeeze(v.permute(0,2,3,1), -1).numpy()
+        neg = torch.squeeze(neg.permute(0,2,3,1), -1).numpy()
+        v = functions.normalize_range(v, dims=(1,2))
+        neg = functions.normalize_range(neg, dims=(1,2))
+        # plot negatives
+        fig, ax = plt.subplots(v.shape[0], 2, figsize=figsize)
+        ax = np.reshape(ax, (v.shape[0], 2))
+        for r in range(v.shape[0]):
+            ax[r,0].axis('off')
+            ax[r,1].axis('off')
+            ax[r,0].imshow(v[r], cmap=cmap)
+            ax[r,1].imshow(neg[r], cmap=cmap)
+        plt.show()
+        return fig
 
-    def ff_network(self, *args, **kwargs):
-        self.net = FeedForwardNetwork(*args, **kwargs)
+    def train(self, layer_id, n_epochs, trainloader, optimizer, monitor=100,
+              show_negative={}, **kwargs):
+        """
+        #TODO:WRITEME
+        """
+        # get first layer ids before layer_id
+        layer_id = str(layer_id)
+        pre_layer_ids = self.pre_layer_ids(layer_id)
+        # get number of training examples
+        n_train = len(trainloader)
+        # train for n_epochs
+        loss_history = []
+        running_loss = 0.
+        for epoch in range(n_epochs):
+            for i, data in enumerate(trainloader):
+                inputs = data[:-1]
+                # get inputs for layer_id
+                layer_input = self.apply_layers(inputs[0], pre_layer_ids)
+                # if adding loss, set inputs from data
+                if kwargs.get('add_loss'):
+                    loss_kwargs = kwargs.get('add_loss')
+                    loss_inputs = [self.apply_layers(d, pre_layer_ids) for d in inputs]
+                    loss_kwargs.update({'inputs': loss_inputs})
+                    kwargs.update({'add_loss': loss_kwargs})
+                # train
+                loss = self.layers[layer_id].train(layer_input, optimizer,
+                                                   **kwargs)
+                running_loss += loss
+                # monitor loss, show negative and weights
+                if (epoch * n_train + i+1) % monitor == 0:
+                    # display loss
+                    clear_output(wait=True)
+                    display('[%5d] loss: %.3f' % (i+1, running_loss / monitor))
+                    # append loss and show history
+                    loss_history.append(running_loss / monitor)
+                    plt.plot(loss_history)
+                    plt.show()
+                    running_loss = 0.
+                    # call other monitoring functions
+                    if show_negative:
+                        self.show_negative(inputs[0], layer_id, **show_negative)
+                    functions.kwarg_fn([IPython.display,self], None, **kwargs)
+        return loss_history
 
-    def control_network(self, layer_id, *args, **kwargs):
-        assert self.net is not None,  (
-            "Feed forward network must be initialized before the control network(s)")
-        if not hasattr(self.net, 'control_nets') or not self.net.control_nets:
-            self.net.control_nets = nn.ModuleDict()
+class DeepBoltzmannMachine(DeepBeliefNetwork):
+    """
+    #TODO:WRITEME
 
-        self.net.control_nets.add_module(str(layer_id), ControlNetwork(self.net, layer_id, *args, **kwargs))
+    Attributes
+    ----------
+    layers : torch.nn.ModuleDict
+        RBM layers for forward/reconstruct pass (each layer is RBM class)
+    output_shapes : list of tuples
+        output shape for each layer
 
-    def loss_penalty(self, attr, cost, penalty_type):
-        # get value from attribute
-        attr = attr.split('.')
-        value = self.net
-        for a in attr:
-            assert hasattr(value, a), (
-                'network does not have attribute')
-            value = getattr(value, a)
+    Methods
+    -------
+    forward(input)
+        perform forward pass with bottom-up input v through layer_ids
+    reconstruct(input)
+        perform reconstruction pass with top-down input t through layer_ids
+    train(trainloader, optimizer, **kwargs)
+        train deep boltzmann machine with contrastive divergence
 
-        # get value as list
-        if hasattr(value, 'values'):
-            dict_values = value.values()
-            value = []
-            for v in dict_values:
-                if type(v) is list:
-                    value.extend(v)
-                else:
-                    value.append(v)
-
-        # get penalty function
-        if penalty_type == 'L1':
-            penalty_fn = torch.abs
-
-        # add penalties
-        penalty = 0.
-        if type(value) is list:
-            assert len(value) != 0, (
-                'no value found for attribute'
-            )
-            for v in value:
-                penalty = torch.add(penalty, torch.sum(penalty_fn(v)))
-        else:
-            penalty = penalty_fn(value)
-
-        return torch.as_tensor(torch.mul(penalty, cost), dtype=torch.float32)
-
-    def set_penalty_fn(self, attr, cost=1., penalty_type='L1'):
-        self.penalty_attr = attr
-        self.penalty_cost = cost
-        self.penalty_type = penalty_type
-
-if __name__ == "__main__":
-    import doctest
-    doctest.testmod()
+    References
+    ----------
+    #TODO:WRITEME
+    """
+    def __init__(self):
+        super(DeepBoltzmannMachine, self).__init__()
