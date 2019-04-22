@@ -2,70 +2,138 @@ import numpy as np
 from PIL import Image
 import torch
 import torchvision
+import warnings
 
 from . import stimuli
 
-class CrowdedDataset(torch.utils.data.Datasets):
+class CrowdedDataset(torch.utils.data.Dataset):
     """
-    Converts an MNIST dataset into crowded stimuli with flankers
+    Converts a dataset from torch.torchvision.datasets into crowded stimuli with flankers
 
     Attributes
     ----------
     dataset : torchvision.datasets
-        #TODO:WRITEME
+        the dataset to be converted into a crowded dataset
     n_flank: int
         number of flankers for the crowded stimuli
     target_labels : list, optional
-        #TODO:WRITEME
+        labels of the dataset designated for targets
     flank_labels : list, optional
-        #TODO:WRITEME
+        labels of the dataset designated for flankers
+    same_flank : bool, optional
+        if True, all flankers will be the same image
+    flank_repeats: bool, optional
+        if True, 
+    transform : torchvision.transform, optional
+        transforms the data 
     **kwargs : dict
         The crowded stimul arguments
         see stimuli.make_crowded_stimuli for details
+
+    Methods
+    -------
+    make_stimuli(self, **kwargs)
+        makes crowded stimuli 
     """
 
-    def __init__(self, root, dataset, n_flank, target_labels=[], flank_labels=[],
-                 download=True, train=True, transform=None, **kwargs):
+    def __init__(self, dataset, n_flank, target_labels=[], flank_labels=[],
+                 same_flank=False, flank_repeats=True, transform=None, **kwargs):
 
-        super(CrowdedDataset, self).__init__(root=root, train=train,
-                                           download=download, transform=transform)
+        super(CrowdedDataset, self).__init__()
+
         self.n_flank = n_flank
-        if self.train and hasattr(dataset, 'train_data'):
-            inputs = dataset.train_data
-            labels = dataset.train_labels
+        self.same_flank = same_flank
+        self.flank_repeats = flank_repeats
+        self.target_labels = target_labels
+        self.flank_labels = flank_labels
+        self.data = []
+        self.labels = []
+        self.groups = {}
+        self.trackers = {}
+        self.transform = transform
+
+        # get the data
+        if dataset.train and hasattr(dataset, 'train_data'):
+            self.start_data = dataset.train_data
+            self.start_labels = dataset.train_labels
         elif not self.train and hasattr(dataset, 'test_data'):
-            inputs = dataset.test_data
-            labels = dataset.test_labels
+            self.start_data = dataset.test_data
+            self.start_labels = dataset.test_labels
         elif hasattr(dataset, 'data'):
-            inputs = dataset.data
-            labels = dataset.labels
+            self.start_data = dataset.data
+            self.start_labels = dataset.labels
         else:
             raise Exception(
                 'dataset has no attribute data, train_data, or test_data'
             )
+        if type(self.start_data) is torch.Tensor:
+            self.start_data = self.start_data.numpy()
 
-        if type(inputs) is torch.Tensor:
-            inputs = inputs.numpy()
-        # get the targets
-        n_set = inputs.shape[0]
-        target_indices = np.arange(0, n_set, n_flank+1)
-        # crowd the input images
-        crowded_inputs = []
-        for i in target_indices:
-            target = inputs[i]
-            flankers = inputs[i+1:i+n_flank+1]
-            s = stimuli.make_crowded_stimuli(target, flankers, **kwargs)
-            crowded_inputs.append(s)
-        # get the labels
-        crowded_labels = labels[target_indices]
-        # reassign to the dataset
-        if self.train:
-            self.train_data = torch.tensor(crowded_inputs, dtype=torch.uint8)
-            self.train_labels = crowded_labels
+        # intialize groupings
+        if len(self.target_labels) > 0 and len(self.flank_labels) == 0:
+            all_labels = np.unique(self.target_labels)
+        elif len(self.target_labels) == 0 and len(self.flank_labels) > 0:
+            self.target_labels = list(np.unique(self.start_labels))
+            all_labels = np.unique(self.target_labels + self.flank_labels)
+        elif len(self.target_labels + self.flank_labels) == 0:
+            self.target_labels = self.flank_labels = all_labels = np.unique(self.start_labels)   
         else:
-            self.test_data = torch.tensor(crowded_inputs, dtype=torch.uint8)
-            self.test_labels = crowded_labels
+            all_labels = np.unique(self.target_labels + self.flank_labels)
 
+        self.init_group_by_labels(all_labels)
+
+        # crowd the input images
+        while np.all([(self.trackers[i] + self.n_flank) < len(self.groups[i])  for i in all_labels]):
+            crowded_img, target_label = self.make_stimuli(**kwargs)
+            self.data.append(crowded_img)
+            self.labels.append(target_label)
+        self.data = torch.tensor(self.data, dtype=torch.uint8)
+        self.labels = torch.tensor(self.labels)
+
+    def make_stimuli(self, **kwargs):
+        target, target_label = self.sample_by_label(1, self.target_labels)
+        flankers, _ = self.sample_by_label(self.n_flank, self.flank_labels)
+        s = stimuli.make_crowded_stimuli(target[0], flankers, **kwargs)
+        return s, target_label
+
+    def sample_by_label(self, n, group_labels):
+        if len(group_labels) > 0:
+            if self.same_flank:
+                choices = group_labels[np.random.randint(0, len(group_labels))]
+                samples = [self.groups[choices][self.trackers[choices]]] * n
+                self.trackers[choices] += 1
+            else:
+                if self.flank_repeats:
+                    choices = np.array(group_labels)[np.random.randint(0, len(group_labels), size=n)]
+                else:
+                    if len(group_labels) < self.n_flank:
+                        warnings.warn("No repeats: n_flank set to len(flank_labels)") 
+                    choices = np.random.permutation(group_labels)[:n]
+                samples = []
+                for i in choices:
+                    samples.append(self.groups[i][self.trackers[i]])
+                    self.trackers[i] += 1
+        else:
+            samples = []
+            choices = []
+        return samples, choices
+
+    def init_group_by_labels(self, group_labels):
+        for label in group_labels:
+            self.groups[label] = self.start_data[np.where(self.start_labels == label)]
+            self.trackers[label] = 0
+
+    def __getitem__(self, index):
+        img = self.data[index]
+        label = self.labels[index]
+        img = Image.fromarray(img.numpy(), mode='L')
+        if self.transform:
+            img = self.transform(img)
+        return (img, label)
+
+    def __len__(self):
+        return len(self.labels)
+            
 class CrowdedCircles(torch.utils.data.Dataset):
     """
     Class for creating a dataset of crowded circles stimuli
