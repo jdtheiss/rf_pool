@@ -1,8 +1,10 @@
+#TODO: automatically flatten convolutional inputs to fc
 import numpy as np
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 
-from .layers import RF_Pool
+from .utils import functions
 
 class Module(nn.Module):
     """
@@ -10,625 +12,604 @@ class Module(nn.Module):
 
     Attributes
     ----------
-    attrs : dict
-        dictionary tracking attributes in network
-    data_shape : tuple
-        shape of data input to network [initialized as None]
-    n_layers : int
-        number of layers in network [initialized as None]
-    layer_ids : list
-        list of layer ids for each layer [initialized as None]
+    forward_layer : torch.nn.Sequential
+        functions to apply in forward pass
+    reconstruct_layer : torch.nn.Sequential or None
+        functions to apply in reconstruct pass
 
     Methods
     -------
-    init_attrs(keys)
-        initialize attributes in self.attrs as None (if key not
-        in self.attrs)
-    update_attrs(new_attrs=None)
-        update attributes in self.attrs using new_attrs
-        dictionary. if new_attrs is None, update self.attrs
-        values with getattr(self, key) for key in self.attrs.keys()
-    set_from_attrs()
-        set attributes to self using self.attrs dictionary
+    output_shape(input_shape)
+        return output_shape based on given input_shape
+    get_attributes(obj, keys)
+        return dictionary of attributes in object obj or self (if obj = None)
+    get_modules(names)
+        return modules from forward_layer or reconstruct_layer with given names
+    link_parameters(layer, layer_name)
+        register parameters from layer in self with appended layer_name
+    init_weights(suffix='weight', fn=torch.randn_like)
+        initialze weights for parameter names that end with suffix using fn
+    make_layer(**kwargs)
+        initialize forward_layer from keyword arguments (e.g.,
+        hidden=torch.nn.Conv2d(1, 24, 11), activation=torch.nn.ReLU)
+        Note: None is set to torch.nn.Sequential() by default.
+    update_layer(**kwargs)
+        update layer modules initialized by make_layer (see make_layer)
+    add_loss(inputs, loss_fn, module_name, **kwargs)
+        return loss from loss_fn(outputs, **kwargs) where outputs is a list of
+        outputs from passing each input in inputs through forward_layer until
+        module_name
+    apply_modules()
+        #TODO:WRITEME
+    forward()
+        #TODO:WRITEME
+    reconstruct()
+        #TODO:WRITEME
+    train()
+        #TODO:WRITEME
+    show_weights()
+        #TODO:WRITEME
     """
-    def __init__(self):
+    def __init__(self, input_shape=None):
         super(Module, self).__init__()
-        attr_names = ['data_shape', 'n_layers', 'layer_ids']
-        self.init_attrs(attr_names)
-        self.update_attrs(self.attrs)
-        self.set_from_attrs()
+        self.input_shape = input_shape
+        self.reconstruct_shape = input_shape
+        self.forward_layer = nn.Sequential()
+        self.reconstruct_layer = nn.Sequential()
 
     def __call__(self, *args):
         return self.forward(*args)
 
-    def init_attrs(self, keys, defaults=[None]):
-        # initialize attributes in self.attrs
-        if not hasattr(self, 'attrs'):
-            self.attrs = {}
-        if type(keys) is not list:
-            keys = [keys]
-        defaults = self.set_list_vars(defaults, len(keys))
-        for key, default in zip(keys, defaults):
-            self.attrs.setdefault(key, default)
+    def output_shape(self, input_shape=None):
+        if input_shape is None:
+            input_shape = self.input_shape
+        return self.forward(torch.zeros(input_shape)).shape
 
-    def update_attrs(self, new_attrs=None):
-        # update attrs in self.attrs with new_attrs dict
-        if not hasattr(self, 'attrs'):
-            self.attrs = {}
-        if new_attrs is None:
-            new_attrs = {}
-            for key in self.attrs.keys():
-                new_attrs[key] = getattr(self, key)
-        self.attrs.update(new_attrs)
+    def get_attributes(self, obj=None, keys=[]):
+        out = {}
+        for key in keys:
+            if obj is None and hasattr(self, key):
+                out.update({key: getattr(obj, key)})
+            elif hasattr(obj, 'get') and key in obj:
+                out.update({key: obj.get(key)})
+            elif hasattr(obj, key):
+                out.update({key: getattr(obj, key)})
+            else:
+                out.setdefault(key, None)
+        return out
 
-    def set_from_attrs(self):
-        # setattr(self, key, value) for (key,value) in self.attrs.items()
-        if not hasattr(self, 'attrs'):
-            self.attrs = {}
-        for (key, value) in self.attrs.items():
-            setattr(self, key, value)
-
-    def set_list_vars(self, var, n_layers):
-        if type(var) is not list:
-            var = [var]
-        if len(var) < n_layers:
-            var = var + var[-1:] * (n_layers - len(var))
-        return var
-
-    def append_list_vars(self, var, new_var):
-        assert type(var) is list, (
-            'type of initial variable must be list')
-        if type(new_var) is not list:
-            new_var = [new_var]
-        return var + new_var
-
-    def get_typenames(self, var):
-        if type(var) is not list:
-            var = [var]
-        return [torch.typename(v) if type(v) is not str else v for v in var]
-
-    def append(self, net):
-        """
-        Append a new network to end of current network
-
-        Parameters
-        ----------
-        net : Module
-            network to append to current network (must not be trained)
-        """
-        assert type(net) == type(self), (
-            'type of appended network must match current')
-        assert self.n_layers is not None and net.n_layers is not None, (
-            'networks must be initialized')
-        # update layer_ids
-        new_layer_ids = [str(i) for i in range(self.n_layers, self.n_layers+net.n_layers)]
-        net.update_layers(new_layer_ids)
-
-        # update n_layers
-        self.n_layers += net.n_layers
-        if not hasattr(net, 'attrs') or type(net.attrs) is not dict:
-            raise Exception('appended network must contain "attrs" attribute')
-
-        # append each list var, update each dict/nn.ModuleDict var
-        for (key, value) in net.attrs.items():
-            if type(self.attrs[key]) is list:
-                self.attrs[key] = self.append_list_vars(self.attrs[key], value)
-            elif hasattr(self.attrs[key], 'update'):
-                self.attrs[key].update(value.items())
-
-        # update attributes
-        self.update_attrs(self.attrs)
-        self.set_from_attrs()
-
-        # link new parameters
-        for layer_id in net.layer_ids:
-            self.link_parameters(layer_id)
-
-    def link_parameters(self, layer_id, net_name='branch'):
-        # set layer_id str, register each layer_id_net_name_param to self
-        if not hasattr(self, 'nets'):
-            return
-        layer_id = str(layer_id)
-        for i, net in enumerate(self.nets):
-            for name, param in net.named_parameters():
-                reg_name = '_'.join([layer_id, net_name, str(i), name.replace('.','_')])
-                self.register_parameter(reg_name, param)
-
-    def set_hidden_layer(self, layer_id):
-        # get input_shape, layer_input to compute output_shape
-        layer_id = int(layer_id)
-        if layer_id == 0:
-            input_shape = self.data_shape
+    def link_parameters(self, layer, layer_name=None):
+        if layer_name:
+            layer_name = str(layer_name)
         else:
-            input_shape = self.output_shapes[layer_id - 1]
-        layer_input = torch.zeros(input_shape)
-        # choose hidden layer type
-        if self.layer_names[layer_id].lower() == 'conv':
-            # conv layers
-            hidden_layer = nn.Conv2d(input_shape[1], self.output_channels[layer_id],
-                                     self.kernel_sizes[layer_id])
-        elif self.layer_names[layer_id].lower() == 'fc':
-            # fc layers
-            layer_input = torch.flatten(layer_input, 1)
-            input_shape = layer_input.shape
-            hidden_layer = nn.Linear(input_shape[1], self.output_channels[layer_id])
-        elif self.layer_names[layer_id].startswith('torch.nn.modules'):
-            hidden_layer = self.layer_types[layer_id]
-        elif self.layer_names[layer_id].lower() == 'nonetype':
-            hidden_layer = None
-        else:
-            raise Exception('layer_type not understood')
-        if hidden_layer:
-            self.output_shapes[layer_id] = hidden_layer(layer_input).shape
-        else:
-            self.output_shapes[layer_id] = input_shape
-        return hidden_layer
+            layer_name = ''
+        for name, param in layer.named_parameters():
+            if layer_name:
+                param_name = '_'.join([layer_name, name.replace('.','_')])
+            else:
+                param_name = name.replace('.','_')
+            self.register_parameter(param_name, param)
 
-    def set_activation_fn(self, layer_id):
-        # choose activation function
-        layer_id = int(layer_id)
-        if self.act_names[layer_id].lower() == 'relu':
-            return nn.ReLU()
-        elif self.act_names[layer_id].startswith('torch.nn.modules.activation'):
-            return self.act_types[layer_id]
-        elif self.act_names[layer_id].lower() == 'nonetype':
-            return None
-        else:
-            raise Exception('act_type not understood')
+    def init_weights(self, suffix='weight', fn=torch.randn_like):
+        for name, param in self.named_parameters():
+            with torch.no_grad():
+                if name.endswith(suffix):
+                    param.set_(fn(param))
 
-    def set_pool_layer(self, layer_id):
-        # get input_shape, pool_input to compute output_shape
-        layer_id = int(layer_id)
-        input_shape = self.output_shapes[layer_id]
-        pool_input = torch.zeros(input_shape)
-        # choose pooling operation
-        if self.pool_names[layer_id].lower() == 'max_pool':
-            pool_layer = nn.MaxPool2d(self.pool_ksizes[layer_id], self.pool_ksizes[layer_id])
-        elif self.pool_names[layer_id] in ['prob', 'stochastic', 'div_norm', 'average', 'sum']:
-            pool_layer = RF_Pool(pool_type=self.pool_types[layer_id],
-                                 kernel_size=self.pool_ksizes[layer_id])
-        elif self.pool_names[layer_id].startswith('torch.nn.modules.pooling'):
-            pool_layer = self.pool_types[layer_id]
-            if hasattr(pool_layer, 'kernel_size'):
-                self.pool_ksizes[layer_id] = pool_layer.kernel_size
-        elif self.pool_names[layer_id].find('layers') >= 0:
-            pool_layer = self.pool_types[layer_id]
-            self.pool_ksizes[layer_id] = pool_layer.kernel_size
-        elif self.pool_names[layer_id].lower() == 'nonetype':
-            pool_layer = None
-        else:
-            raise Exception('pool_type not understood')
-        if pool_layer:
-            self.output_shapes[layer_id] = pool_layer(pool_input).shape
-        return pool_layer
+    def make_layer(self, **kwargs):
+        # init forward_layer and reconstruct_layer
+        self.forward_layer = nn.Sequential()
+        self.reconstruct_layer = nn.Sequential()
 
-    def set_dropout(self, layer_id):
-        # set dropout based on dropout_names
-        layer_id = int(layer_id)
-        if self.dropout_names[layer_id] == 'float':
-            dropout = nn.Dropout(self.dropout_types[layer_id])
-        elif self.dropout_names[layer_id].startswith('torch.nn.modules.dropout'):
-            dropout = self.dropout_types[layer_id]
-        elif self.dropout_names[layer_id].lower() == 'nonetype':
-            dropout = None
-        else:
-            raise Exception('dropout_type not understood')
-        return dropout
-
-    def init_weights(self):
-        raise NotImplementedError
-
-    def init_layers(self):
-        raise NotImplementedError
-
-    def make_layers(self):
-        pass
-
-    def apply_forward_pass(self):
-        pass
-
-    def forward_layer(self):
-        pass
-
-    def forward(self):
-        pass
-
-class FeedForwardNetwork(Module):
-    """
-    Module for doing Feed Forward Convolutional or Fully-Connected (or combo) Neural networks with
-    custom pooling layers.
-
-    Parameters
-    ----------
-    data_shape : tuple
-        shape of the input data
-    layer_types : list of strings or torch.nn.Module
-        layer types, 'conv' or 'fc', at each layer
-    act_types : list of strings or torch.nn.modules.activation or None
-        activation function at each layer
-        [e.g., 'ReLU', torch.nn.modules.activation, or None]
-    pool_types : list of strings or torch.nn.modules.pooling or rf_pool.layers or None
-        pooling type at each convolutional layer
-        [e.g., 'max_pool', torch.nn.modules.pooling, 'prob', 'stochastic', 'div_norm',
-        'average', 'sum', rf_pool.layers, or None (default)]
-    dropout_types : list of floats or None
-        dropout probability at each layer [e.g., 0. or None (default)]
-    output_channels : list of ints, optional
-        number of output channels at each layer
-    kernel_size : list of ints, optional
-        size of patch at each convolutional layer
-    pool_ksizes : list of ints or None, optional
-        pooling kernel size at each convolutional layer
-    control_nets : ControlNetwork, optional
-        control networks used to update receptive fields for RF_Pool
-        (see ControlNetwork)
-
-    Attributes
-    ----------
-    hidden_layers : list of torch.nn.modules
-        hidden layer objects chosen for each layer
-    activations : list of torch.nn.modules.activation or None
-        activation objects chosen for each layer
-    pool_layers : list of torch.nn.modules.pooling or rf_pool.layers or None
-        pooling layer objects chosen for each layer
-    dropouts : list of torch.nn.modules.dropout or None
-        dropout objects chosen for each layer
-    output_shapes : list of tuples
-        output shape for each layer
-
-    Methods
-    -------
-    set_hidden_layer(layer_id)
-        set hidden layer for layer_id based on layer_types
-    set_activation_fn(layer_id)
-        set activation for layer_id based on act_types
-    set_pool_layer(layer_id)
-        set pooling layer for layer_id based on pool_types
-    make_layers()
-        initialize network with layer_types, pool_types, etc.
-    apply_forward_pass(func, x, *control_out)
-        perform forward pass through function with input x and optional arguments
-        delta_mu and delta_sigma which are used to update receptive field kernels
-        when using RF_Pool (see RF_Pool, rf.pool)
-    forward_layer(layer_id, x)
-        perform forward pass through layer_id with input x
-    forward(x)
-        perform forward pass through network with input x
-
-    Examples
-    --------
-    # Does one forward pass of a random dataset
-    >>> data_shape = (10,3,28,28)
-    >>> layer_types = ['conv', 'conv', 'fc']
-    >>> output_channels = [25, 25, 10]
-    >>> kernel_sizes = [5, 5, None]
-    >>> pool_types = ['max_pool', 'prob', None]
-    >>> pool_ksizes = [2,2,None]
-    >>> dropout_types = [None, None, .5]
-    >>> net = FeedForwardNetwork(data_shape, layer_types, act_types, pool_types,
-                                dropout_types, output_channels=output_channels,
-                                kernel_sizes=kernel_sizes, pool_ksizes=pool_ksizes)
-    >>> inputs = torch.rand(data_shape)
-    >>> outputs = net(inputs)
-
-    See Also
-    --------
-    layers.RF_Pool : layer implementation for receptive field pooling
-    ops.rf_pool : receptive field pooling operation
-    ControlNetwork : module to create control_nets to update receptive fields
-        for use with RF_Pool
-    """
-    def __init__(self, data_shape, layer_types, act_types=[None],
-                 pool_types=[None], dropout_types=[None], **kwargs):
-        super(FeedForwardNetwork, self).__init__()
-        # set inputs to attributes
-        self.update_attrs({'data_shape':data_shape, 'layer_types':layer_types,
-                           'act_types':act_types, 'pool_types':pool_types,
-                           'dropout_types':dropout_types})
-        # initialize additional attributes
-        attr_names = ['output_channels', 'kernel_sizes', 'pool_ksizes',
-                      'control_nets', 'layer_names', 'act_names', 'pool_names',
-                      'dropout_names', 'hidden_layers', 'activations',
-                      'pool_layers', 'dropouts', 'output_shapes']
-        self.init_attrs(attr_names)
-        # update self.attrs with kwargs, set_from_attrs
-        self.update_attrs(kwargs)
-        self.set_from_attrs()
-
-        # check data_shape is ndim 2 or 4
-        data_dim = len(self.data_shape)
-        assert (data_dim == 2 or data_dim == 4), (
-               'Data must have shape [batch_size, n_features] or [batch_size, n_features, h, w]')
-
-        # hidden layer params
-        self.layer_names = self.get_typenames(self.layer_types)
-        self.n_layers = len(self.layer_types)
-        self.layer_ids = [str(i) for i in range(self.n_layers)]
-        self.output_channels = self.set_list_vars(self.output_channels, self.n_layers)
-        self.output_shapes = [()]*self.n_layers
-        self.kernel_sizes = self.set_list_vars(self.kernel_sizes, self.n_layers)
-
-        # activation functions
-        self.act_types = self.set_list_vars(self.act_types, self.n_layers)
-        self.act_names = self.get_typenames(self.act_types)
-
-        # pooling layer params
-        self.pool_types = self.set_list_vars(self.pool_types, self.n_layers)
-        self.pool_names = self.get_typenames(self.pool_types)
-        self.pool_ksizes = self.set_list_vars(self.pool_ksizes, self.n_layers)
-
-        # misc. params
-        self.dropout_types = self.set_list_vars(self.dropout_types, self.n_layers)
-        self.dropout_names = self.get_typenames(self.dropout_types)
-        if self.control_nets is None:
-            self.control_nets = {}
-        self.control_out = {}
-        self.layer_out = {}
-
-        # check each list var has len == n_layers
-        for key in self.attrs.keys():
-            value = getattr(self, key)
-            if type(value) is list:
-                assert len(value) == self.n_layers, (
-                   ' '.join([key,'must a be a list of size',str(self.n_layers)]))
-
-        # initialize network
-        self.make_layers()
-
-        # update attrs
-        self.update_attrs()
-
-    def make_layers(self):
-        """
-        Create layers for network with following flow:
-            1. layer operation: {'fc', 'conv', torch.nn.modules}
-            2. activation func: {'ReLU', torch.nn.modules.activation, None}
-            3. pooling: {'max_pool', torch.nn.modules.pooling, 'prob', 'stochastic'
-                     'div_norm', 'average', 'sum', rf_pool.layers, None}
-            4. dropout: {float, torch.nn.modules.dropout, None}
-        """
-        self.hidden_layers = nn.ModuleDict({})
-        self.activations = nn.ModuleDict({})
-        self.pool_layers = nn.ModuleDict({})
-        self.dropouts = nn.ModuleDict({})
-
-        for i, layer_id in enumerate(self.layer_ids):
-            layer_id = str(layer_id)
-            # layer types
-            self.hidden_layers.add_module(layer_id, self.set_hidden_layer(i))
-
-            # activation types
-            self.activations.add_module(layer_id, self.set_activation_fn(i))
-
-            # pooling types
-            self.pool_layers.add_module(layer_id, self.set_pool_layer(i))
-
-            # dropout
-            self.dropouts.add_module(layer_id, self.set_dropout(i))
-
-    def update_layers(self, new_layer_ids):
-        # ensure new_layer_ids are string
-        new_layer_ids = [str(i) for i in new_layer_ids]
-        # init new layers
-        new_hidden_layers = nn.ModuleDict({})
-        new_activations = nn.ModuleDict({})
-        new_control_nets = nn.ModuleDict({})
-        new_pool_layers = nn.ModuleDict({})
-        new_dropouts = nn.ModuleDict({})
-
-        for layer_id, new_layer_id in zip(self.layer_ids, new_layer_ids):
-            # update hidden layers
-            if self.hidden_layers and layer_id in self.hidden_layers:
-                hidden_layer = self.hidden_layers.pop(layer_id)
-                new_hidden_layers.add_module(new_layer_id, hidden_layer)
-
-            # update activations
-            if self.activations and layer_id in self.activations:
-                activation = self.activations.pop(layer_id)
-                new_activations.add_module(new_layer_id, activation)
-
-            if self.control_nets and layer_id in self.control_nets:
-                control_net = self.control_nets.pop(layer_id)
-                new_control_nets.add_module(new_layer_id, control_net)
-
-            # update pooling layers
-            if self.pool_layers and layer_id in self.pool_layers:
-                pool_layer = self.pool_layers.pop(layer_id)
-                new_pool_layers.add_module(new_layer_id, pool_layer)
-
-            # update dropouts
-            if self.dropouts and layer_id in self.dropouts:
-                dropout = self.dropouts.pop(layer_id)
-                new_dropouts.add_module(new_layer_id, dropout)
-
-        # set new layer_ids
-        self.layer_ids = new_layer_ids
+        # set None to nn.Sequential()
+        for key, value in kwargs.items():
+            if value is None:
+                kwargs.update({key: nn.Sequential()})
 
         # update layers
-        self.hidden_layers.update(new_hidden_layers.items())
-        self.activations.update(new_activations.items())
-        self.control_nets.update(new_control_nets.items())
-        self.pool_layers.update(new_pool_layers.items())
-        self.dropouts.update(new_dropouts.items())
+        self.update_layer(**kwargs)
 
-        # update attributes
-        self.update_attrs()
+    def update_layer(self, **kwargs):
+        # update forward_layer
+        for key, value in kwargs.items():
+            if value is not None:
+                self.forward_layer.add_module(key, value)
 
-    def apply_forward_pass(self, fn, x, *args):
-        if fn:
-            return fn(x, *args)
-        else:
-            return x
+    def get_module_names(self, layer, module_name=None):
+        module_names = []
+        for name, _ in layer.named_children():
+            module_names.append(name)
+            if module_name and name == module_name:
+                break
+        return module_names
 
-    def forward_layer(self, layer_id, x):
-        # preform computations for one layer
-        control_out = []
-        layer_id = str(layer_id)
-        x = self.apply_forward_pass(self.hidden_layers[layer_id], x)
-        x = self.apply_forward_pass(self.activations[layer_id], x)
-        if self.control_nets and layer_id in self.control_nets:
-            control_out = self.control_nets[layer_id](x)
-            self.control_out[layer_id] = control_out
-        x = self.apply_forward_pass(self.pool_layers[layer_id], x, *control_out)
-        x = self.apply_forward_pass(self.dropouts[layer_id], x)
-        self.layer_out[layer_id] = x
-        return x
+    def get_modules(self, layer, module_names):
+        modules = []
+        for name, module in layer.named_children():
+            if name in module_names:
+                modules.append(module)
+        return modules
 
-    def forward(self, x):
-        # forward pass of network
-        for i, layer_id in enumerate(self.layer_ids):
-            # flatten layer input if switching from 'conv' to 'fc'
-            if len(self.output_shapes[np.maximum(i - 1, 0)]) == 2 or len(self.output_shapes[i]) == 2:
-                x = x.flatten(1)
-            # perform computations for given layer
-            x = self.forward_layer(layer_id, x)
-        return x
+    def apply_modules(self, layer, input, module_names):
+        for i, (name, module) in enumerate(layer.named_children()):
+            if name in module_names:
+                if i==0 and layer == self.forward_layer:
+                    if self.input_shape:
+                        input = torch.reshape(input, self.input_shape)
+                input = module(input)
+                if i==len(layer) and layer == self.reconstruct_layer:
+                    if self.reconstuct_shape:
+                        input = torch.reshape(input, self.reconstruct_shape)
+        return input
 
-class ControlNetwork(Module):
-    """
-    Module for building control network that can have a trunk network with multiple
-    branch networks.
+    def forward(self, input):
+        if self.input_shape:
+            self.reconstruct_shape = input.shape
+            input = torch.reshape(input, self.input_shape)
+        return self.forward_layer(input)
 
-    Parameters
-    ----------
-    net : Module
-        network that control network will be connected to
-    layer_id : string
-        layer id within net that indicates the layer the control network connects to
-    output_shapes : list of tuples
-        expected output shape for each branch network (see example)
-    trunk : dict, optional
-        arguments to be passed to FeedForwardNetwork to create the trunk network
-        [default: [], no trunk network]
-    branches : list of dicts, optional
-        arguments to be passed to FeedForwardNetwork to create each branch network.
-        additionally, a fully connected layer will be appended to each branch network
-        to obtain the number of units indicated by np.prod(output_shapes[b][1:])
-        [default: [], single fully connected layer]
-    branch_act_types : list, optional kwarg
-        activation types for each branch to be applied to final output (see FeedForwardNetwork)
-        [default: [None]*n_branches]
+    def reconstruct(self, input):
+        output = self.reconstruct_layer(input)
+        if self.reconstruct_shape:
+            output = torch.reshape(output, self.reconstruct_shape)
+        return output
 
-    Attributes
-    ----------
-    nets : list of Module
-        trunk and branch networks that are called during forward() method
-    layer_id : str
-        layer id to which control network connects
-    n_branches : int
-        number of branches in control network (n_branches = len(output_shapes))
+    def train(self, input, label, loss_fn, optimizer, **kwargs):
+        # zero gradients
+        optimizer.zero_grad()
+        # get output and loss
+        output = self.forward(input)
+        loss = loss_fn(output, label)
+        # additional loss
+        if 'add_loss' in kwargs.keys():
+            added_loss = self.add_loss(input, **kwargs.get('add_loss'))
+            loss = loss + added_loss
+        # backprop and update parameters
+        loss.backward()
+        optimizer.step()
+        return loss.item()
 
-    Methods
-    -------
-    get_conv_shape(output_shape, pool_ksize)
-        return output shape of convolutional layer prior to pooling
-    make_layers(net, layer_id, output_shapes, trunk, branches, branch_act_types)
-        create trunk and branch networks (attribute nets)
-    forward(x)
-        apply forward pass through control network, which passes the output of the
-        trunk network to each branch network followed by reshaping each branch output
-        to shape of each output_shapes
+    def add_loss(self, inputs, loss_fn, module_name=None, **kwargs):
+        """
+        #TODO:WRITEME
+        """
+        module_names = self.get_module_names(self.forward_layer, module_name)
+        outputs = []
+        for input in inputs:
+            output = self.apply_modules(self.forward_layer, input, module_names)
+            if type(output) is list:
+                output = torch.cat([torch.flatten(o) for o in output])
+            outputs.append(output)
+        return loss_fn(*outputs, **kwargs)
 
-    Examples
-    --------
-    # creates control network to output mu and sigma deltas for a receptive field pool layer
-    >>> rf_layer = RF_Pool(torch.rand(36,2)*24, torch.ones(36,1), img_shape=(24,24), pool_type='sum')
-    >>> net = FeedForwardNetwork((1,1,28,28), ['conv'], ['relu'], [rf_layer], output_channels=[20],
-                                kernel_sizes=[5], pool_ksizes=[2])
-    >>> trunk = {'layer_types': ['fc'], 'act_types': ['relu'], 'output_channels': [128]}
-    >>> branches = []
-    >>> net.control_nets = nn.ModuleDict()
-    >>> net.control_nets['0'] = ControlNetwork(net, '0', [(-1,1,36,2), (-1,1,36,1)],
-                                               trunk=trunk, branches=branches)
-    """
-    def __init__(self, net, layer_id, output_shapes, trunk=[], branches=[], **kwargs):
-        super(ControlNetwork, self).__init__()
-        # set inputs to attributes
-        self.update_attrs({'layer_id':layer_id, 'output_shapes':output_shapes})
-        # initialize additional attributes
-        attr_names = ['branch_act_types']
-        self.init_attrs(attr_names, [None])
+    def show_weights(self, img_shape=None, figsize=(5, 5), cmap=None):
+        """
+        #TODO:WRITEME
+        """
+        if not hasattr(self, 'hidden_weight'):
+            raise Exception('attribute "hidden_weight" not found')
+        w = self.layers[layer_id].hidden_weight.clone().detach()
+        if w.shape[1] > 3:
+            w = torch.flatten(w, 0, 1).unsqueeze(1)
+        # get columns and rows
+        n_cols = np.ceil(np.sqrt(w.shape[0])).astype('int')
+        n_rows = np.ceil(w.shape[0] / n_cols).astype('int')
+        # init figure and axes
+        fig, ax = plt.subplots(n_rows, n_cols, figsize=figsize)
+        ax = np.reshape(ax, (n_rows, n_cols))
+        # plot weights
+        cnt = 0
+        for r in range(n_rows):
+            for c in range(n_cols):
+                if cnt >= w.shape[0]:
+                    w_n = torch.zeros_like(w[0])
+                else:
+                    w_n = w[cnt].detach()
+                if img_shape:
+                    w_n = torch.reshape(w_n, (-1,) + img_shape)
+                w_n = torch.squeeze(w_n.permute(1,2,0), -1).numpy()
+                w_n = functions.normalize_range(w_n, dims=(0,1))
+                ax[r,c].axis('off')
+                ax[r,c].imshow(w_n, cmap=cmap)
+                cnt += 1
+        plt.show()
+        return fig
 
-        # update self.attrs with kwargs, set_from_attrs
-        self.update_attrs(kwargs)
-        self.set_from_attrs()
+    def sparsity(self, input, module_name, target, cost=1.):
+        # (SparseRBM; Lee et al., 2008)
+        module_names = self.get_module_names(self.forward_layer, module_name)
+        activity = self.apply_modules(self.forward_layer, input, module_names)
+        q = torch.mean(activity.transpose(1,0).flatten(1), -1)
+        p = torch.as_tensor(target, dtype=activity.dtype)
+        sparse_cost =  q - p
+        sparse_cost.mul_(cost)
+        self.hidden_bias.grad += sparse_cost
 
-        # set layer_ids, check net_params
-        self.layer_id = str(self.layer_id)
-        if type(self.output_shapes) is not list:
-            self.output_shapes = [self.output_shapes]
-        self.n_branches = len(self.output_shapes)
-        branches = self.set_list_vars(branches, self.n_branches)
-        self.branch_act_types = self.set_list_vars(self.branch_act_types, self.n_branches)
-
-        # make layers
-        self.make_layers(net, self.layer_id, self.output_shapes, trunk, branches,
-                         self.branch_act_types)
-
-        # link parameters
-        self.link_parameters(self.layer_id)
-
-        # update attrs
-        self.update_attrs()
-
-    def get_conv_shape(self, output_shape, pool_ksize):
-        if pool_ksize is None:
-            return output_shape
-        return output_shape[:2] + (output_shape[-2]*pool_ksize, output_shape[-1]*pool_ksize)
-
-    def make_layers(self, net, layer_id, output_shapes, trunk, branches, branch_act_types):
-        # get layer shape prior to pooling
-        input_shape = self.get_conv_shape(net.output_shapes[int(layer_id)],
-                                          net.pool_ksizes[int(layer_id)])
-
-        # init nets
-        self.nets = []
-
-        # make trunk
-        if trunk:
-            trunk_net = FeedForwardNetwork(input_shape, **trunk)
-            self.nets.append(trunk_net)
-            branch_input_shape = trunk_net.output_shapes[-1]
-        else:
-            branch_input_shape = input_shape
-
-        # make branches
-        for b in range(len(output_shapes)):
-            # append fc with output_channels = np.prod(output_shapes[b][1:])
-            output_channels = np.prod(output_shapes[b][1:])
-
-            # set trunk, append branch
-            if branches:
-                self.nets.append(FeedForwardNetwork(branch_input_shape, **branches[b]))
-                self.nets[-1].append(FeedForwardNetwork(self.nets[-1].output_shapes[-1],
-                                                        ['fc'], [branch_act_types[b]],
-                                                        output_channels=output_channels))
-            else: # set branch with single layer
-                self.nets.append(FeedForwardNetwork(branch_input_shape, ['fc'], [branch_act_types[b]],
-                                                    output_channels=output_channels))
-
-    def forward(self, x):
-        # get nets
-        if self.n_branches < len(self.nets):
-            trunk_net = self.nets[0]
-            branch_nets = self.nets[1:]
-            # get trunk output
-            x = trunk_net.forward(x)
-        else:
-            branch_nets = self.nets
-        # set branch outputs
-        branch_out = []
-        for branch_net, output_shape in zip(branch_nets, self.output_shapes):
-            branch_out.append(torch.reshape(branch_net.forward(x), output_shape))
-        return branch_out
-
-class GenerativeNetwork(Module):
+class FeedForward(Module):
     """
     #TODO:WRITEME
     """
-    def __init__(self):
-        super(GenerativeNetwork, self).__init__()
-        raise NotImplementedError
+    def __init__(self, input_shape=None, **kwargs):
+        super(FeedForward, self).__init__(input_shape)
+        # build layer
+        self.make_layer(**kwargs)
+        # link parameters
+        self.link_parameters(self.forward_layer)
+
+class Branch(Module):
+    """
+    #TODO:WRITEME
+    """
+    def __init__(self, branches, branch_shapes=None, cat_output=False,
+                 input_shape=None):
+        super(Branch, self).__init__(input_shape)
+        self.branches = branches
+        self.branch_shapes = branch_shapes
+        self.cat_output = cat_output
+        for i, branch in enumerate(self.branches):
+            self.forward_layer.add_module('branch_'+str(i), branch)
+
+    def output_shape(self, input_shape):
+        outputs = self.forward(torch.zeros(input_shape))
+        return [output.shape for output in outputs]
+
+    def forward(self, input, names=[]):
+        if self.input_shape:
+            self.reconstruct_shape = input.shape
+            input = torch.reshape(input, self.input_shape)
+        outputs = []
+        for i, (name, branch) in enumerate(self.forward_layer.named_children()):
+            if len(names) == 0 or name in names:
+                outputs.append(branch.forward(input))
+                if self.branch_shapes:
+                    outputs[-1] = torch.reshape(outputs[-1], self.branch_shapes[i])
+        if self.cat_output:
+            outputs = torch.cat(outputs, 1)
+        return outputs
+
+    def reconstruct(self, input, names=[]):
+        outputs = []
+        for name, branch in self.forward_layer.named_children():
+            if len(names) == 0 or name in names:
+                output = branch.reconstruct(input)
+                if self.reconstruct_shape:
+                    output = torch.reshape(output, self.reconstruct_shape)
+                outputs.append(output)
+        if self.cat_output:
+            outputs = torch.cat(outputs, 1)
+        return outputs
+
+class Control(Module):
+    """
+    #TODO:WRITEME
+    """
+    def __init__(self, input_shape=None, **kwargs):
+        super(Control, self).__init__(input_shape)
+        assert 'control' in kwargs.keys(), ('must contain "control" module')
+        # build layer
+        self.make_layer(**kwargs)
+        # link parameters
+        self.link_parameters(self.forward_layer)
+
+    def forward(self, input):
+        if self.input_shape:
+            self.reconstruct_shape = input.shape
+            input = torch.reshape(input, self.input_shape)
+        # apply module
+        control_out = None
+        for name, module in self.forward_layer.named_children():
+            if name == 'control':
+                control_out = module(input)
+                if type(control_out) is not list:
+                    control_out = [control_out]
+            elif control_out is not None:
+                input = module(input, *control_out)
+            else:
+                input = module(input)
+        return input
+
+class RBM(Module):
+    """
+    Restricted Boltzmann Machine module (convolutional or fully-connected)
+
+    Attributes
+    ----------
+    forward_layer : torch.nn.Sequential
+        functions to apply in forward pass (see Notes)
+    reconstruct_layer : torch.nn.Sequential
+        functions to apply in reconstruct pass (see Notes)
+    vis_activation_fn : torch.nn.modules.activation
+        activation function to apply in reconstruct pass to obtain visible unit
+        mean field estimates
+    vis_sample_fn : torch.distributions or None
+        function used for sampling from visible unit mean field estimates
+    hid_sample_fn : torch.distributions or None
+        function used for sampling from hidden unit mean field estimates
+    vis_bias : torch.Tensor
+        bias for visible units
+    hid_bias : torch.Tensor
+        bias for hidden units
+    output_shape : tuple
+        output shape for layer
+
+    Methods
+    -------
+    make_layer(hidden, activation, pool)
+        make forward_layer and reconstruct_layer with hidden, activation,
+        pool parameters (see Notes)
+    update_layer(hidden=None, activation=None, pool=None)
+        update forward_layer and reconstruct_layer with new hidden, activation,
+        or pool parameters
+    sample_h_given_v(v)
+        sample hidden units given visible units
+    sample_v_given_h(h)
+        sample visible units given hidden units
+    sample_h_given_vt(v, t)
+        sample hidden units given visible units and top-down input
+    contrastive_divergence(v, h)
+        compute contrastive divergence for visible and hidden samples
+    energy(v)
+        compute energy for visible sample
+    train(input, optimizer, k=1, monitor_fn=nn.MSELoss(), **kwargs)
+        train with contrastive divergence with k gibbs steps
+
+    Notes
+    -----
+    forward_layer = torch.nn.Sequential(
+        (hidden): hidden,
+        (activation): activation,
+        (pool): pool
+    )
+    where hidden, activation, and pool are input parameters with torch.nn.module
+    type or None at initialization (e.g., hidden = torch.nn.Conv2d(1, 24, 11)).
+    If hidden, activation, or pool are None, default is torch.nn.Sequential()
+
+    reconstruct_layer = torch.nn.Sequential(
+        (unpool): unpool,
+        (hidden_transpose): hidden_transpose,
+        (activation): vis_activation_fn
+    )
+    where unpool is nn.MaxUnpool2d if pool.return_indices = True or
+    nn.UpSample(scale_factor=pool.kernel_size) if hasattr(pool, 'kernel_size')
+    and nn.Sequential otherwise, hidden_transpose is the transposed operation
+    of hidden, and vis_activation_fn is an input parameter at initialization.
+    """
+    def __init__(self, hidden=None, activation=None, pool=None, dropout=None,
+                 vis_activation_fn=None, vis_sample_fn=None, hid_sample_fn=None,
+                 input_shape=None):
+        super(RBM, self).__init__(input_shape)
+        self.vis_activation_fn = vis_activation_fn
+        self.vis_sample_fn = vis_sample_fn
+        self.hid_activation_fn = activation
+        self.hid_sample_fn = hid_sample_fn
+        # initialize persistent
+        self.persistent = None
+        # make layers
+        self.make_layer(hidden=hidden, activation=activation,
+                        pool=pool, dropout=dropout)
+        # link parameters to self
+        self.link_parameters(self.forward_layer)
+        self.link_parameters(self.reconstruct_layer)
+        # set vis_bias and hid_bias
+        self.vis_bias = self.hidden_transpose_bias
+        self.hid_bias = self.hidden_bias
+
+    def update_layer(self, **kwargs):
+        # update forward_layer
+        for key, value in kwargs.items():
+            if value is not None:
+                self.forward_layer.add_module(key, value)
+
+        # update reconstruct_layer unpool
+        pool = kwargs.get('pool')
+        if pool and hasattr(pool, 'return_indices') and pool.return_indices:
+            pool_kwargs = self.get_attributes(pool, ['stride', 'padding'])
+            unpool = nn.MaxUnpool2d(pool.kernel_size, **pool_kwargs)
+            self.reconstruct_layer.add_module('unpool', unpool)
+        elif pool and hasattr(pool, 'kernel_size'):
+            unpool = nn.Upsample(scale_factor=pool.kernel_size)
+            self.reconstruct_layer.add_module('unpool', unpool)
+
+        # update reconstruct_layer hidden transpose
+        hidden = kwargs.get('hidden')
+        if hidden:
+            # initialize weights with randn
+            self.init_weights('hidden_weight', torch.randn_like)
+            # set transpose layer based on hidden type
+            if torch.typename(hidden).find('conv') >= 0:
+                conv_kwargs = self.get_attributes(hidden, ['stride', 'padding',
+                                                         'dilation'])
+                hidden_transpose = nn.ConvTranspose2d(hidden.out_channels,
+                                                      hidden.in_channels,
+                                                      hidden.kernel_size,
+                                                      **conv_kwargs)
+                hidden_transpose.weight = hidden.weight
+            elif torch.typename(hidden).find('linear') >= 0:
+                hidden_transpose = nn.Linear(hidden.out_features,
+                                             hidden.in_features)
+                hidden_transpose.weight = nn.Parameter(hidden.weight.t())
+            else:
+                raise Exception('hidden type not understood')
+            self.reconstruct_layer.add_module('hidden_transpose', hidden_transpose)
+            # initialize biases with zeros
+            self.init_weights('bias', torch.zeros_like)
+
+        # update reconstruct_layer activation
+        if self.vis_activation_fn:
+            self.reconstruct_layer.add_module('activation', self.vis_activation_fn)
+        else:
+            self.reconstruct_layer.add_module('activation', nn.Sequential())
+
+    def sample_h_given_v(self, v):
+        # apply each non-pooling module (unless rf_pool)
+        pre_act_h = self.apply_modules(self.forward_layer, v, ['hidden'])
+        h_mean = self.apply_modules(self.forward_layer, pre_act_h, ['activation'])
+        # apply pool module if rf_pool type
+        pool_module = self.get_modules(self.forward_layer, ['pool'])[0]
+        if torch.typename(pool_module).find('layers') >= 0:
+            h_mean = pool_module.apply(h_mean)[0]
+        # sample from h_mean
+        if self.hid_sample_fn:
+            h_sample = self.hid_sample_fn(probs=h_mean).sample()
+        else:
+            h_sample = h_mean
+        return pre_act_h, h_mean, h_sample
+
+    def sample_v_given_h(self, h):
+        # apply each non-pooling module
+        pre_act_v = self.apply_modules(self.reconstruct_layer, h, ['hidden_transpose'])
+        v_mean = self.apply_modules(self.reconstruct_layer, pre_act_v, ['activation'])
+        # sample from v_mean
+        if self.vis_sample_fn:
+            v_sample = self.vis_sample_fn(probs=v_mean).sample()
+        else:
+            v_sample = v_mean
+        return pre_act_v, v_mean, v_sample
+
+    def sample_h_given_vt(self, v, t):
+        # apply each module, add t instead of pooling (unless rf_pool)
+        pre_act_h = self.apply_modules(self.forward_layer, v, ['hidden'])
+        shape = [v_shp//t_shp for (v_shp,t_shp) in zip(pre_act_h.shape,t.shape)]
+        t = functions.repeat(t, shape)
+        h_mean = self.apply_modules(self.forward_layer, torch.add(pre_act_h, t),
+                                   ['activation'])
+        # apply pool module if rf_pool type
+        pool_module = self.get_modules(self.forward_layer, ['pool'])[0]
+        if torch.typename(pool_module).find('layers') >= 0:
+            h_mean = pool_module.apply(h_mean)[0]
+        # sample from h_mean
+        if self.hid_sample_fn:
+            h_sample = self.hid_sample_fn(probs=h_mean).sample()
+        else:
+            h_sample = h_mean
+        return pre_act_h, h_mean, h_sample
+
+    def gibbs_vhv(self, v_sample, k=1):
+        for _ in range(k):
+            pre_act_h, h_mean, h_sample = self.sample_h_given_v(v_sample)
+            pre_act_v, v_mean, v_sample = self.sample_v_given_h(h_sample)
+        return pre_act_h, h_mean, h_sample, pre_act_v, v_mean, v_sample
+
+    def gibbs_hvh(self, h_sample, k=1):
+        for _ in range(k):
+            pre_act_v, v_mean, v_sample = self.sample_v_given_h(h_sample)
+            pre_act_h, h_mean, h_sample = self.sample_h_given_v(v_sample)
+        return pre_act_v, v_mean, v_sample, pre_act_h, h_mean, h_sample
+
+    def contrastive_divergence(self, pv, ph, nv, nh):
+        # get sizes to normalize params
+        batch_size = torch.as_tensor(pv.shape[0], dtype=pv.dtype)
+        # compute contrastive_divergence for conv layer
+        if pv.ndimension() == 4:
+            v_shp = torch.as_tensor(pv.shape[-2:], dtype=pv.dtype)
+            W_shp = torch.as_tensor(self.hidden_weight.shape[-2:], dtype=pv.dtype)
+            hidsize = torch.prod(v_shp - W_shp + 1)
+            # compute vishidprods, hidact, visact
+            posprods = torch.conv2d(pv.transpose(1,0),
+                                    ph.transpose(1,0)).transpose(1,0)
+            negprods = torch.conv2d(nv.transpose(1,0),
+                                    nh.transpose(1,0)).transpose(1,0)
+            vishidprods = torch.div(posprods - negprods, (batch_size * hidsize))
+            hidact = torch.mean(ph - nh, dim=(0,2,3))
+            visact = torch.mean(pv - nv, dim=(0,2,3))
+        # compute contrastive_divergence for fc layer
+        else:
+            posprods = torch.matmul(pv.t(), ph)
+            negprods = torch.matmul(nv.t(), nh)
+            vishidprods = torch.div(posprods - negprods, batch_size)
+            hidact = torch.mean(ph - nh, dim=0)
+            visact = torch.mean(pv - nv, dim=0)
+        return {'hidden_weight':vishidprods, 'hid_bias':hidact, 'vis_bias':visact}
+
+    def update_grads(self, grad):
+        assert type(grad) is dict
+        with torch.no_grad():
+            for name, param in self.named_parameters():
+                if param.grad is None:
+                    param.grad = torch.zeros_like(param)
+                if name in grad.keys():
+                    param.grad.sub_(grad[name])
+
+    def show_negative(self, v, k=1, img_shape=None, figsize=(5,5), cmap=None):
+        """
+        #TODO:WRITEME
+        """
+        # gibbs sample
+        with torch.no_grad():
+            neg = self.gibbs_vhv(v, k=k)[-2]
+        # reshape, permute for plotting
+        if img_shape:
+            v = torch.reshape(v, (-1,1) + img_shape)
+            neg = torch.reshape(neg, (-1,1) + img_shape)
+        v = torch.squeeze(v.permute(0,2,3,1), -1).numpy()
+        neg = torch.squeeze(neg.permute(0,2,3,1), -1).numpy()
+        v = functions.normalize_range(v, dims=(1,2))
+        neg = functions.normalize_range(neg, dims=(1,2))
+        # plot negatives
+        fig, ax = plt.subplots(v.shape[0], 2, figsize=figsize)
+        ax = np.reshape(ax, (v.shape[0], 2))
+        for r in range(v.shape[0]):
+            ax[r,0].axis('off')
+            ax[r,1].axis('off')
+            ax[r,0].imshow(v[r], cmap=cmap)
+            ax[r,1].imshow(neg[r], cmap=cmap)
+        plt.show()
+        return fig
+
+    def train(self, input, optimizer, k=1, monitor_fn=nn.MSELoss(), **kwargs):
+        """
+        #TODO:WRITEME
+        """
+        # zero gradient
+        optimizer.zero_grad()
+        with torch.no_grad():
+            # positive phase
+            pre_act_ph, ph_mean, ph_sample = self.sample_h_given_v(input)
+            # persistent
+            if self.persistent is not None:
+                ph_sample = self.persistent
+                self.hidden_weight.add_(self.persistent_weights)
+            elif kwargs.get('persistent') is not None:
+                self.persistent = kwargs.get('persistent')
+                ph_sample = self.persistent
+                self.persistent_weights = torch.zeros_like(self.hidden_weight,
+                                                           requires_grad=True)
+                self.persistent_weights = nn.Parameter(self.persistent_weights)
+                optimizer.add_param_group({'params': self.persistent_weights})
+            # dropout
+            ph_sample = self.apply_modules(self.forward_layer, ph_sample,
+                                           ['dropout'])
+            # negative phase
+            [
+                pre_act_nv, nv_mean, nv_sample, pre_act_nh, nh_mean, nh_sample
+            ] = self.gibbs_hvh(ph_sample, k=k)
+            # persistent
+            if self.persistent is not None:
+                self.hidden_weight.sub_(self.persistent_weights)
+            # compute loss with contrastive_divergence
+            grads = self.contrastive_divergence(input, ph_mean, nv_mean, nh_mean)
+            self.update_grads(grads)
+            sum_grads = [torch.sum(torch.abs(g)) for g in grads.values()]
+            loss = torch.sum(torch.stack(sum_grads))
+            # update persistent weights
+            if self.persistent is not None:
+                self.persistent_weights.mul_(0.95)
+                self.persistent_weights.grad = self.hidden_weight.grad
+        # compute additional loss from add_loss
+        if kwargs.get('add_loss'):
+            added_loss = self.add_loss(input, **kwargs.get('add_loss'))
+            added_loss.backward()
+        # sparsity
+        if kwargs.get('sparsity'):
+            self.sparsity(input, 'activation', **kwargs.get('sparsity'))
+        # update parameters
+        optimizer.step()
+        # monitor loss
+        if monitor_fn:
+            out = monitor_fn(input, nv_mean)
+        else:
+            out = loss
+        return out.item()
 
 if __name__ == '__main__':
     import doctest
