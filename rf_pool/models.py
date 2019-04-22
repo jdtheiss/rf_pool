@@ -278,11 +278,11 @@ class Model(nn.Module):
                 loss = loss_fn(output, label)
                 # additional loss
                 if add_loss:
-                    added_loss = self.add_loss(inputs, **add_loss_kwargs)
+                    added_loss = self.add_loss(inputs, **add_loss)
                     loss = loss + added_loss
                 # sparsity
                 if sparsity:
-                    self.sparsity(inputs[0], **sparsity_kwargs)
+                    self.sparsity(inputs[0], **sparsity)
                 loss.backward()
                 # update parameters
                 optimizer.step()
