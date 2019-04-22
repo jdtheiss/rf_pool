@@ -27,14 +27,14 @@ class Layer(torch.nn.Module):
         self.input_keys = ['rfs', 'pool_type', 'kernel_size']
         self.input_keys.extend(kwargs.keys())
         self.input_keys = np.unique(self.input_keys).tolist()
-        functions.setattr_dict(self, **kwargs)
+        functions.set_attributes(self, **kwargs)
 
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
 
     def apply(self, *args, **kwargs):
         # get inputs for rf_pool
-        input_kwargs = functions.getattr_dict(self, self.input_keys)
+        input_kwargs = functions.get_attributes(self, self.input_keys)
         input_kwargs.update(kwargs)
         # apply rf_pool
         return ops.rf_pool(*args, **input_kwargs)
@@ -48,7 +48,7 @@ class Layer(torch.nn.Module):
             self.delta_mu = delta_mu
         # multiply sigma by delta_sigma
         if delta_sigma is not None:
-            sigma = torch.mul(sigma, (1. + delta_sigma))
+            sigma = torch.mul(sigma, (1. + delta_sigma) + 1e-6)
             self.delta_sigma = delta_sigma
         return mu, sigma
 
@@ -232,6 +232,6 @@ class RF_Same(Layer):
         h_mean = self.apply(u, **kwargs)[0]
         # pool if kernel_size > 1
         if type(self.kernel_size) is int and self.kernel_size > 1:
-            pool_kwargs = functions.getattr_dict(self, ['return_indices'])
+            pool_kwargs = functions.get_attributes(self, ['return_indices'])
             h_mean = F.max_pool2d(h_mean, self.kernel_size, **pool_kwargs)
         return h_mean
