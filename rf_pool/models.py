@@ -336,7 +336,7 @@ class Model(nn.Module):
                 # monitor texture
                 if show_texture:
                     self.show_texture(*show_texture)
-                # functions.kwarg_fn([IPython.display, self], None, **kwargs)
+                functions.kwarg_fn([IPython.display, self], None, **kwargs)
         # turn on model gradients
         self.set_requires_grad('', requires_grad=True)
         return seed
