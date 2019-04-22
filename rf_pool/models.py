@@ -254,6 +254,16 @@ class Model(nn.Module):
 
     def train(self, n_epochs, trainloader, loss_fn, optimizer, monitor=100,
               **kwargs):
+        # additional loss
+        if 'add_loss' in kwargs.keys():
+            add_loss = kwargs.pop('add_loss')
+        else:
+            add_loss = {}
+        # sparsity
+        if 'sparsity' in kwargs.keys():
+            sparsity = kwargs.pop('sparsity')
+        else:
+            sparsity = {}
         loss_history = []
         running_loss = 0.
         for epoch in range(n_epochs):
@@ -267,14 +277,12 @@ class Model(nn.Module):
                 # get loss
                 loss = loss_fn(output, label)
                 # additional loss
-                if 'add_loss' in kwargs.keys():
-                    add_loss_kwargs = kwargs.pop('add_loss')
+                if add_loss:
                     added_loss = self.add_loss(inputs, **add_loss_kwargs)
                     loss = loss + added_loss
                 # sparsity
-                if 'sparsity' in kwargs.keys():
-                    sparsity_kwargs = kwargs.pop('sparsity')
-                    raise NotImplementedError #TODO: add sparsity function
+                if sparsity:
+                    self.sparsity(inputs[0], **sparsity_kwargs)
                 loss.backward()
                 # update parameters
                 optimizer.step()
@@ -337,6 +345,7 @@ class Model(nn.Module):
         """
         #TODO:WRITEME
         """
+        #TODO: give option for specific optimizer
         # get loss/update inputs for each layer
         loss = 0.
         for i, (name, layer) in enumerate(self.layers.named_children()):
@@ -523,23 +532,30 @@ class DeepBeliefNetwork(Model):
         pre_layer_ids = self.pre_layer_ids(layer_id)
         # get number of training examples
         n_train = len(trainloader)
+        # additional loss
+        if 'add_loss' in kwargs.keys():
+            add_loss = kwargs.pop('add_loss')
+        else:
+            add_loss = {}
+        # sparsity
+        if 'sparsity' in kwargs.keys():
+            sparsity = kwargs.pop('sparsity')
+        else:
+            sparsity = {}
         # train for n_epochs
         loss_history = []
         running_loss = 0.
         for epoch in range(n_epochs):
             for i, data in enumerate(trainloader):
                 inputs = data[:-1]
+                optimizer.zero_grad()
                 # get inputs for layer_id
                 layer_input = self.apply_layers(inputs[0], pre_layer_ids)
-                # if adding loss, set inputs from data
-                if kwargs.get('add_loss'):
-                    loss_kwargs = kwargs.get('add_loss')
-                    loss_inputs = [self.apply_layers(d, pre_layer_ids) for d in inputs]
-                    loss_kwargs.update({'inputs': loss_inputs})
-                    kwargs.update({'add_loss': loss_kwargs})
                 # train
-                loss = self.layers[layer_id].train(layer_input, optimizer,
-                                                   **kwargs)
+                loss = self.layers[layer_id].train(layer_input, add_loss=add_loss,
+                                                   sparsity=sparsity, **kwargs)
+                # update parameters
+                optimizer.step()
                 running_loss += loss
                 # monitor loss, show negative and weights
                 if (epoch * n_train + i+1) % monitor == 0:
@@ -554,7 +570,7 @@ class DeepBeliefNetwork(Model):
                     # call other monitoring functions
                     if show_negative:
                         self.show_negative(inputs[0], layer_id, **show_negative)
-                    functions.kwarg_fn([IPython.display,self], None, **kwargs)
+                    functions.kwarg_fn([IPython.display, self], None, **kwargs)
         return loss_history
 
 class DeepBoltzmannMachine(DeepBeliefNetwork):

@@ -1,4 +1,3 @@
-#TODO: automatically flatten convolutional inputs to fc
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
@@ -21,8 +20,6 @@ class Module(nn.Module):
     -------
     output_shape(input_shape)
         return output_shape based on given input_shape
-    get_attributes(obj, keys)
-        return dictionary of attributes in object obj or self (if obj = None)
     get_modules(names)
         return modules from forward_layer or reconstruct_layer with given names
     link_parameters(layer, layer_name)
@@ -64,19 +61,6 @@ class Module(nn.Module):
         if input_shape is None:
             input_shape = self.input_shape
         return self.forward(torch.zeros(input_shape)).shape
-
-    def get_attributes(self, obj=None, keys=[]):
-        out = {}
-        for key in keys:
-            if obj is None and hasattr(self, key):
-                out.update({key: getattr(obj, key)})
-            elif hasattr(obj, 'get') and key in obj:
-                out.update({key: obj.get(key)})
-            elif hasattr(obj, key):
-                out.update({key: getattr(obj, key)})
-            else:
-                out.setdefault(key, None)
-        return out
 
     def link_parameters(self, layer, layer_name=None):
         if layer_name:
@@ -154,9 +138,9 @@ class Module(nn.Module):
             output = torch.reshape(output, self.reconstruct_shape)
         return output
 
-    def train(self, input, label, loss_fn, optimizer, **kwargs):
-        # zero gradients
-        optimizer.zero_grad()
+    def train(self, input, label, loss_fn, optimizer=None, **kwargs):
+        if optimizer:
+            optimizer.zero_grad()
         # get output and loss
         output = self.forward(input)
         loss = loss_fn(output, label)
@@ -164,9 +148,13 @@ class Module(nn.Module):
         if 'add_loss' in kwargs.keys():
             added_loss = self.add_loss(input, **kwargs.get('add_loss'))
             loss = loss + added_loss
-        # backprop and update parameters
+        # sparsity
+        if 'sparsity' in kwargs.keys():
+            self.sparsity(input, **kwargs.get('sparsity'))
+        # backprop
         loss.backward()
-        optimizer.step()
+        if optimizer:
+            optimizer.step()
         return loss.item()
 
     def add_loss(self, inputs, loss_fn, module_name=None, **kwargs):
@@ -181,6 +169,19 @@ class Module(nn.Module):
                 output = torch.cat([torch.flatten(o) for o in output])
             outputs.append(output)
         return loss_fn(*outputs, **kwargs)
+
+    def sparsity(self, input, target, cost=1., module_name=None):
+        # (SparseRBM; Lee et al., 2008)
+        if module_name:
+            module_names = self.get_module_names(self.forward_layer, module_name)
+            activity = self.apply_modules(self.forward_layer, input, module_names)
+        else:
+            activity = input
+        q = torch.mean(activity.transpose(1,0).flatten(1), -1)
+        p = torch.as_tensor(target, dtype=activity.dtype)
+        sparse_cost =  q - p
+        sparse_cost.mul_(cost)
+        self.hidden_bias.grad += sparse_cost
 
     def show_weights(self, img_shape=None, figsize=(5, 5), cmap=None):
         """
@@ -214,16 +215,6 @@ class Module(nn.Module):
                 cnt += 1
         plt.show()
         return fig
-
-    def sparsity(self, input, module_name, target, cost=1.):
-        # (SparseRBM; Lee et al., 2008)
-        module_names = self.get_module_names(self.forward_layer, module_name)
-        activity = self.apply_modules(self.forward_layer, input, module_names)
-        q = torch.mean(activity.transpose(1,0).flatten(1), -1)
-        p = torch.as_tensor(target, dtype=activity.dtype)
-        sparse_cost =  q - p
-        sparse_cost.mul_(cost)
-        self.hidden_bias.grad += sparse_cost
 
 class FeedForward(Module):
     """
@@ -403,7 +394,7 @@ class RBM(Module):
         # update reconstruct_layer unpool
         pool = kwargs.get('pool')
         if pool and hasattr(pool, 'return_indices') and pool.return_indices:
-            pool_kwargs = self.get_attributes(pool, ['stride', 'padding'])
+            pool_kwargs = functions.get_attributes(pool, ['stride', 'padding'])
             unpool = nn.MaxUnpool2d(pool.kernel_size, **pool_kwargs)
             self.reconstruct_layer.add_module('unpool', unpool)
         elif pool and hasattr(pool, 'kernel_size'):
@@ -417,8 +408,9 @@ class RBM(Module):
             self.init_weights('hidden_weight', torch.randn_like)
             # set transpose layer based on hidden type
             if torch.typename(hidden).find('conv') >= 0:
-                conv_kwargs = self.get_attributes(hidden, ['stride', 'padding',
-                                                         'dilation'])
+                conv_kwargs = functions.get_attributes(hidden, ['stride',
+                                                                'padding',
+                                                                'dilation'])
                 hidden_transpose = nn.ConvTranspose2d(hidden.out_channels,
                                                       hidden.in_channels,
                                                       hidden.kernel_size,
@@ -556,12 +548,12 @@ class RBM(Module):
         plt.show()
         return fig
 
-    def train(self, input, optimizer, k=1, monitor_fn=nn.MSELoss(), **kwargs):
+    def train(self, input, k=1, monitor_fn=nn.MSELoss(), optimizer=None, **kwargs):
         """
         #TODO:WRITEME
         """
-        # zero gradient
-        optimizer.zero_grad()
+        if optimizer:
+            optimizer.zero_grad()
         with torch.no_grad():
             # positive phase
             pre_act_ph, ph_mean, ph_sample = self.sample_h_given_v(input)
@@ -597,13 +589,20 @@ class RBM(Module):
                 self.persistent_weights.grad = self.hidden_weight.grad
         # compute additional loss from add_loss
         if kwargs.get('add_loss'):
-            added_loss = self.add_loss(input, **kwargs.get('add_loss'))
+            if kwargs.get('add_loss').get('module_name'):
+                added_loss = self.add_loss(input, **kwargs.get('add_loss'))
+            else:
+                added_loss = self.add_loss(ph_mean, **kwargs.get('add_loss'))
             added_loss.backward()
         # sparsity
         if kwargs.get('sparsity'):
-            self.sparsity(input, 'activation', **kwargs.get('sparsity'))
+            if kwargs.get('sparsity').get('module_name'):
+                self.sparsity(input, **kwargs.get('sparsity'))
+            else:
+                self.sparsity(ph_mean, **kwargs.get('sparsity'))
         # update parameters
-        optimizer.step()
+        if optimizer:
+            optimizer.step()
         # monitor loss
         if monitor_fn:
             out = monitor_fn(input, nv_mean)
