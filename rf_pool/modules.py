@@ -157,7 +157,7 @@ class Module(nn.Module):
             optimizer.step()
         return loss.item()
 
-    def add_loss(self, inputs, loss_fn, module_name=None, **kwargs):
+    def add_loss(self, inputs, loss_fn, module_name=None, cost=1., **kwargs):
         """
         #TODO:WRITEME
         """
@@ -168,7 +168,7 @@ class Module(nn.Module):
             if type(output) is list:
                 output = torch.cat([torch.flatten(o) for o in output])
             outputs.append(output)
-        return loss_fn(*outputs, **kwargs)
+        return torch.mul(loss_fn(*outputs, **kwargs), cost)
 
     def sparsity(self, input, target, cost=1., module_name=None):
         # (SparseRBM; Lee et al., 2008)

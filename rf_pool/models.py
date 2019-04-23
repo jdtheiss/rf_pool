@@ -205,24 +205,32 @@ class Model(nn.Module):
                 if name.endswith(suffix):
                     param.set_(fn(param))
 
-    def get_trainable_params(self, pattern=''):
-        trainable_params = []
-        for (name, param) in self.named_parameters():
-            if param.requires_grad == True and name.find(pattern) >=0:
-                trainable_params.append(param)
-
-        return trainable_params
-
     def get_param_names(self):
         param_names = []
         for (name, param) in self.named_parameters():
             param_names.append(name)
         return param_names
 
-    def set_requires_grad(self, pattern, requires_grad=True):
-        for (name, param) in self.named_parameters():
-            if name.find(pattern) >=0:
+    def get_trainable_params(self, parameters=None, pattern=''):
+        trainable_params = []
+        if parameters:
+            for param in parameters:
+                if param.requires_grad:
+                    trainable_params.append(param)
+        else:
+            for (name, param) in self.named_parameters():
+                if param.requires_grad and name.find(pattern) >=0:
+                    trainable_params.append(param)
+        return trainable_params
+
+    def set_requires_grad(self, parameters=None, pattern='', requires_grad=True):
+        if parameters:
+            for param in parameters:
                 param.requires_grad = requires_grad
+        else:
+            for (name, param) in self.named_parameters():
+                if name.find(pattern) >=0:
+                    param.requires_grad = requires_grad
 
     def get_prediction(self, input, crop=None):
         with torch.no_grad():
@@ -307,7 +315,8 @@ class Model(nn.Module):
         #TODO:WRITEME
         """
         # turn off model gradients
-        self.set_requires_grad('', requires_grad=False)
+        on_parameters = self.get_trainable_params()
+        self.set_requires_grad(pattern='', requires_grad=False)
         loss_input = input
         # optimize texture
         loss_history = []
@@ -338,16 +347,19 @@ class Model(nn.Module):
                     self.show_texture(*show_texture)
                 functions.kwarg_fn([IPython.display, self], None, **kwargs)
         # turn on model gradients
-        self.set_requires_grad('', requires_grad=True)
+        self.set_requires_grad(on_parameters, requires_grad=True)
         return seed
 
-    def add_loss(self, inputs, loss_fn, layer_ids, module_name=None, **kwargs):
+    def add_loss(self, inputs, loss_fn, layer_ids, module_name=None,
+                 cost=1., parameters=None, **kwargs):
         """
         #TODO:WRITEME
         """
-        #TODO: give option for specific optimizer
-        # get loss/update inputs for each layer
-        loss = 0.
+        if parameters:
+            on_parameters = self.get_trainable_params()
+            self.set_requires_grad(pattern='', requires_grad=False)
+            self.set_requires_grad(parameters, requires_grad=True)
+        loss = torch.zeros(1, requires_grad=True)
         for i, (name, layer) in enumerate(self.layers.named_children()):
             if name in layer_ids:
                 kwargs_i = {}
@@ -356,9 +368,13 @@ class Model(nn.Module):
                         kwargs_i.update({key: value[i]})
                     else:
                         kwargs_i.update({key: value})
-                loss += layer.add_loss(inputs, loss_fn, module_name, **kwargs_i)
+                loss = loss + layer.add_loss(inputs, loss_fn, module_name, **kwargs_i)
             for ii, input in enumerate(inputs):
                 inputs[ii] = layer.forward(input)
+        loss = torch.mul(loss, cost)
+        if parameters:
+            self.set_requires_grad(parameters, requires_grad=False)
+            self.set_requires_grad(on_parameters, requires_grad=True)
         return loss
 
     def sparsity(self, input, layer_ids, module_name, target, cost=1.):
