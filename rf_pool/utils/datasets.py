@@ -234,7 +234,7 @@ class CrowdedDataset(Dataset):
         if dataset.train and hasattr(dataset, 'train_data'):
             data = dataset.train_data
             labels = dataset.train_labels
-        elif not self.train and hasattr(dataset, 'test_data'):
+        elif not dataset.train and hasattr(dataset, 'test_data'):
             data = dataset.test_data
             labels = dataset.test_labels
         elif hasattr(dataset, 'data'):
@@ -363,9 +363,10 @@ class CrowdedDataset(Dataset):
     def __getitem__(self, index):
         img = self.data[index]
         label = self.labels[index] - self.offset
-        img = Image.fromarray(img.numpy(), mode='L')
-        if self.transform:
-            img = self.transform(img)
+        img = torch.unsqueeze(img, 0)
+#         img = Image.fromarray(img.numpy(), mode='L')
+#         if self.transform:
+#             img = self.transform(img)
         return (img, label)
 
 class CrowdedCircles(torch.utils.data.Dataset):
