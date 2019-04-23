@@ -202,7 +202,7 @@ def div_norm_pool(u, out_shape, mask=None, n=2., s=0.5):
     else:
         u_n = u
         s_n = s
-    probs = torch.div(u_n, s_n + torch.sum(u_n, dim=[-2,-1], keepdim=True))
+    probs = torch.div(u_n, s_n + torch.sum(u_n, dim=[r-2,-1], keepdim=True))
     # set detection mean-field estimates and samples
     h_mean = torch.reshape(probs, out_shape)
     h_sample = torch.reshape(max_index(probs), out_shape)
@@ -472,7 +472,7 @@ def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type='max', kernel_size=2,
 
         # apply pooling function
         if pool_fn:
-            h_mean, p_mean = pool_fn(rf_u, rf_u.shape, **kwargs)
+            h_mean, p_mean = pool_fn(rf_u.flatten(-2), rf_u.shape, **kwargs)
         else:
             h_mean = rf_u
             p_mean = rf_u
