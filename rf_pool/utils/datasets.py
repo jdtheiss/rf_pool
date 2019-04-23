@@ -363,6 +363,8 @@ class CrowdedDataset(Dataset):
     def __getitem__(self, index):
         img = self.data[index]
         label = self.labels[index] - self.offset
+        if label < 0:
+            label = self.labels[index]
         img = torch.unsqueeze(img, 0)
 #         img = Image.fromarray(img.numpy(), mode='L')
 #         if self.transform:
