@@ -199,10 +199,13 @@ class Model(nn.Module):
             new_param = torch.nn.Parameter(torch.as_tensor(model_dict.get(model_key)))
             layer.register_parameter(fields[-1], new_param)
 
-    def init_weights(self, suffix='weight', fn=torch.randn_like):
-        for name, param in self.named_parameters():
+    def init_weights(self, named_parameters=None, pattern='weight',
+                     fn=torch.randn_like):
+        if named_parameters is None:
+            named_parameters = self.named_parameters()
+        for name, param in named_parameters:
             with torch.no_grad():
-                if name.endswith(suffix):
+                if name.find(pattern) >=0:
                     param.set_(fn(param))
 
     def get_param_names(self):
