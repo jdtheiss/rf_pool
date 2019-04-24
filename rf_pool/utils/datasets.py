@@ -20,12 +20,27 @@ class Dataset(torch.utils.data.Dataset):
         self.data = None
         self.labels = None
         self.transform = None
+        self.init_transform = None
 
     def set_data(self):
         pass
 
     def set_labels(self):
         pass
+
+    def get_data_labels(self, dataset, data_keys, label_keys):
+        # get data, labels
+        data = None
+        labels = None
+        for data_key in data_keys:
+            if hasattr(dataset, data_key):
+                data = getattr(dataset, data_key)
+                break
+        for label_key in label_keys:
+            if hasattr(dataset, label_key):
+                labels = getattr(dataset, label_key)
+                break
+        return data, labels
 
     def set_data_info(self, keys, labels):
         for i, key in enumerate(keys):
@@ -43,30 +58,48 @@ class Dataset(torch.utils.data.Dataset):
             elif key == pattern:
                 self.data_info.update({key: label})
 
-    def apply_transform(self, transform=None, **kwargs):
+    def to_numpy(self, x):
+        # convert to numpy
+        if hasattr(x, 'numpy'):
+            x = torch.squeeze(x)
+            x = x.numpy()
+        else:
+            x = np.array(x)
+        return x
+
+    def to_Image(self, x):
+        # convert to PIL Image
+        if type(x) is not Image.Image:
+            x = Image.fromarray(x)
+        return x
+
+    def apply_transform(self, data, transform=None, **kwargs):
         # apply a specific transform to data
-        data = []
-        for i, d in enumerate(self.data):
+        if transform is None and len(kwargs) == 0:
+            return data
+        output = []
+        for i, d in enumerate(data):
             d = functions.kwarg_fn([self, list, dict, __builtins__, np, torch],
                                    d, **kwargs)
+            # convert to numpy, Image
+            d = self.to_numpy(d)
+            d = self.to_Image(d)
+            # apply transform
             if transform:
                 d = transform(d)
-            data.append(d)
-        if np.all([type(d) is torch.Tensor and d.ndimension()==4 for d in data]):
-            self.data = torch.cat(data)
-        else:
-            self.data = data
+            output.append(d)
+        return output
 
     def __getitem__(self, index):
         img = self.data[index]
         if self.labels is not None and len(self.labels) > index:
             label = self.labels[index]
         else:
-            label = 0
-        # ensure correct number of dimensions
-        if type(self.data) is torch.Tensor:
-#             img = img.unsqueeze(-1)
-            img = img.numpy()
+            label = -1
+        # convert to numpy, Image
+        img = self.to_numpy(img)
+        img = self.to_Image(img)
+        # apply transform
         if self.transform:
             img = self.transform(img)
         return (img, label)
@@ -185,191 +218,122 @@ class TripletDataset(Dataset):
 
 class CrowdedDataset(Dataset):
     """
-    Converts a dataset from torch.torchvision.datasets into crowded stimuli with flankers
+    Converts a dataset from torch.torchvision.datasets into crowded stimuli
+    with flankers
 
     Attributes
     ----------
     dataset : torchvision.datasets
         the dataset to be converted into a crowded dataset
-    n_flank: int
+    n_flankers : int
         number of flankers for the crowded stimuli
+    n_images : int
+        number of crowded stimuli images to create
     target_labels : list, optional
         labels of the dataset designated for targets
-    flank_labels : list, optional
+    flanker_labels : list, optional
         labels of the dataset designated for flankers
-    same_flank : bool, optional
-        if True, all flankers will be the same image
-    flank_repeats: bool, optional
-        if True,
+    repeat_flankers : bool, optional
+        if True, allows flanker labels to be repeated
+    same_flankers : bool, optional
+        if True, all flankers will be the same label
+    target_flankers : bool, optional
+        if True, all flankers will be same label as target
+    init_transform : torchvision.transforms, optional
+        transform to apply to data from dataset prior to creating crowded stimuli
     transform : torchvision.transform, optional
-        transforms the data
+        transform applied to the data during __getitem__ call
     **kwargs : dict
-        The crowded stimul arguments
+        crowded stimul arguments
         see stimuli.make_crowded_stimuli for details
 
     Methods
     -------
-    make_stimuli(self, **kwargs)
-        makes crowded stimuli
+    get_data_labels(dataset, data_keys, label_keys)
+        return *data, *labels attributes from dataset (e.g., dataset.train_data)
+    set_data_info(keys, labels)
+        set the data_info dictionary for CrowdedDataset
+        keys should be target_labels+flanker_labels;
+        labels should be obtained using get_data_labels()
+    set_data_labels(dataset, n_images, n_flankers, target_labels, flanker_labels,
+                    **kwargs)
+        set data, labels attributes for CrowdedDataset
+        Note: dataset.transform will be applied for each image in crowded stimuli
     """
-
-    def __init__(self, dataset, n_flank, target_labels=[], flank_labels=[],
-                 same_flank=False, flank_repeats=True, transform=None,
-                 transform_init=None, offset=0, **kwargs):
+    def __init__(self, dataset, n_flankers, n_images, target_labels=[],
+                 flanker_labels=[], repeat_flankers=True, same_flankers=False,
+                 target_flankers=False, transform=None, **kwargs):
         super(CrowdedDataset, self).__init__()
-        self.n_flank = n_flank
-        self.same_flank = same_flank
-        self.flank_repeats = flank_repeats
+        self.n_flankers = n_flankers
+        self.n_images = n_images
         self.target_labels = target_labels
-        self.flank_labels = flank_labels
+        self.flanker_labels = flanker_labels
+        self.repeat_flankers = repeat_flankers
+        self.same_flankers = same_flankers
+        self.target_flankers = target_flankers
+        self.transform = transform
+
+        # get labels from dataset
+        _, labels = self.get_data_labels(dataset, [],
+                                         ['labels','train_labels','test_labels'])
+
+        # set target_labels, flanker_labels
+        if len(self.target_labels) == 0:
+            self.target_labels = np.unique(labels).tolist()
+        if len(self.flanker_labels) == 0:
+            self.flanker_labels = np.unique(labels).tolist()
+        assert self.repeat_flankers or self.n_flankers <= len(self.flanker_labels), (
+            'if repeat_flankers = True, n_flankers must be <= len(flanker_labels)'
+        )
+
+        # set data_info
+        self.set_data_info(self.target_labels + self.flanker_labels, labels)
+
+        # set data
+        self.set_data_labels(dataset, self.n_images, self.n_flankers,
+                             self.target_labels, self.flanker_labels, **kwargs)
+
+    def set_data_info(self, keys, labels):
+        self.data_info = {}
+        for key in keys:
+            self.data_info.update({key: np.where(key==labels)[0].tolist()})
+
+    def set_data_labels(self, dataset, n_images, n_flankers, target_labels,
+                        flanker_labels, **kwargs):
         self.data = []
         self.labels = []
-        self.groups = {}
-        self.trackers = {}
-        self.transform = transform
-        self.transform_init = transform_init
-        self.offset = offset
+        for n in range(n_images):
+            # sample target/flanker labels
+            target_label_n = self.sample_label(target_labels, 1)[0]
+            flanker_labels_n = self.sample_label(flanker_labels, n_flankers,
+                                                 target_label_n)
+            # sample target/flanker data
+            target = self.sample_data(dataset, [target_label_n])[0]
+            flankers = self.sample_data(dataset, flanker_labels_n)
+            # create crowded stimuli
+            self.data.append(stimuli.make_crowded_stimuli(target, flankers, **kwargs))
+            self.labels.append(target_label_n)
 
-        # get data, labels from dataset
-        if dataset.train and hasattr(dataset, 'train_data'):
-            data = dataset.train_data
-            labels = dataset.train_labels
-        elif not dataset.train and hasattr(dataset, 'test_data'):
-            data = dataset.test_data
-            labels = dataset.test_labels
-        elif hasattr(dataset, 'data'):
-            data = dataset.data
-            labels = dataset.labels
+    def sample_data(self, dataset, labels):
+        data = []
+        for label in labels:
+            indices = self.data_info.get(label)
+            index = indices.pop(0)
+            self.data_info.update({label: indices + [index]})
+            data.append(self.to_numpy(dataset[index][0]))
+        return data
+
+    def sample_label(self, labels, n, target_label=None):
+        if self.target_flankers and target_label is not None:
+            labels = [target_label] * n
+        elif self.same_flankers:
+            labels = [np.random.permutation(labels)[0]] * n
+        elif self.repeat_flankers:
+            rand_indices = np.random.randint(len(labels), size=n)
+            labels = [labels[i] for i in rand_indices]
         else:
-            raise Exception(
-                'dataset has no attribute data, train_data, or test_data'
-            )
-            
-        if type(data) is torch.Tensor:
-            data = data.numpy()
-
-        # # intialize groupings
-        if len(self.target_labels) > 0 and len(self.flank_labels) == 0:
-            all_labels = np.unique(self.target_labels)
-        elif len(self.target_labels) == 0 and len(self.flank_labels) > 0:
-            self.target_labels = list(np.unique(self.start_labels))
-            all_labels = np.unique(self.target_labels + self.flank_labels)
-        elif len(self.target_labels + self.flank_labels) == 0:
-            self.target_labels = self.flank_labels = all_labels = np.unique(self.start_labels)
-        else:
-            all_labels = np.unique(self.target_labels + self.flank_labels)
-        
-        self.init_group_by_labels(data, labels, self.target_labels + self.flank_labels)
-        
-        # crowd the input images
-        while np.all([(self.trackers[i] + self.n_flank) < len(self.groups[i])  for i in all_labels]):
-            crowded_img, target_label = self.make_stimuli(self.n_flank, self.target_labels,
-                                                          self.flank_labels, **kwargs)
-            self.data.append(crowded_img)
-            self.labels.append(target_label[0])
-            
-        self.data = torch.tensor(self.data, dtype=torch.float32)#, dtype=torch.uint8)
-        self.labels = torch.tensor(self.labels)
-        #TODO: the above approach does not get all targets
-
-        #TODO: this approach takes forever
-        # set indices for targets and flankers
-#         if len(self.target_labels) == 0:
-#             self.target_label = list(np.unique(labels))
-#         if len(self.flank_labels) == 0:
-#             self.flank_labels = list(np.unique(labels))
-#         self.set_data_info(self.target_labels, labels)
-#         self.set_data_info(self.flank_labels, labels)
-
-#         # check if n_flank > len(flank_labels) and flank_repeats = False
-#         if self.n_flank > len(self.flank_labels) and not self.flank_repeats:
-#             warnings.warn("No repeats: n_flank set to len(flank_labels)")
-#             self.n_flank = len(self.flank_labels)
-
-#         # set data and labels
-#         self.set_data(data, self.target_labels, self.flank_labels, self.n_flank,
-#                       **kwargs)
-
-#     def set_data_info(self, keys, labels):
-#             for key in keys:
-#                 self.data_info.update({key: np.where(labels==key)[0].tolist()})
-
-#     def set_data(self, data, target_labels, flank_labels, n_flank, **kwargs):
-#         self.data = []
-#         self.labels = []
-#         for target_label in target_labels:
-#             # set target
-#             for target_index in self.data_info.get(target_label):
-#                 target = data[target_index]
-#                 # get flank_label
-#                 if self.same_flank:
-#                     flank_labels_i = [target_label] * n_flank
-#                 elif self.flank_repeats:
-#                     rand_indices = np.random.randint(len(flank_labels), size=n_flank)
-#                     flank_labels_i = np.array(flank_labels)[rand_indices]
-#                 else:
-#                     flank_labels_i = np.random.permutation(flank_labels)[:n_flank]
-#                 # set flankers
-#                 flanks = []
-#                 for flank_label in flank_labels_i:
-#                     # get flanker indices, remove target index
-#                     flank_indices = self.data_info.get(flank_label)
-#                     flank_indices = list(np.random.permutation(flank_indices))
-#                     if target_index in flank_indices:
-#                         flank_indices.remove(target_index)
-#                     flanks.append(data[flank_indices[0]])
-#                 # create crowded stimuli, append target_label
-#                 self.data.append(stimuli.make_crowded_stimuli(target, flanks, **kwargs))
-#                 self.labels.append(target_label)
-#         self.data = torch.as_tensor(self.data, dtype=torch.uint8)
-
-    def make_stimuli(self, n_flank, target_labels, flank_labels, **kwargs):
-        target, target_label = self.sample_by_label(1, target_labels)
-        flankers, _ = self.sample_by_label(n_flank, flank_labels)
-        s = stimuli.make_crowded_stimuli(target[0], flankers, **kwargs)
-        return s, target_label
-
-    def sample_by_label(self, n, group_labels):
-        if len(group_labels) > 0:
-            if self.same_flank:
-                choices = group_labels[np.random.randint(0, len(group_labels))]
-                samples = [self.groups[choices][self.trackers[choices]]] * n
-                self.trackers[choices] += 1
-            else:
-                if self.flank_repeats:
-                    choices = np.array(group_labels)[np.random.randint(0, len(group_labels), size=n)]
-                else:
-                    if len(group_labels) < self.n_flank:
-                        warnings.warn("No repeats: n_flank set to len(flank_labels)")
-                    choices = np.random.permutation(group_labels)[:n]
-                samples = []
-                for i in choices:
-                    samples.append(self.groups[i][self.trackers[i]])
-                    self.trackers[i] += 1
-        else:
-            samples = []
-            choices = []     
-        if self.transform_init:
-            samples = self.transform_samples(samples)  
-        return samples, choices
-
-    def init_group_by_labels(self, data, labels, group_labels):
-        for label in group_labels:
-            self.groups[label] = data[np.where(labels == label)]
-            self.trackers[label] = 0
-    def transform_samples(self, samples):
-        return [torch.squeeze(self.transform_init(Image.fromarray(img, mode='L'))).numpy() for img in samples]
-        
-    def __getitem__(self, index):
-        img = self.data[index]
-        label = self.labels[index] - self.offset
-        if label < 0:
-            label = self.labels[index]
-        img = torch.unsqueeze(img, 0)
-#         img = Image.fromarray(img.numpy(), mode='L')
-#         if self.transform:
-#             img = self.transform(img)
-        return (img, label)
+            labels = np.random.permutation(labels)[:n]
+        return labels
 
 class CrowdedCircles(torch.utils.data.Dataset):
     """
