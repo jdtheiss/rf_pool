@@ -20,7 +20,7 @@ class Dataset(torch.utils.data.Dataset):
         self.data = None
         self.labels = None
         self.transform = None
-        self.label_map = None 
+        self.label_map = {}
 
     def set_data(self):
         pass
@@ -94,8 +94,8 @@ class Dataset(torch.utils.data.Dataset):
         img = self.data[index]
         if self.labels is not None and len(self.labels) > index:
             label = self.labels[index]
-            if self.label_map is not None:
-                label = self.label_map[label]
+            if self.label_map.get(label):
+                label = self.label_map.get(label)
         else:
             label = -1
         # convert to numpy, Image
@@ -243,7 +243,7 @@ class CrowdedDataset(Dataset):
         if True, all flankers will be same label as target
     transform : torchvision.transform, optional
         transform applied to the data during __getitem__ call
-    label_map : numpy.array, optional
+    label_map : dict, optional
         custom mapping applied to the label during __getitem__ call
     **kwargs : dict
         crowded stimul arguments
@@ -264,7 +264,7 @@ class CrowdedDataset(Dataset):
     """
     def __init__(self, dataset, n_flankers, n_images, target_labels=[],
                  flanker_labels=[], repeat_flankers=True, same_flankers=False,
-                 target_flankers=False, transform=None, label_map=None, **kwargs):
+                 target_flankers=False, transform=None, label_map={}, **kwargs):
         super(CrowdedDataset, self).__init__()
         self.n_flankers = n_flankers
         self.n_images = n_images
@@ -337,7 +337,7 @@ class CrowdedDataset(Dataset):
         else:
             labels = np.random.permutation(labels)[:n]
         return labels
-    
+
 
 
 class CrowdedCircles(torch.utils.data.Dataset):
