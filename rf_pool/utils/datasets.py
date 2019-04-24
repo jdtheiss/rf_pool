@@ -94,7 +94,7 @@ class Dataset(torch.utils.data.Dataset):
         img = self.data[index]
         if self.labels is not None and len(self.labels) > index:
             label = self.labels[index]
-            if self.label_map.get(label):
+            if self.label_map.get(label) is not None:
                 label = self.label_map.get(label)
         else:
             label = -1
