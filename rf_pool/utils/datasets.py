@@ -20,7 +20,7 @@ class Dataset(torch.utils.data.Dataset):
         self.data = None
         self.labels = None
         self.transform = None
-        self.init_transform = None
+        self.label_mapping = None 
 
     def set_data(self):
         pass
@@ -89,11 +89,19 @@ class Dataset(torch.utils.data.Dataset):
                 d = transform(d)
             output.append(d)
         return output
+    
+    def get_label_mapping(self, labels):
+        label_init = np.sort(labels)
+        label_map = np.zeros(np.max(label_init)+1)
+        label_map[label_init] = np.arange(0,len(label_init))
+        return label_map
 
     def __getitem__(self, index):
         img = self.data[index]
         if self.labels is not None and len(self.labels) > index:
             label = self.labels[index]
+            if self.label_mapping is not None:
+                label = self.label_mapping[label]
         else:
             label = -1
         # convert to numpy, Image
@@ -285,6 +293,7 @@ class CrowdedDataset(Dataset):
         assert self.repeat_flankers or self.n_flankers <= len(self.flanker_labels), (
             'if repeat_flankers = True, n_flankers must be <= len(flanker_labels)'
         )
+        self.label_mapping = self.get_label_mapping(self.target_labels)
 
         # set data_info
         self.set_data_info(self.target_labels + self.flanker_labels, labels)
@@ -334,6 +343,8 @@ class CrowdedDataset(Dataset):
         else:
             labels = np.random.permutation(labels)[:n]
         return labels
+    
+
 
 class CrowdedCircles(torch.utils.data.Dataset):
     """
