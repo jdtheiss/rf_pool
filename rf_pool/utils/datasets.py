@@ -20,7 +20,7 @@ class Dataset(torch.utils.data.Dataset):
         self.data = None
         self.labels = None
         self.transform = None
-        self.label_mapping = None 
+        self.label_map = None 
 
     def set_data(self):
         pass
@@ -89,19 +89,13 @@ class Dataset(torch.utils.data.Dataset):
                 d = transform(d)
             output.append(d)
         return output
-    
-    def get_label_mapping(self, labels):
-        label_init = np.sort(labels)
-        label_map = np.zeros(np.max(label_init)+1)
-        label_map[label_init] = np.arange(0,len(label_init))
-        return label_map
 
     def __getitem__(self, index):
         img = self.data[index]
         if self.labels is not None and len(self.labels) > index:
             label = self.labels[index]
-            if self.label_mapping is not None:
-                label = self.label_mapping[label]
+            if self.label_map is not None:
+                label = self.label_map[label]
         else:
             label = -1
         # convert to numpy, Image
@@ -247,10 +241,10 @@ class CrowdedDataset(Dataset):
         if True, all flankers will be the same label
     target_flankers : bool, optional
         if True, all flankers will be same label as target
-    init_transform : torchvision.transforms, optional
-        transform to apply to data from dataset prior to creating crowded stimuli
     transform : torchvision.transform, optional
         transform applied to the data during __getitem__ call
+    label_map : numpy.array, optional
+        custom mapping applied to the label during __getitem__ call
     **kwargs : dict
         crowded stimul arguments
         see stimuli.make_crowded_stimuli for details
@@ -270,7 +264,7 @@ class CrowdedDataset(Dataset):
     """
     def __init__(self, dataset, n_flankers, n_images, target_labels=[],
                  flanker_labels=[], repeat_flankers=True, same_flankers=False,
-                 target_flankers=False, transform=None, **kwargs):
+                 target_flankers=False, transform=None, label_map=None, **kwargs):
         super(CrowdedDataset, self).__init__()
         self.n_flankers = n_flankers
         self.n_images = n_images
@@ -280,6 +274,7 @@ class CrowdedDataset(Dataset):
         self.same_flankers = same_flankers
         self.target_flankers = target_flankers
         self.transform = transform
+        self.label_map = label_map
 
         # get labels from dataset
         _, labels = self.get_data_labels(dataset, [],
@@ -293,7 +288,6 @@ class CrowdedDataset(Dataset):
         assert self.repeat_flankers or self.n_flankers <= len(self.flanker_labels), (
             'if repeat_flankers = True, n_flankers must be <= len(flanker_labels)'
         )
-        self.label_mapping = self.get_label_mapping(self.target_labels)
 
         # set data_info
         self.set_data_info(self.target_labels + self.flanker_labels, labels)
