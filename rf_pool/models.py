@@ -164,12 +164,12 @@ class Model(nn.Module):
         with open(filename, 'wb') as f:
             pickle.dump([model_dict,] + extras, f)
 
-    def load_model(self, filename):
+    def load_model(self, filename, param_dict={}):
         model = pickle.load(open(filename, 'rb'))
         if type(model) is list:
             model = model[0]
         if type(model) is dict:
-            self.load_weights(model)
+            self.load_weights(model, param_dict)
             model = self
         return model
 
@@ -186,7 +186,7 @@ class Model(nn.Module):
             # get layer to register parameter
             fields = name.split('.')
             layer = self
-            for field in fields[:-1]:
+            for field in fields:
                 layer = getattr(layer, field)
             # get param name in model_dict
             if param_dict.get(name):
@@ -195,9 +195,8 @@ class Model(nn.Module):
                 model_key = name
             else: # skip param
                 continue
-            # register parameter
-            new_param = torch.nn.Parameter(torch.as_tensor(model_dict.get(model_key)))
-            layer.register_parameter(fields[-1], new_param)
+            # update parameter
+            setattr(layer, 'data', torch.as_tensor(model_dict.get(model_key)))
 
     def init_weights(self, named_parameters=None, pattern='weight',
                      fn=torch.randn_like):
