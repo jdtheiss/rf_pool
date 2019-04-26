@@ -135,7 +135,7 @@ def kwarg_fn(modules=[list, dict, __builtins__, np, torch], x=None, **kwargs):
             x = output
     return x
 
-def get_attributes(obj, keys):
+def get_attributes(obj, keys, default=None):
     output = {}
     for key in keys:
         if hasattr(obj, 'get') and key in obj:
@@ -143,7 +143,19 @@ def get_attributes(obj, keys):
         elif hasattr(obj, key):
             output.update({key: getattr(obj, key)})
         else:
-            output.setdefault(key, None)
+            output.setdefault(key, default)
+    return output
+
+def pop_attributes(obj, keys, default=None):
+    output = {}
+    for key in keys:
+        if hasattr(obj, 'pop') and key in obj:
+            output.update({key: obj.pop(key)})
+        elif hasattr(obj, key):
+            output.update({key: getattr(obj, key)})
+            delattr(obj, key)
+        else:
+            output.setdefault(key, default)
     return output
 
 def set_attributes(obj, **kwargs):
