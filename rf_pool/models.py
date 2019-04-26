@@ -262,26 +262,26 @@ class Model(nn.Module):
 
         return 100 * correct / total
 
-    def train(self, n_epochs, trainloader, loss_fn, optimizer, monitor=100,
-              **kwargs):
+    def train(self, n_epochs, trainloader, loss_fn, optimizer, monitor=100, **kwargs):
         """
         #TODO:WRITEME
         """
-        # additional loss
-        if 'add_loss' in kwargs.keys():
-            add_loss = kwargs.pop('add_loss')
-        else:
-            add_loss = {}
-        # sparsity
-        if 'sparsity' in kwargs.keys():
-            sparsity = kwargs.pop('sparsity')
-        else:
-            sparsity = {}
-        # label based parameters
-        if 'label_params' in kwargs.keys():
-            label_params = kwargs.pop('label_params')
-        else:
-            label_params = {}
+        # get layer_id (layer-wise training) from kwargs
+        options = functions.pop_attributes(kwargs, ['layer_id'], default=None)
+        # get options from kwargs
+        options.update(functions.pop_attributes(kwargs,
+                                                ['add_loss','sparsity','scheduler',
+                                                 'label_params','show_negative'],
+                                                default={}))
+        # if layer-wise training, ensure layer_id str and get pre_layer_ids
+        if options.get('layer_id') is not None:
+            layer_id = str(options.get('layer_id'))
+            pre_layer_ids = self.pre_layer_ids(layer_id)
+        # set label parameter gradients to false
+        if options.get('label_params'):
+            label_params = options.get('label_params')
+            self.set_grad_by_label(label_params.keys(), label_params, False)
+        # train for n_epochs
         loss_history = []
         running_loss = 0.
         for epoch in range(n_epochs):
@@ -289,40 +289,45 @@ class Model(nn.Module):
                 # get inputs, labels
                 inputs = data[:-1]
                 label = data[-1]
-                # set label_parameters
-                if label_params.get(label) is not None:
-                    if type(label_params).get(label) is str:
-                        self.set_requires_grad(pattern=label_params.get(label),
-                                               requires_grad=True)
-                    else:
-                        self.set_requires_grad(label_params.get(label),
-                                               requires_grad=True)
+                # turn on label-based parameter gradients
+                if options.get('label_params'):
+                    self.set_grad_by_label([label], label_params, True)
                 # zero gradients
                 optimizer.zero_grad()
-                # get outputs
-                output = self.forward(inputs[0])
-                # get loss
-                loss = loss_fn(output, label)
-                # additional loss
-                if add_loss:
-                    added_loss = self.add_loss(inputs, **add_loss)
-                    loss = loss + added_loss
-                # sparsity
-                if sparsity:
-                    self.sparsity(inputs[0], **sparsity)
-                loss.backward()
+                # layerwise training
+                if options.get('layer_id') is not None:
+                    # get inputs for layer_id
+                    layer_input = self.apply_layers(inputs[0], pre_layer_ids)
+                    # train
+                    loss = self.layers[layer_id].train(layer_input,
+                                                       add_loss=options.get('add_loss'),
+                                                       sparsity=options.get('sparsity'),
+                                                       **kwargs)
+                else: # normal training
+                    # get outputs
+                    output = self.forward(inputs[0])
+                    # get loss
+                    loss = loss_fn(output, label)
+                    # additional loss
+                    if options.get('add_loss'):
+                        added_loss = self.add_loss(inputs, **options.get('add_loss'))
+                        loss = loss + added_loss
+                    # sparsity
+                    if options.get('sparsity'):
+                        self.sparsity(inputs[0], **options.get('sparsity'))
+                    # backprop
+                    loss.backward()
+                    loss = loss.item()
                 # update parameters
                 optimizer.step()
+                # update scheduler
+                if options.get('scheduler'):
+                    options.get('scheduler').step()
                 # set label_parameters
-                if label_params.get(label) is not None:
-                    if type(label_params).get(label) is str:
-                        self.set_requires_grad(pattern=label_params.get(label),
-                                               requires_grad=True)
-                    else:
-                        self.set_requires_grad(label_params.get(label),
-                                               requires_grad=True)
+                if options.get('label_params'):
+                    self.set_grad_by_label([label], label_params, False)
                 # monitor
-                running_loss += loss.item()
+                running_loss += loss
                 if (i+1) % monitor == 0:
                     # display loss
                     clear_output(wait=True)
@@ -332,6 +337,9 @@ class Model(nn.Module):
                     plt.plot(loss_history)
                     plt.show()
                     running_loss = 0.
+                    # show negative
+                    if options.get('show_negative'):
+                        self.show_negative(inputs[0], **options.get('show_negative'))
                     # call other monitoring functions
                     functions.kwarg_fn([IPython.display, self], None, **kwargs)
         return loss_history
@@ -377,6 +385,17 @@ class Model(nn.Module):
         # turn on model gradients
         self.set_requires_grad(on_parameters, requires_grad=True)
         return seed
+
+    def set_grad_by_label(self, labels, label_params, requires_grad=True):
+        # set parameter gradients based on label
+        for label in labels:
+            if label_params.get(label) is not None:
+                if type(label_params.get(label)) is str:
+                    self.set_requires_grad(pattern=label_params.get(label),
+                                           requires_grad=requires_grad)
+                else:
+                    self.set_requires_grad(label_params.get(label),
+                                           requires_grad=requires_grad)
 
     def add_loss(self, inputs, loss_fn, layer_ids, module_name=None,
                  cost=1., parameters=None, **kwargs):
@@ -510,6 +529,40 @@ class Model(nn.Module):
         plt.show()
         return fig
 
+    def show_negative(self, input, layer_id, img_shape=None, figsize=(5,5),
+                      cmap=None):
+        """
+        #TODO:WRITEME
+        """
+        layer_id = str(layer_id)
+        pre_layer_ids = self.pre_layer_ids(layer_id)
+        # pass forward, then reconstruct down
+        with torch.no_grad():
+            neg = self.apply_layers(input, pre_layer_ids)
+            neg = self.layers[layer_id].forward(neg)
+            neg = self.layers[layer_id].reconstruct(neg)
+            neg = self.apply_layers(neg, pre_layer_ids, forward=False)
+        # check that negative has <= 3 channels
+        assert neg.shape[1] <= 3, ('negative image must have less than 3 channels')
+        # reshape, permute for plotting
+        if img_shape:
+            input = torch.reshape(input, (-1,1) + img_shape)
+            neg = torch.reshape(neg, (-1,1) + img_shape)
+        input = torch.squeeze(input.permute(0,2,3,1), -1).numpy()
+        neg = torch.squeeze(neg.permute(0,2,3,1), -1).numpy()
+        input = functions.normalize_range(input, dims=(1,2))
+        neg = functions.normalize_range(neg, dims=(1,2))
+        # plot negatives
+        fig, ax = plt.subplots(input.shape[0], 2, figsize=figsize)
+        ax = np.reshape(ax, (input.shape[0], 2))
+        for r in range(input.shape[0]):
+            ax[r,0].axis('off')
+            ax[r,1].axis('off')
+            ax[r,0].imshow(input[r], cmap=cmap)
+            ax[r,1].imshow(neg[r], cmap=cmap)
+        plt.show()
+        return fig
+
 class FeedForwardNetwork(Model):
     """
     #TODO:WRITEME
@@ -529,7 +582,8 @@ class DeepBeliefNetwork(Model):
 
     Methods
     -------
-    train(layer_id, n_epochs, trainloader, optimizer, monitor=100, **kwargs)
+    train_layer(layer_id, n_epochs, trainloader, optimizer, k=1, monitor=100,
+                **kwargs)
         train deep belief network with greedy layer-wise contrastive divergence
 
     References
@@ -539,87 +593,10 @@ class DeepBeliefNetwork(Model):
     def __init__(self):
         super(DeepBeliefNetwork, self).__init__()
 
-    def show_negative(self, v, layer_id, k=1, img_shape=None, figsize=(5,5),
-                      cmap=None):
-        """
-        #TODO:WRITEME
-        """
-        layer_id = str(layer_id)
-        pre_layer_ids = self.pre_layer_ids(layer_id)
-        # prop up, gibbs sample, then reconstruct down
-        with torch.no_grad():
-            neg = self.apply_layers(v, pre_layer_ids)
-            neg = self.layers[layer_id].gibbs_vhv(neg, k=k)[-2]
-            neg = self.apply_layers(neg, pre_layer_ids, forward=False)
-        # reshape, permute for plotting
-        if img_shape:
-            v = torch.reshape(v, (-1,1) + img_shape)
-            neg = torch.reshape(neg, (-1,1) + img_shape)
-        v = torch.squeeze(v.permute(0,2,3,1), -1).numpy()
-        neg = torch.squeeze(neg.permute(0,2,3,1), -1).numpy()
-        v = functions.normalize_range(v, dims=(1,2))
-        neg = functions.normalize_range(neg, dims=(1,2))
-        # plot negatives
-        fig, ax = plt.subplots(v.shape[0], 2, figsize=figsize)
-        ax = np.reshape(ax, (v.shape[0], 2))
-        for r in range(v.shape[0]):
-            ax[r,0].axis('off')
-            ax[r,1].axis('off')
-            ax[r,0].imshow(v[r], cmap=cmap)
-            ax[r,1].imshow(neg[r], cmap=cmap)
-        plt.show()
-        return fig
-
-    def train(self, layer_id, n_epochs, trainloader, optimizer, monitor=100,
-              show_negative={}, **kwargs):
-        """
-        #TODO:WRITEME
-        """
-        # get first layer ids before layer_id
-        layer_id = str(layer_id)
-        pre_layer_ids = self.pre_layer_ids(layer_id)
-        # get number of training examples
-        n_train = len(trainloader)
-        # additional loss
-        if 'add_loss' in kwargs.keys():
-            add_loss = kwargs.pop('add_loss')
-        else:
-            add_loss = {}
-        # sparsity
-        if 'sparsity' in kwargs.keys():
-            sparsity = kwargs.pop('sparsity')
-        else:
-            sparsity = {}
-        # train for n_epochs
-        loss_history = []
-        running_loss = 0.
-        for epoch in range(n_epochs):
-            for i, data in enumerate(trainloader):
-                inputs = data[:-1]
-                optimizer.zero_grad()
-                # get inputs for layer_id
-                layer_input = self.apply_layers(inputs[0], pre_layer_ids)
-                # train
-                loss = self.layers[layer_id].train(layer_input, add_loss=add_loss,
-                                                   sparsity=sparsity, **kwargs)
-                # update parameters
-                optimizer.step()
-                running_loss += loss
-                # monitor loss, show negative and weights
-                if (epoch * n_train + i+1) % monitor == 0:
-                    # display loss
-                    clear_output(wait=True)
-                    display('[%5d] loss: %.3f' % (i+1, running_loss / monitor))
-                    # append loss and show history
-                    loss_history.append(running_loss / monitor)
-                    plt.plot(loss_history)
-                    plt.show()
-                    running_loss = 0.
-                    # call other monitoring functions
-                    if show_negative:
-                        self.show_negative(inputs[0], layer_id, **show_negative)
-                    functions.kwarg_fn([IPython.display, self], None, **kwargs)
-        return loss_history
+    def train_layer(self, layer_id, n_epochs, trainloader, optimizer, k=1,
+                    monitor=100, **kwargs):
+        return self.train(n_epochs, trainloader, None, optimizer, monitor=monitor,
+                          layer_id=layer_id, k=k, **kwargs)
 
 class DeepBoltzmannMachine(DeepBeliefNetwork):
     """

@@ -188,7 +188,7 @@ class Module(nn.Module):
         """
         #TODO:WRITEME
         """
-        # get field for weights 
+        # get field for weights
         if not hasattr(self, field):
             raise Exception('attribute ' + field + ' not found')
         w = getattr(self, field).clone().detach()
