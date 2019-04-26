@@ -183,13 +183,15 @@ class Module(nn.Module):
         sparse_cost.mul_(cost)
         self.hidden_bias.grad += sparse_cost
 
-    def show_weights(self, img_shape=None, figsize=(5, 5), cmap=None):
+    def show_weights(self, field='hidden_weight', img_shape=None,
+                     figsize=(5, 5), cmap=None):
         """
         #TODO:WRITEME
         """
-        if not hasattr(self, 'hidden_weight'):
-            raise Exception('attribute "hidden_weight" not found')
-        w = self.layers[layer_id].hidden_weight.clone().detach()
+        # get field for weights 
+        if not hasattr(self, field):
+            raise Exception('attribute ' + field + ' not found')
+        w = getattr(self, field).clone().detach()
         if w.shape[1] > 3:
             w = torch.flatten(w, 0, 1).unsqueeze(1)
         # get columns and rows
