@@ -7,7 +7,7 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
 
     Parameters
     ----------
-    target : numpy.array
+    target : numpy.ndarray
         the target image
     flankers : numpy.array_like
         list of flanker images
@@ -26,8 +26,8 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
 
     Returns
     -------
-    stimuli : nump.array
-        stimulus image with shape (background_size,)
+    stimulus : numpy.ndarray
+        stimulus image with shape (background_size,background_size)
 
     Examples
     --------
@@ -63,6 +63,180 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
 
     return stimuli
 
+def make_search_stimuli(target, distractors, background_size, target_loc=[0,0],
+                        distractor_locs=[], scramble=False, background_image=None):
+    """
+    makes a visual search array with target and distractors
+
+    Parameters
+    ----------
+    target : numpy.ndarray
+        target stimulus in visual search task
+    distractors : list or numpy.ndarray
+        distractor stimuli in visual search task
+    spacing : int or tuple
+        minimum spacing between centers of targets and distractors
+        if tuple, (minimum spacing, maximum spacing)
+    background_size : int or tuple
+        size of visual search array
+    target_loc : list of ints, optional
+        height, width locations for target center (in normalized units (-1,1))
+        [default: [0,0]] (center of image)
+    distractor_locs : lists of ints or numpy.ndarray, optional
+        height, width locations for each distractor center (in normalized units)
+        [default: []] (uniform randomly selected from (-1, 1))
+    scramble : bool, optional
+        if True, distractor images are scrambled [default: False]
+    background_image : numpy.ndarray, optional
+        stimulus background image into which targets/distractors are insert
+        note: background_size will be set to background_image.shape
+
+    Returns
+    -------
+    stimulus : numpy.ndarray
+        stimulus image with shape (background_size,background_size)
+
+    Examples
+    --------
+    #TODO
+    """
+    # set background_size, background_image
+    if type(background_size) is int:
+        background_size = (background_size,)*2
+    if background_image:
+        background_size = background_image.shape
+    else:
+        background_image = np.zeros(background_size)
+
+    # set target in background_image at location
+    stimulus = insert_image(background_image, target, target_loc)
+
+    # set distractors in stimulus with spacing
+    for i, distractor in enumerate(distractors):
+        # select random location with given spacing
+        if len(distractor_locs) > 0:
+            loc_i = distractor_locs[i]
+        else:
+            loc_i = 2. * np.random.rand(2) - 1.
+        # scramble image
+        if scramble:
+            distractor = scramble_image(distractor)
+        # insert to stimulus
+        stimulus = insert_image(stimulus, distractor, loc_i)
+
+    return stimulus
+
+def scramble_image(image): #TODO:needs to better scramble
+    """
+    #TODO:WRITEME
+    """
+    # get cropped image
+    cropped_indices = image.nonzero()
+    min_hw, max_hw = [np.min(cropped_indices, 1), np.max(cropped_indices, 1)]
+    cropped_image = image[min_hw[0]:max_hw[0], min_hw[1]:max_hw[1]]
+    # rotation and flip image randomly
+    if np.random.randint(2):
+        cropped_image = np.rot90(cropped_image)
+    if np.random.randint(2):
+        cropped_image = np.flipud(cropped_image)
+    # get image height, width
+    ih, iw = image.shape
+    ch, cw = cropped_image.shape
+    # set image patches randomly
+    n_h, n_w = [np.random.randint(ch//4, ch), np.random.randint(cw//4, cw)]
+    x, y = [ih // 2 - n_h // 2, iw // 2 - n_w // 2] #[np.random.randint(ih-n_h), np.random.randint(iw-n_w)]
+    i, j = [np.random.randint(ch-n_h), np.random.randint(cw-n_w)]
+    output = np.zeros_like(image)
+    output[x:x+n_h, y:y+n_w] = cropped_image[i:i+n_h, j:j+n_w]
+    return output
+
+def insert_image(stimulus, image, loc):
+    """
+    insert image into stimulus at normalized center location
+
+    Parameters
+    ----------
+    stimulus : numpy.ndarray
+        array to insert image into
+    image : numpy.ndarray
+        array to be inserted into stimulus with shape <= stimulus.shape
+    loc : list of ints
+        normalized (-1, 1) center location for image to be inserted into stimulus
+
+    Returns
+    -------
+    stimulus : numpy.ndarray
+        stimulus with image inserted at location with overlapping values set to
+        nonzero image values
+
+    Examples
+    --------
+    >>> output = insert_image(np.zeros((4,4)), np.ones((2,2)), [-0.5,-0.5])
+    >>> output
+    array([[1., 1., 0., 0.],
+           [1., 1., 0., 0.],
+           [0., 0., 0., 0.],
+           [0., 0., 0., 0.]])
+
+    Notes
+    -----
+    Creates new_image with shape = stimulus.shape, inserts image at normalized
+    location, then calls add_image_to_stimulus(stimulus, new_image).
+    """
+    assert np.all(np.array(stimulus.shape) - np.array(image.shape) >= 0), (
+        'image shape must be less than or equal to stimulus shape'
+    )
+    # get stimulus height and width
+    stim_hw = np.array(stimulus.shape, dtype='int')
+    img_hw = np.array(image.shape, dtype='int')
+    # get shift from location in pixels
+    shift = np.array((stim_hw * (np.array(loc) + 1.) / 2.) - (img_hw // 2), dtype='int')
+    # create zero_like stimulus
+    new_image = np.zeros_like(stimulus)
+    # insert image to zero_stimulus and roll to location
+    new_image[:img_hw[0], :img_hw[1]] = image
+    new_image = np.roll(new_image, shift, (0,1))
+    # return stimulus at location
+    return add_image_to_stimulus(stimulus, new_image)
+
+def add_image_to_stimulus(stimulus, image):
+    """
+    insert nonzero values into stimulus array at overlapping pixel locations
+
+    Parameters
+    ----------
+    stimulus : numpy.ndarray
+        array to set values into
+    image : numpy.ndarray
+        array to be inserted into stimulus with shape stimulus.shape
+
+    Returns
+    -------
+    stimulus : numpy.ndarray
+        stimulus with values replaced with nonzero image values at overlapping
+        pixel locations
+
+    Examples
+    --------
+    >>> image = np.zeros((4,4))
+    >>> image[:,1] = 1.
+    >>> image[0,:] = -1.
+    >>> stimulus = 0.5 * np.ones((4,4))
+    >>> output = add_image_to_stimulus(stimulus, image)
+    >>> output
+    array([[-1. , -1. , -1. , -1. ],
+           [ 0.5,  1. ,  0.5,  0.5],
+           [ 0.5,  1. ,  0.5,  0.5],
+           [ 0.5,  1. ,  0.5,  0.5]])
+    """
+    # create nonzero image mask
+    mask = np.zeros_like(image)
+    mask[image.nonzero()] = 1.
+    # multiply mask with stimulus to find overlap
+    overlap = mask * stimulus
+    # subtract overlap from image and add to stimulus
+    return stimulus + (image - overlap)
+
 def make_crowded_circles(n_flank, radius_range, dtype=np.float, **kwargs):
     """
     Makes a crowded stimulus with circle of random size
@@ -83,7 +257,7 @@ def make_crowded_circles(n_flank, radius_range, dtype=np.float, **kwargs):
 
     Returns
     -------
-    s : numpy.array
+    s : numpy.ndarray
         the crowded stimulus
     target_radius : float or int
         the radius of the central circle with dtype given

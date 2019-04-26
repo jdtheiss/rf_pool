@@ -23,10 +23,10 @@ class Dataset(torch.utils.data.Dataset):
         self.label_map = {}
 
     def set_data(self):
-        pass
+        raise NotImplementedError
 
     def set_labels(self):
-        pass
+        raise NotImplementedError
 
     def get_data_labels(self, dataset, data_keys, label_keys):
         # get data, labels
@@ -218,6 +218,70 @@ class TripletDataset(Dataset):
             negative = self.transform(negative)
         return (img, positive, negative, label)
 
+class SearchDataset(Dataset): #TODO: allow target_loc to be random
+    """
+    #TODO:WRITEME
+    """
+    def __init__(self, dataset, n_distractors, n_images, target_labels=[],
+                 distractor_labels=[], label_map={}, transform=None, **kwargs):
+        super(SearchDataset, self).__init__()
+        self.n_distractors = n_distractors
+        self.n_images = n_images
+        self.target_labels = target_labels
+        self.distractor_labels = distractor_labels
+        self.label_map = label_map
+        self.transform = transform
+
+        # get labels from dataset
+        _, labels = self.get_data_labels(dataset, [],
+                                         ['labels','train_labels','test_labels'])
+
+        # set target_labels, flanker_labels
+        if len(self.target_labels) == 0:
+            self.target_labels = np.unique(labels).tolist()
+        if len(self.distractor_labels) == 0:
+            self.distractor_labels = np.unique(labels).tolist()
+
+        # set data_info
+        self.set_data_info(self.target_labels + self.distractor_labels, labels)
+
+        # set data
+        self.set_data_labels(dataset, self.n_images, self.n_distractors,
+                             self.target_labels, self.distractor_labels, **kwargs)
+
+    def set_data_info(self, keys, labels):
+        self.data_info = {}
+        for key in keys:
+            self.data_info.update({key: np.where(key==labels)[0].tolist()})
+
+    def set_data_labels(self, dataset, n_images, n_distractors, target_labels,
+                        distractor_labels, **kwargs):
+        self.data = []
+        self.labels = []
+        for n in range(n_images):
+            # sample target/flanker labels
+            target_label_n = self.sample_label(target_labels, 1)[0]
+            distractor_labels_n = self.sample_label(distractor_labels, n_distractors)
+            # sample target/flanker data
+            target = self.sample_data(dataset, [target_label_n])[0]
+            distractors = self.sample_data(dataset, distractor_labels_n)
+            # create crowded stimuli
+            self.data.append(stimuli.make_search_stimuli(target, distractors,
+                                                         **kwargs))
+            self.labels.append(target_label_n)
+
+    def sample_data(self, dataset, labels):
+        data = []
+        for label in labels:
+            indices = self.data_info.get(label)
+            index = indices.pop(0)
+            self.data_info.update({label: indices + [index]})
+            data.append(self.to_numpy(dataset[index][0]))
+        return data
+
+    def sample_label(self, labels, n):
+        return np.random.permutation(labels)[:n]
+
 class CrowdedDataset(Dataset):
     """
     Converts a dataset from torch.torchvision.datasets into crowded stimuli
@@ -337,8 +401,6 @@ class CrowdedDataset(Dataset):
         else:
             labels = np.random.permutation(labels)[:n]
         return labels
-
-
 
 class CrowdedCircles(torch.utils.data.Dataset):
     """

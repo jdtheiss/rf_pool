@@ -95,7 +95,7 @@ class Layer(torch.nn.Module):
         lattice.show_kernel_lattice(rf_lattice, x=x, figsize=figsize, cmap=cmap)
 
     def forward(self):
-        pass
+        raise NotImplementedError
 
 class RF_Pool(Layer):
     """
