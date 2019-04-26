@@ -264,6 +264,9 @@ class Model(nn.Module):
 
     def train(self, n_epochs, trainloader, loss_fn, optimizer, monitor=100,
               **kwargs):
+        """
+        #TODO:WRITEME
+        """
         # additional loss
         if 'add_loss' in kwargs.keys():
             add_loss = kwargs.pop('add_loss')
@@ -274,13 +277,27 @@ class Model(nn.Module):
             sparsity = kwargs.pop('sparsity')
         else:
             sparsity = {}
+        # label based parameters
+        if 'label_params' in kwargs.keys():
+            label_params = kwargs.pop('label_params')
+        else:
+            label_params = {}
         loss_history = []
         running_loss = 0.
         for epoch in range(n_epochs):
             for i, data in enumerate(trainloader):
-                # get inputs, zero gradients
+                # get inputs, labels
                 inputs = data[:-1]
                 label = data[-1]
+                # set label_parameters
+                if label_params.get(label) is not None:
+                    if type(label_params).get(label) is str:
+                        self.set_requires_grad(pattern=label_params.get(label),
+                                               requires_grad=True)
+                    else:
+                        self.set_requires_grad(label_params.get(label),
+                                               requires_grad=True)
+                # zero gradients
                 optimizer.zero_grad()
                 # get outputs
                 output = self.forward(inputs[0])
@@ -296,6 +313,15 @@ class Model(nn.Module):
                 loss.backward()
                 # update parameters
                 optimizer.step()
+                # set label_parameters
+                if label_params.get(label) is not None:
+                    if type(label_params).get(label) is str:
+                        self.set_requires_grad(pattern=label_params.get(label),
+                                               requires_grad=True)
+                    else:
+                        self.set_requires_grad(label_params.get(label),
+                                               requires_grad=True)
+                # monitor
                 running_loss += loss.item()
                 if (i+1) % monitor == 0:
                     # display loss
@@ -441,14 +467,18 @@ class Model(nn.Module):
             for pool in rf_layers:
                 pool.show_lattice(x, figsize, cmap)
 
-    def show_weights(self, layer_id, img_shape=None, figsize=(5, 5), cmap=None):
+    def show_weights(self, layer_id, field='hidden_weight', img_shape=None,
+                     figsize=(5, 5), cmap=None):
         """
         #TODO:WRITEME
         """
-        # get weights reconstructed down if not first layer
+        # get field for weights
         layer_id = str(layer_id)
+        if not hasattr(self.layers[layer_id], field):
+            raise Exception('attribute ' + field + ' not found')
+        w = getattr(self.layers[layer_id], field).clone().detach()
+        # get weights reconstructed down if not first layer
         pre_layer_ids = self.pre_layer_ids(layer_id)
-        w = self.layers[layer_id].hidden_weight.clone().detach()
         if len(pre_layer_ids) > 0:
             w[w < 0.] = 0.
             w[w > 1.] = 1.
