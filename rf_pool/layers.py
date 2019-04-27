@@ -22,7 +22,7 @@ class Layer(torch.nn.Module):
         self.delta_sigma = None
         # set inputs for rf_pool
         self.rfs = None
-        self.pool_type = 'max'
+        self.pool_type = None
         self.kernel_size = 2
         self.input_keys = ['rfs', 'pool_type', 'kernel_size']
         self.input_keys.extend(kwargs.keys())

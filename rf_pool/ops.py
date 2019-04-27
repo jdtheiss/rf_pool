@@ -346,7 +346,7 @@ def sum_pool(u, out_shape, mask=None):
     p_mean = torch.mul(sum_val, h_sample)
     return h_mean, p_mean
 
-def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type='max', kernel_size=2,
+def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type=None, kernel_size=2,
             return_indices=False, **kwargs):
     """
     Receptive field pooling
@@ -468,11 +468,11 @@ def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type='max', kernel_size=2,
     # pooling across receptive fields
     if receptive_fields:
         # elemwise multiply u with rf_kernels (batch_size, ch, rf, u_h, u_w)
-        rf_u = torch.mul(u.unsqueeze(2), rfs)
+        rf_u = torch.mul(torch.unsqueeze(u, 2), rfs)
 
         # apply pooling function
         if pool_fn:
-            h_mean, p_mean = pool_fn(rf_u.flatten(-2), rf_u.shape, **kwargs)
+            h_mean, p_mean = pool_fn(torch.flatten(rf_u, -2), rf_u.shape, **kwargs)
         else:
             h_mean = rf_u
             p_mean = rf_u
@@ -480,12 +480,14 @@ def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type='max', kernel_size=2,
         # apply mu_mask
         if mu_mask is not None:
             assert mu_mask.shape[-3] == p_mean.shape[-3]
-            p_mean = torch.max(p_mean.flatten(-2), -1, keepdim=True)[0].unsqueeze(-1)
+            p_mean = torch.max(torch.flatten(p_mean, -2), -1, keepdim=True)[0]
+            p_mean = torch.unsqueeze(p_mean, -1)
             p_mean = torch.mul(mu_mask, p_mean)
             p_mean = torch.max(p_mean, -3)[0]
         # get max index in each RF
         elif pool_fn is None:
-            h_sample = max_index(h_mean.flatten(-2)).reshape(h_mean.shape)
+            h_sample = max_index(torch.flatten(h_mean, -2))
+            h_sample = torch.reshape(h_sample, h_mean.shape)
             h_sample = torch.max(h_sample, -3)[0]
             h_mean = torch.max(h_mean, -3)[0]
             p_mean = torch.mul(h_sample, h_mean)
