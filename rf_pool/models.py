@@ -160,9 +160,10 @@ class Model(nn.Module):
     def save_model(self, filename, extras=[]):
         if type(extras) is not list:
             extras = [extras]
+        model_str = str(self)
         model_dict = self.download_weights()
         with open(filename, 'wb') as f:
-            pickle.dump([model_dict,] + extras, f)
+            pickle.dump([model_dict,model_str] + extras, f)
 
     def load_model(self, filename, param_dict={}):
         model = pickle.load(open(filename, 'rb'))
@@ -592,6 +593,23 @@ class DeepBeliefNetwork(Model):
     """
     def __init__(self):
         super(DeepBeliefNetwork, self).__init__()
+
+    def posterior(self, layer_id, input, k=1):
+        # get layer_ids
+        layer_ids = list(self.layers.keys())
+        # get output of n_layers-1
+        top_layer_input = self.apply_layers(input, layer_ids[:-1])
+        # gibbs sample top layer
+        top_down = self.layers[layer_ids[-1]].gibbs_vhv(top_layer_input, k=k)[-2]
+        # reconstruct down to layer_id
+        post_layer_ids = self.post_layer_ids(layer_id)
+        layer_top_down = self.apply_layers(top_down, post_layer_ids[:-1],
+                                           forward=False)
+        # get layer_id input
+        pre_layer_ids = self.pre_layer_ids(layer_id)
+        layer_input = self.apply_layers(input, pre_layer_ids)
+        # sample h given input, top_down
+        return self.layers[layer_id].sample_h_given_vt(layer_input, layer_top_down)
 
     def train_layer(self, layer_id, n_epochs, trainloader, optimizer, k=1,
                     monitor=100, **kwargs):
