@@ -218,17 +218,20 @@ class TripletDataset(Dataset):
             negative = self.transform(negative)
         return (img, positive, negative, label)
 
-class SearchDataset(Dataset): #TODO: allow target_loc to be random
+class SearchDataset(Dataset):
     """
     #TODO:WRITEME
     """
     def __init__(self, dataset, n_distractors, n_images, target_labels=[],
-                 distractor_labels=[], label_map={}, transform=None, **kwargs):
+                 distractor_labels=[], target_loc=[], distractor_locs=[],
+                 label_map={}, transform=None, **kwargs):
         super(SearchDataset, self).__init__()
         self.n_distractors = n_distractors
         self.n_images = n_images
         self.target_labels = target_labels
         self.distractor_labels = distractor_labels
+        self.target_loc = target_loc
+        self.distractor_locs = distractor_locs
         self.label_map = label_map
         self.transform = transform
 
@@ -242,12 +245,19 @@ class SearchDataset(Dataset): #TODO: allow target_loc to be random
         if len(self.distractor_labels) == 0:
             self.distractor_labels = np.unique(labels).tolist()
 
+        # ensure target_loc, distractor_locs are list of lists
+        if len(self.target_loc) == 0 or type(self.target_loc[0]) is not list:
+            self.target_loc = [self.target_loc]
+        if len(self.distractor_locs) == 0 or type(self.distractor_locs[0]) is not list:
+            self.distractor_locs = [self.distractor_locs]
+
         # set data_info
         self.set_data_info(self.target_labels + self.distractor_labels, labels)
 
         # set data
         self.set_data_labels(dataset, self.n_images, self.n_distractors,
-                             self.target_labels, self.distractor_labels, **kwargs)
+                             self.target_labels, self.distractor_labels,
+                             self.target_loc, self.distractor_locs, **kwargs)
 
     def set_data_info(self, keys, labels):
         self.data_info = {}
@@ -255,7 +265,7 @@ class SearchDataset(Dataset): #TODO: allow target_loc to be random
             self.data_info.update({key: np.where(key==labels)[0].tolist()})
 
     def set_data_labels(self, dataset, n_images, n_distractors, target_labels,
-                        distractor_labels, **kwargs):
+                        distractor_labels, target_loc, distractor_locs, **kwargs):
         self.data = []
         self.labels = []
         for n in range(n_images):
@@ -265,9 +275,15 @@ class SearchDataset(Dataset): #TODO: allow target_loc to be random
             # sample target/flanker data
             target = self.sample_data(dataset, [target_label_n])[0]
             distractors = self.sample_data(dataset, distractor_labels_n)
+            # permute target_loc, distractor_locs
+            target_loc_i = np.random.permutation(target_loc)[0]
+            distractor_locs_i = np.random.permutation(distractor_locs)[:n_distractors]
             # create crowded stimuli
-            self.data.append(stimuli.make_search_stimuli(target, distractors,
-                                                         **kwargs))
+            stim = stimuli.make_search_stimuli(target, distractors,
+                                               target_loc=target_loc_i,
+                                               distractor_locs=distractor_locs_i,
+                                               **kwargs)
+            self.data.append(stim)
             self.labels.append(target_label_n)
 
     def sample_data(self, dataset, labels):

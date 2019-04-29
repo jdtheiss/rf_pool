@@ -63,8 +63,9 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
 
     return stimuli
 
-def make_search_stimuli(target, distractors, background_size, target_loc=[0,0],
-                        distractor_locs=[], scramble=False, background_image=None):
+def make_search_stimuli(target, distractors, background_size, spacing=1.,
+                        target_loc=[], distractor_locs=[], scramble=False,
+                        background_image=None):
     """
     makes a visual search array with target and distractors
 
@@ -74,17 +75,17 @@ def make_search_stimuli(target, distractors, background_size, target_loc=[0,0],
         target stimulus in visual search task
     distractors : list or numpy.ndarray
         distractor stimuli in visual search task
-    spacing : int or tuple
-        minimum spacing between centers of targets and distractors
-        if tuple, (minimum spacing, maximum spacing)
     background_size : int or tuple
         size of visual search array
+    spacing : int
+        minimum spacing between centers of targets and distractors
+        note: overridden by use of both target_loc and distractors_locs
     target_loc : list of ints, optional
         height, width locations for target center (in normalized units (-1,1))
-        [default: [0,0]] (center of image)
+        [default: 2. * np.random.rand(1,2) - 1.)
     distractor_locs : lists of ints or numpy.ndarray, optional
         height, width locations for each distractor center (in normalized units)
-        [default: []] (uniform randomly selected from (-1, 1))
+        [default: 2. * np.random.rand(len(distractors), 2) - 1.]
     scramble : bool, optional
         if True, distractor images are scrambled [default: False]
     background_image : numpy.ndarray, optional
@@ -108,21 +109,34 @@ def make_search_stimuli(target, distractors, background_size, target_loc=[0,0],
     else:
         background_image = np.zeros(background_size)
 
+    # set grid for possible locations based on spacing
+    assert spacing > 0., ('spacing must be > 0.')
+    max_hw = (np.array(background_size) - np.array(target.shape[-2:]))
+    xgrid, ygrid = np.meshgrid(np.arange(-max_hw[0], max_hw[0], spacing),
+                               np.arange(-max_hw[1], max_hw[1], spacing))
+    xgrid = xgrid / background_size[0]
+    ygrid = ygrid / background_size[1]
+    grid_locs = [(x,y) for x, y in zip(xgrid.flatten(), ygrid.flatten())]
+    grid_locs = np.random.permutation(grid_locs)[:len(distractors)+1]
+
+    # set target_loc/distractors_locs if empty
+    if len(target_loc) == 0:
+        target_loc = np.array(grid_locs[0])
+    else: # remove grid locations for target
+        raise NotImplementedError
+    if len(distractor_locs) == 0 or np.any([len(loc)==0 for loc in distractor_locs]):
+        distractor_locs = np.array(grid_locs[1:])
+
     # set target in background_image at location
     stimulus = insert_image(background_image, target, target_loc)
 
     # set distractors in stimulus with spacing
     for i, distractor in enumerate(distractors):
-        # select random location with given spacing
-        if len(distractor_locs) > 0:
-            loc_i = distractor_locs[i]
-        else:
-            loc_i = 2. * np.random.rand(2) - 1.
         # scramble image
         if scramble:
             distractor = scramble_image(distractor)
         # insert to stimulus
-        stimulus = insert_image(stimulus, distractor, loc_i)
+        stimulus = insert_image(stimulus, distractor, distractor_locs[i])
 
     return stimulus
 
