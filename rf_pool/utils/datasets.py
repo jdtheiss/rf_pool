@@ -267,6 +267,7 @@ class SearchDataset(Dataset):
     def set_data_labels(self, dataset, n_images, n_distractors, target_labels,
                         distractor_labels, target_loc, distractor_locs, **kwargs):
         self.data = []
+        self.locations = []
         self.labels = []
         for n in range(n_images):
             # sample target/flanker labels
@@ -279,11 +280,12 @@ class SearchDataset(Dataset):
             target_loc_i = np.random.permutation(target_loc)[0]
             distractor_locs_i = np.random.permutation(distractor_locs)[:n_distractors]
             # create crowded stimuli
-            stim = stimuli.make_search_stimuli(target, distractors,
+            stim, loc = stimuli.make_search_stimuli(target, distractors,
                                                target_loc=target_loc_i,
                                                distractor_locs=distractor_locs_i,
                                                **kwargs)
             self.data.append(stim)
+            self.locations.append(loc)
             self.labels.append(target_label_n)
 
     def sample_data(self, dataset, labels):
@@ -297,6 +299,23 @@ class SearchDataset(Dataset):
 
     def sample_label(self, labels, n):
         return np.random.permutation(labels)[:n]
+
+    def __getitem__(self, index):
+        img = self.data[index]
+        loc = self.locations[index]
+        if self.labels is not None and len(self.labels) > index:
+            label = self.labels[index]
+            if self.label_map.get(label) is not None:
+                label = self.label_map.get(label)
+        else:
+            label = -1
+        # convert to numpy, Image
+        img = self.to_numpy(img)
+        img = self.to_Image(img)
+        # apply transform
+        if self.transform:
+            img = self.transform(img)
+        return (img, loc, label)
 
 class CrowdedDataset(Dataset):
     """
