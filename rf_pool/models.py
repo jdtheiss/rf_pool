@@ -600,7 +600,7 @@ class DeepBeliefNetwork(Model):
         # get output of n_layers-1
         top_layer_input = self.apply_layers(input, layer_ids[:-1])
         # gibbs sample top layer
-        top_down = self.layers[layer_ids[-1]].gibbs_vhv(top_layer_input, k=k)[-2]
+        top_down = self.layers[layer_ids[-1]].gibbs_vhv(top_layer_input, k=k)[-3]
         # reconstruct down to layer_id
         post_layer_ids = self.post_layer_ids(layer_id)
         layer_top_down = self.apply_layers(top_down, post_layer_ids[:-1],
