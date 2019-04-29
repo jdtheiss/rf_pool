@@ -111,19 +111,24 @@ def make_search_stimuli(target, distractors, background_size, spacing=1.,
 
     # set grid for possible locations based on spacing
     assert spacing > 0., ('spacing must be > 0.')
-    max_hw = (np.array(background_size) - np.array(target.shape[-2:]))
+    # max_hw = (np.array(background_size) - np.array(target.shape[-2:])) / 2.
+    max_hw = (np.array(background_size) - np.array([20,20])) / 2.
     xgrid, ygrid = np.meshgrid(np.arange(-max_hw[0], max_hw[0], spacing),
                                np.arange(-max_hw[1], max_hw[1], spacing))
-    xgrid = xgrid / background_size[0]
-    ygrid = ygrid / background_size[1]
-    grid_locs = [(x,y) for x, y in zip(xgrid.flatten(), ygrid.flatten())]
-    grid_locs = np.random.permutation(grid_locs)[:len(distractors)+1]
-
+    xgrid = xgrid / ((background_size[0] - 1) / 2.)
+    ygrid = ygrid / ((background_size[1] - 1) / 2.)
+    grid_locs = np.array([(x,y) for x, y in zip(xgrid.flatten(), ygrid.flatten())])
+    
     # set target_loc/distractors_locs if empty
     if len(target_loc) == 0:
+        grid_locs = np.random.permutation(grid_locs)[:len(distractors)+1]
         target_loc = np.array(grid_locs[0])
-    else: # remove grid locations for target
-        raise NotImplementedError
+    else: # remove grid locations closest to target
+        dist = np.sum(np.square(np.array(target_loc) - grid_locs), 1)
+        remove_idx = np.argmin(dist)
+        grid_locs = np.array([grid_locs[idx] for idx in range(grid_locs.shape[0])
+                              if idx != remove_idx])
+        grid_locs = np.random.permutation(grid_locs)[:len(distractors)+1]
     if len(distractor_locs) == 0 or np.any([len(loc)==0 for loc in distractor_locs]):
         distractor_locs = np.array(grid_locs[1:])
 
@@ -138,7 +143,7 @@ def make_search_stimuli(target, distractors, background_size, spacing=1.,
         # insert to stimulus
         stimulus = insert_image(stimulus, distractor, distractor_locs[i])
 
-    return stimulus
+    return stimulus, target_loc
 
 def scramble_image(image): #TODO:needs to better scramble
     """
