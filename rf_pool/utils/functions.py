@@ -162,7 +162,7 @@ def set_attributes(obj, **kwargs):
     for key, value in kwargs.items():
         setattr(obj, key, value)
 
-def get_max_row_col(input, out_shape=None):
+def get_max_location(input, out_shape=None, normalized_units=True):
     h,w = input.shape[-2:]
     if out_shape is None:
         out_shape = [h,w]
@@ -172,8 +172,14 @@ def get_max_row_col(input, out_shape=None):
     if input.ndimension() == 4:
         input = torch.max(input, 1)[0]
     max_index = torch.max(torch.flatten(input, -2), -1)[1]
-    row = torch.round((max_index // w).type(input.dtype) * scale[0]).type(torch.int)
-    col = torch.round((max_index % w).type(input.dtype) * scale[-1]).type(torch.int)
+    row = (max_index // w).type(input.dtype)
+    col = (max_index % w).type(input.dtype)
+    if normalized_units:
+        row = 2. * row / (h - 1) - 1.
+        col = 2. * col / (w - 1) - 1.
+    else:
+        row = torch.round(row * scale[0]).type(torch.int)
+        col = torch.round(col * scale[-1]).type(torch.int)
     return row, col
 
 if __name__ == '__main__':
