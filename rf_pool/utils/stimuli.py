@@ -43,13 +43,17 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
     center = tuple(int(edge_size // 2 - target_size // 2) for edge_size in background_size)
     stimuli = np.zeros(background_size+(n_flank+1,))
     stimuli[center[0]:center[0] + target_size, center[1]:center[1] + target_size, 0] = target
-    space_size = int(spacing)
+    
+    if type(spacing) is int: 
+        space_size = [spacing]*n_flank 
+    else:
+        space_size = np.array(spacing).astype(int)
 
     if n_flank != 0:
         theta = (2.*np.pi) / n_flank
         theta_shift = [axis + (theta * i) for i in range(n_flank)]
-        x_shift = [int(space_size*np.cos(ang)) for ang in theta_shift]
-        y_shift = [int(space_size*np.sin(ang)) for ang in theta_shift]
+        x_shift = [int(s*np.cos(ang)) for ang, s in zip(theta_shift, space_size)]
+        y_shift = [int(s*np.sin(ang)) for ang, s in zip(theta_shift, space_size)]
         if random:
             np.random.shuffle(flankers)
 
@@ -62,6 +66,7 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
     stimuli = np.max(stimuli, -1)
 
     return stimuli
+
 
 def make_search_stimuli(target, distractors, background_size, spacing=1.,
                         target_loc=[], distractor_locs=[], scramble=False,
