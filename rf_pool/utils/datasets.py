@@ -427,6 +427,8 @@ class CrowdedDataset(Dataset):
         return data
 
     def sample_label(self, labels, n, target_label=None):
+        if target_label is not None:
+            labels.remove(target_label)
         if self.target_flankers and target_label is not None:
             labels = [target_label] * n
         elif self.same_flankers:
