@@ -167,12 +167,14 @@ class Model(nn.Module):
 
     def load_model(self, filename, param_dict={}):
         model = pickle.load(open(filename, 'rb'))
+        extras = []
         if type(model) is list:
+            extras = model[1:]
             model = model[0]
         if type(model) is dict:
             self.load_weights(model, param_dict)
             model = self
-        return model
+        return [model] + extras
 
     def download_weights(self, pattern=''):
         model_dict = {}
