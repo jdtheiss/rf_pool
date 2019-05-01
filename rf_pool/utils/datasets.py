@@ -427,18 +427,19 @@ class CrowdedDataset(Dataset):
         return data
 
     def sample_label(self, labels, n, target_label=None):
-        if target_label is not None:
-            labels.remove(target_label)
+        copy_labels = labels.copy()
+        if target_label in copy_labels:
+            copy_labels.remove(target_label)
         if self.target_flankers and target_label is not None:
-            labels = [target_label] * n
+            copy_labels = [target_label] * n
         elif self.same_flankers:
-            labels = [np.random.permutation(labels)[0]] * n
+            copy_labels = [np.random.permutation(copy_labels)[0]] * n
         elif self.repeat_flankers:
-            rand_indices = np.random.randint(len(labels), size=n)
-            labels = [labels[i] for i in rand_indices]
+            rand_indices = np.random.randint(len(copy_labels), size=n)
+            copy_labels = [copy_labels[i] for i in rand_indices]
         else:
-            labels = np.random.permutation(labels)[:n]
-        return labels
+            copy_labels = np.random.permutation(copy_labels)[:n]
+        return copy_labels
 
 class CrowdedCircles(torch.utils.data.Dataset):
     """
