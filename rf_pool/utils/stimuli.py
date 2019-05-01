@@ -44,7 +44,7 @@ def make_crowded_stimuli(target, flankers, spacing, background_size, axis=0., ra
     stimuli = np.zeros(background_size+(n_flank+1,))
     stimuli[center[0]:center[0] + target_size, center[1]:center[1] + target_size, 0] = target
     
-    if type(spacing) is int: 
+    if type(spacing) is not list: 
         space_size = [spacing]*n_flank 
     else:
         space_size = np.array(spacing).astype(int)
