@@ -14,13 +14,14 @@ class Dataset(torch.utils.data.Dataset):
     """
     #TODO:WRITEME
     """
-    def __init__(self):
+    def __init__(self, **kwargs):
         self.root = None
         self.data_info = {}
         self.data = None
         self.labels = None
         self.transform = None
         self.label_map = {}
+        functions.set_attributes(self, **kwargs)
 
     def set_data(self):
         raise NotImplementedError
