@@ -87,9 +87,10 @@ def prob_max_pool(u, out_shape, mask=None):
     off_p = torch.zeros(u.shape[:-1] + (1,), dtype=u.dtype)
     events = torch.cat([u, off_p], -1)
     if type(mask) is torch.Tensor:
-        mask = torch.cat([mask, 1. + off_p], -1)
-        mask = torch.flatten(mask, 0, -2)
-    probs = local_softmax(torch.flatten(events, 0, -2), -1, mask)
+        off_p_mask = torch.ones(mask.shape[:-1] + (1,), dtype=mask.dtype)
+        mask = torch.cat([mask, off_p_mask], -1)
+    probs = local_softmax(events, -1, mask)
+    probs = torch.flatten(probs, 0, -2)
     samples = Multinomial(probs=probs).sample()
     # set detection mean-field estimates and samples
     h_mean = torch.reshape(probs[:,:-1], out_shape)
@@ -472,7 +473,9 @@ def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type=None, kernel_size=2,
 
         # apply pooling function
         if pool_fn:
-            h_mean, p_mean = pool_fn(torch.flatten(rf_u, -2), rf_u.shape, **kwargs)
+            rfs_mask = torch.reshape(rfs, (1,1) + rfs.shape)
+            h_mean, p_mean = pool_fn(torch.flatten(rf_u, -2), rf_u.shape,
+                                     mask=torch.flatten(rfs_mask, -2), **kwargs)
         else:
             h_mean = rf_u
             p_mean = rf_u
