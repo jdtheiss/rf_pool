@@ -364,7 +364,8 @@ class CrowdedDataset(Dataset):
     """
     def __init__(self, dataset, n_flankers, n_images, target_labels=[],
                  flanker_labels=[], repeat_flankers=True, same_flankers=False,
-                 target_flankers=False, transform=None, label_map={}, **kwargs):
+                 target_flankers=False, transform=None, label_map={}, 
+                 load_previous=False, **kwargs):
         super(CrowdedDataset, self).__init__()
         self.n_flankers = n_flankers
         self.n_images = n_images
@@ -375,22 +376,24 @@ class CrowdedDataset(Dataset):
         self.target_flankers = target_flankers
         self.transform = transform
         self.label_map = label_map
+        self.load_previous = load_previous
 
         # get labels from dataset
         _, labels = self.get_data_labels(dataset, [],
                                          ['labels','train_labels','test_labels'])
+        
+        if not self.load_previous:
+            # set target_labels, flanker_labels
+            if len(self.target_labels) == 0:
+                self.target_labels = np.unique(labels).tolist()
+            if len(self.flanker_labels) == 0:
+                self.flanker_labels = np.unique(labels).tolist()
+            assert self.repeat_flankers or self.n_flankers <= len(self.flanker_labels), (
+                'if repeat_flankers = True, n_flankers must be <= len(flanker_labels)'
+            )
 
-        # set target_labels, flanker_labels
-        if len(self.target_labels) == 0:
-            self.target_labels = np.unique(labels).tolist()
-        if len(self.flanker_labels) == 0:
-            self.flanker_labels = np.unique(labels).tolist()
-        assert self.repeat_flankers or self.n_flankers <= len(self.flanker_labels), (
-            'if repeat_flankers = True, n_flankers must be <= len(flanker_labels)'
-        )
-
-        # set data_info
-        self.set_data_info(self.target_labels + self.flanker_labels, labels)
+            # set data_info
+            self.set_data_info(self.target_labels + self.flanker_labels, labels)
 
         # set data
         self.set_data_labels(dataset, self.n_images, self.n_flankers,
@@ -405,35 +408,44 @@ class CrowdedDataset(Dataset):
                         flanker_labels, **kwargs):
         self.data = []
         self.labels = []
-        self.flanker_labels = []
+        self.recorded_target_indices = []
+        self.recorded_flanker_indices = []
         for n in range(n_images):
             # sample target/flanker labels
             target_label_n = self.sample_label(target_labels, 1)[0]
             flanker_labels_n = self.sample_label(flanker_labels, n_flankers,
                                                  target_label_n)
             # sample target/flanker data
-            target = self.sample_data(dataset, [target_label_n])[0]
-            flankers = self.sample_data(dataset, flanker_labels_n)
+            target, target_record = self.sample_data(dataset, [target_label_n])
+            flankers, flanker_record = self.sample_data(dataset, flanker_labels_n)
             # create crowded stimuli
-            self.data.append(stimuli.make_crowded_stimuli(target, flankers, **kwargs))
-            self.labels.append(target_label_n)
-            self.flanker_labels.append(flanker_labels_n)
+            self.data.append(stimuli.make_crowded_stimuli(target[0], flankers, **kwargs))
+            if self.load_previous:
+                self.labels.append(dataset[target_label_n][1])
+            else:
+                self.labels.append(target_label_n)
+            # append recorded indices information
+            self.recorded_target_indices.append(target_record)
+            self.recorded_flanker_indices.append(flanker_record)
 
     def sample_data(self, dataset, labels):
         data = []
+        recorded_indices = []
         for label in labels:
-            indices = self.data_info.get(label)
-            index = indices.pop(0)
-            self.data_info.update({label: indices + [index]})
+            if self.load_previous:
+                index = label
+            else:
+                indices = self.data_info.get(label)
+                index = indices.pop(0)
+                self.data_info.update({label: indices + [index]})
             data.append(self.to_numpy(dataset[index][0]))
-        return data
+            recorded_indices.append(index)
+        return data, recorded_indices
 
     def sample_label(self, labels, n, target_label=None):
         copy_labels = labels.copy()
-        if target_label in copy_labels: # and not self.option:
+        if target_label in copy_labels:
             copy_labels.remove(target_label)
-        # if self.option:
-            # copy_labels = labels.pop(0)
         if self.target_flankers and target_label is not None:
             copy_labels = [target_label] * n
         elif self.same_flankers:
@@ -443,6 +455,8 @@ class CrowdedDataset(Dataset):
             copy_labels = [copy_labels[i] for i in rand_indices]
         else:
             copy_labels = np.random.permutation(copy_labels)[:n]
+        if self.load_previous:
+            copy_labels = labels.pop(0)
         return copy_labels
 
 class CrowdedCircles(torch.utils.data.Dataset):
