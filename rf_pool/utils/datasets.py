@@ -421,7 +421,7 @@ class CrowdedDataset(Dataset):
             # create crowded stimuli
             self.data.append(stimuli.make_crowded_stimuli(target[0], flankers, **kwargs))
             if self.load_previous:
-                self.labels.append(dataset[target_label_n][1])
+                self.labels.append(self.label_map[int(dataset[target_label_n][1])])
             else:
                 self.labels.append(target_label_n)
             # append recorded indices information
