@@ -456,7 +456,7 @@ class CrowdedDataset(Dataset):
         else:
             copy_labels = np.random.permutation(copy_labels)[:n]
         if self.load_previous:
-            copy_labels = labels.pop(0)
+            copy_labels = labels.pop(0)[:n]
         return copy_labels
 
 class CrowdedCircles(torch.utils.data.Dataset):
