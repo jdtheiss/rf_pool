@@ -55,9 +55,7 @@ def multiply_gaussians(mu0, mu1, sigma0, sigma1):
     sigma1_2 = torch.pow(sigma1, 2)
     mu = (sigma1_2 * mu0 + sigma0_2 * mu1) / (sigma0_2 + sigma1_2)
     sigma = torch.sqrt(sigma0_2 * sigma1_2 / (sigma0_2 + sigma1_2))
-    w = 1. / (torch.sqrt(torch.sum(torch.pow(mu0 - mu1, 2), -1)) + 1e-6)
-    w = torch.reshape(w / w.sum(), (1, -1))
-    return torch.matmul(w, mu), torch.matmul(w, sigma)
+    return mu, sigma
 
 def exp_kernel_2d(mu, sigma, xy):
     mu = mu.reshape(mu.shape + (1,1)).float()
@@ -82,7 +80,38 @@ def mask_kernel_2d(mu, sigma, xy):
         kernels_no_grad = torch.add(kernels, 1e-6)
     return torch.div(torch.mul(kernels, mask), kernels_no_grad)
 
-def update_mu_sigma(mu, sigma, priority_map):
+def gaussian_field(priority_map):
+    """
+    """
+    # get mu and sigma for map
+    x = torch.arange(priority_map.shape[0])
+    y = torch.arange(priority_map.shape[1])
+    xy = torch.stack(torch.meshgrid(x, y), dim=0)
+    # get mu, sigma from priority map
+    map_mu = xy.reshape(2, -1).t()
+    map_sigma = priority_map.reshape(-1, 1)
+    # remove nonzero values
+    keep_indices = map_sigma.nonzero()[:,0]
+    if keep_indices.numel() == 0:
+        return mu, sigma
+    map_mu = map_mu[keep_indices].type(priority_map.dtype)
+    map_sigma = 1. / map_sigma[keep_indices].type(priority_map.dtype)
+    field = exp_kernel_2d(map_mu, map_sigma, xy.unsqueeze(0).float())
+    # return torch.mul(field, map_sigma.unsqueeze(-1))
+    return field
+
+def gaussian_gradient(kernels):
+    """
+    """
+    kernels = torch.sum(kernels, 0, keepdim=True)
+    kernels = torch.unsqueeze(kernels, 0)
+    # convolve with [-1,1] [-1;1]
+    w = torch.ones(2,1,2,2)
+    w[0,0,:,0] = -1.
+    w[1,0,0,:] = -1.
+    return torch.conv2d(kernels, w)[0]
+
+def update_mu_sigma(mu, sigma, priority_map, weight=1., sigma_weight=1.):
     """
     Returns updated mu and sigma after multiplication with a map of gaussian
     precision values
@@ -95,6 +124,8 @@ def update_mu_sigma(mu, sigma, priority_map):
         kernel standard deviations with shape (n_kernels, 1)
     priority_map : torch.Tensor
         map of precisions to update mu, sigma with shape kernel_shape
+    weight : float
+        #TODO:WRITEME
 
     Returns
     -------
@@ -115,26 +146,34 @@ def update_mu_sigma(mu, sigma, priority_map):
     Each location within priority_map should contain the precision associated
     with the gaussian at that location. Zero-valued locations will be ignored.
     """
-    # get mu and sigma for map
-    x = torch.arange(priority_map.shape[0])
-    y = torch.arange(priority_map.shape[1])
-    map_mu = torch.stack(torch.meshgrid(x, y), dim=0).reshape(2, -1).t()
-    map_sigma = priority_map.reshape(-1, 1)
-    # remove nonzero values
-    keep_indices = map_sigma.nonzero()[:,0]
-    if keep_indices.numel() == 0:
-        return mu, sigma
-    map_mu = map_mu[keep_indices].type(mu.dtype)
-    map_sigma = 1. / map_sigma[keep_indices].type(sigma.dtype)
-    # return weighted sum of multiplied gaussians for each mu, sigma
+    # get gaussian field
+    field = gaussian_field(priority_map)
+    # get gradient of gaussian field
+    grad = gaussian_gradient(field)
+    # get magnitude and direction of gradient
+    mag = torch.sqrt(torch.sum(torch.pow(grad, 2.), 0))
+    direc = torch.atan2(grad[1], grad[0])
+    print(torch.max(mag), torch.max(direc))
+    # update mu and sigma
     new_mu = []
     new_sigma = []
-    for (m, s) in zip(mu, sigma):
-        mu_, sigma_ = multiply_gaussians(m, map_mu, s, map_sigma)
-        new_mu.append(mu_)
-        new_sigma.append(sigma_)
-    new_mu = torch.stack(new_mu).reshape(-1, 2)
-    new_sigma = torch.stack(new_sigma).reshape(-1, 1)
+    for (mu_x, mu_y), s in zip(mu.clone(), sigma.clone()):
+        if mu_x.int() > mag.shape[0] or mu_y.int() > mag.shape[1]:
+            new_mu.append(torch.as_tensor([mu_x, mu_y]))
+            new_sigma.append(s)
+            continue
+        # get magnitude, direction at x, y
+        mag_xy = mag[mu_x.int(), mu_y.int()]
+        dir_xy = direc[mu_x.int(), mu_y.int()]
+        # update mu, sigma
+        s_weight = torch.max(s, torch.ones(1))[0]
+        mu_x += weight * mag_xy * torch.sin(dir_xy)
+        mu_y += weight * mag_xy * torch.cos(dir_xy)
+        s /= torch.max(sigma_weight * mag_xy, torch.ones(1))
+        new_mu.append(torch.as_tensor([mu_x, mu_y]))
+        new_sigma.append(s)
+    new_mu = torch.stack(new_mu)
+    new_sigma = torch.stack(new_sigma)
     return new_mu, new_sigma
 
 def mu_mask(mu, kernel_shape):
