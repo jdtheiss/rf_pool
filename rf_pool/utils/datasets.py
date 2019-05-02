@@ -368,8 +368,8 @@ class CrowdedDataset(Dataset):
         super(CrowdedDataset, self).__init__()
         self.n_flankers = n_flankers
         self.n_images = n_images
-        self.target_labels = target_labels
-        self.flanker_labels = flanker_labels
+        self.target_labels = target_labels.copy()
+        self.flanker_labels = flanker_labels.copy()
         self.repeat_flankers = repeat_flankers
         self.same_flankers = same_flankers
         self.target_flankers = target_flankers
@@ -405,6 +405,7 @@ class CrowdedDataset(Dataset):
                         flanker_labels, **kwargs):
         self.data = []
         self.labels = []
+        self.flanker_labels = []
         for n in range(n_images):
             # sample target/flanker labels
             target_label_n = self.sample_label(target_labels, 1)[0]
@@ -416,6 +417,7 @@ class CrowdedDataset(Dataset):
             # create crowded stimuli
             self.data.append(stimuli.make_crowded_stimuli(target, flankers, **kwargs))
             self.labels.append(target_label_n)
+            self.flanker_labels.append(flanker_labels_n)
 
     def sample_data(self, dataset, labels):
         data = []
@@ -428,8 +430,10 @@ class CrowdedDataset(Dataset):
 
     def sample_label(self, labels, n, target_label=None):
         copy_labels = labels.copy()
-        if target_label in copy_labels:
+        if target_label in copy_labels: # and not self.option:
             copy_labels.remove(target_label)
+        # if self.option:
+            # copy_labels = labels.pop(0)
         if self.target_flankers and target_label is not None:
             copy_labels = [target_label] * n
         elif self.same_flankers:
