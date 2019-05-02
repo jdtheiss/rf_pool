@@ -97,7 +97,6 @@ def gaussian_field(priority_map):
     map_mu = map_mu[keep_indices].type(priority_map.dtype)
     map_sigma = 1. / map_sigma[keep_indices].type(priority_map.dtype)
     field = exp_kernel_2d(map_mu, map_sigma, xy.unsqueeze(0).float())
-    # return torch.mul(field, map_sigma.unsqueeze(-1))
     return field
 
 def gaussian_gradient(kernels):
@@ -147,17 +146,17 @@ def update_mu_sigma(mu, sigma, priority_map, weight=1., sigma_weight=1.):
     with the gaussian at that location. Zero-valued locations will be ignored.
     """
     # get gaussian field
+    img_shape = torch.tensor(priority_map.shape).float()
     field = gaussian_field(priority_map)
     # get gradient of gaussian field
     grad = gaussian_gradient(field)
     # get magnitude and direction of gradient
     mag = torch.sqrt(torch.sum(torch.pow(grad, 2.), 0))
     direc = torch.atan2(grad[1], grad[0])
-    print(torch.max(mag), torch.max(direc))
     # update mu and sigma
     new_mu = []
     new_sigma = []
-    for (mu_x, mu_y), s in zip(mu.clone(), sigma.clone()):
+    for (mu_x, mu_y), s in zip(mu, sigma):
         if mu_x.int() > mag.shape[0] or mu_y.int() > mag.shape[1]:
             new_mu.append(torch.as_tensor([mu_x, mu_y]))
             new_sigma.append(s)
@@ -165,11 +164,14 @@ def update_mu_sigma(mu, sigma, priority_map, weight=1., sigma_weight=1.):
         # get magnitude, direction at x, y
         mag_xy = mag[mu_x.int(), mu_y.int()]
         dir_xy = direc[mu_x.int(), mu_y.int()]
+        zeroed_mu = torch.sub(torch.tensor([mu_x, mu_y]), img_shape / 2.)
         # update mu, sigma
-        s_weight = torch.max(s, torch.ones(1))[0]
-        mu_x += weight * mag_xy * torch.sin(dir_xy)
-        mu_y += weight * mag_xy * torch.cos(dir_xy)
-        s /= torch.max(sigma_weight * mag_xy, torch.ones(1))
+        mu_x = mu_x + weight * mag_xy * torch.sin(dir_xy)
+        mu_y = mu_y + weight * mag_xy * torch.cos(dir_xy)
+        if torch.any(torch.lt(torch.mul(zeroed_mu, dir_xy), 0.)):
+            s = s / ((sigma_weight * mag_xy) + 1.)
+        else:
+            s = s * ((sigma_weight * mag_xy) + 1.)
         new_mu.append(torch.as_tensor([mu_x, mu_y]))
         new_sigma.append(s)
     new_mu = torch.stack(new_mu)
