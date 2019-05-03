@@ -3,9 +3,9 @@ import numpy as np
 import matplotlib.pyplot as plt 
 from matplotlib import offsetbox
 
-def confusion_score(i1, i2, labels, feature_vectors):
+def cosine_similarity(i1, i2, labels, feature_vectors):
     """
-    Computes the average cosine difference between 
+    Computes the average cosine similarity between 
     all pairs of feature vectors between class labels i1 and i2 
     
     Parameters
@@ -18,7 +18,7 @@ def confusion_score(i1, i2, labels, feature_vectors):
     Returns
     -------
     score: torch.tensor
-        the average cosine difference between all pairs 
+        the average cosine similarity between all pairs 
         of feature vectors between class label i1 and i2
     """
     
@@ -34,14 +34,14 @@ def confusion_score(i1, i2, labels, feature_vectors):
     norm_i2 = torch.sqrt(torch.diagonal(torch.matmul(features_i2, torch.t(features_i2))).reshape(1,-1))
     norm = torch.matmul(torch.t(norm_i1), norm_i2)
     
-    # avarage over the cosine differences 
+    # avarage over the cosine similarity 
     score = torch.mean(torch.divide(inner, norm)) 
     
     return score
 
-def confusion_matrix(labels, feature_vectors):
+def cosine_similarity_matrix(labels, feature_vectors):
     """
-    Computes a mean cosine difference confusion matrix 
+    Computes a mean cosine similarity matrix 
     from a set of feature vectors and corresponding class labels
     
     Parameters
@@ -54,7 +54,7 @@ def confusion_matrix(labels, feature_vectors):
     Returns
     -------
     matrix: torch.tensor
-        confusion matrix of average cosine differences
+        confusion matrix of average cosine similarity
     unique_labels: torch.tensor
        class labels corresponding to matrix entries
     """
