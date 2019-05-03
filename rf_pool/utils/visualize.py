@@ -58,7 +58,7 @@ def confusion_matrix(labels, feature_vectors):
        class labels corresponding to matrix entries
     """
     unique_labels = torch.unique(labels)
-    matrix = torch.zeros((len(unique_labels,)*2)
+    matrix = torch.zeros((len(unique_labels),)*2)
     
     for i, label_i in enumerate(unique_labels):
         for j, label_j in enumerate(unique_label):
@@ -67,8 +67,7 @@ def confusion_matrix(labels, feature_vectors):
     return matrix, unique_labels
 
 def plot_confusion_matrix(m):
-    raise NotImplemented
-                         
+    raise NotImplemented                       
 
 def visualize_embedding(embeddings, images, labels=None, cmap='tab10', figsize=(15,15)):
     """
@@ -95,7 +94,6 @@ def visualize_embedding(embeddings, images, labels=None, cmap='tab10', figsize=(
     ax_dist = np.linalg.norm(ax_max - ax_min)
     min_dist = (1/(3*figsize[0])) * ax_dist
 
-
     plt.figure(figsize=figsize)
     ax = plt.subplot(111)
     cmap = plt.get_cmap(cmap)
@@ -107,10 +105,13 @@ def visualize_embedding(embeddings, images, labels=None, cmap='tab10', figsize=(
         if np.min(dist_to_embeddings) >= min_dist:
             shown_embeddings = np.vstack((shown_embeddings, embeddings[i,None]))
             patch = images[i]
-
+            
+            # colorize images
             if labels is not None:
                 if images.shape[-1] != 3:
                     patch = color_code_patch(patch.numpy(), labels[i].numpy(),cmap)
+            else:
+                patch = torch.flatten(patch, -2)
 
             imagebox = offsetbox.AnnotationBbox(
                 offsetbox.OffsetImage(patch, zoom=1, cmap=plt.cm.gray_r),
