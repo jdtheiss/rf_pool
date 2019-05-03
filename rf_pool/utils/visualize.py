@@ -5,7 +5,7 @@ from matplotlib import offsetbox
 
 def confusion_score(i1, i2, labels, feature_vectors):
     """
-    Computes the average cosign difference between 
+    Computes the average cosine difference between 
     all pairs of feature vectors between class labels i1 and i2 
     
     Parameters
@@ -18,7 +18,7 @@ def confusion_score(i1, i2, labels, feature_vectors):
     Returns
     -------
     score: torch.tensor
-        the average cosign difference between all pairs 
+        the average cosine difference between all pairs 
         of feature vectors between class label i1 and i2
     """
     
@@ -34,14 +34,15 @@ def confusion_score(i1, i2, labels, feature_vectors):
     norm_i2 = torch.sqrt(torch.diagonal(torch.matmul(features_i2, torch.t(features_i2))).reshape(1,-1))
     norm = torch.matmul(torch.t(norm_i1), norm_i2)
     
-    # avarage over the cosign differences 
+    # avarage over the cosine differences 
     score = torch.mean(torch.divide(inner, norm)) 
     
     return score
 
 def confusion_matrix(labels, feature_vectors):
     """
-    Computes a confusion matrix from a set of feature vectors and corresponding class labels
+    Computes a mean cosine difference confusion matrix 
+    from a set of feature vectors and corresponding class labels
     
     Parameters
     ----------
@@ -53,7 +54,7 @@ def confusion_matrix(labels, feature_vectors):
     Returns
     -------
     matrix: torch.tensor
-        confusion matrix of average cosign differences
+        confusion matrix of average cosine differences
     unique_labels: torch.tensor
        class labels corresponding to matrix entries
     """
@@ -66,7 +67,7 @@ def confusion_matrix(labels, feature_vectors):
     
     return matrix, unique_labels
 
-def plot_confusion_matrix(m):
+def show_confusion_matrix(m):
     raise NotImplemented                       
 
 def visualize_embedding(embeddings, images, labels=None, cmap='tab10', figsize=(15,15)):
