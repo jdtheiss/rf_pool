@@ -164,11 +164,14 @@ def update_mu_sigma(mu, sigma, priority_map, weight=1., sigma_weight=1.):
         # get magnitude, direction at x, y
         mag_xy = mag[mu_x.int(), mu_y.int()]
         dir_xy = direc[mu_x.int(), mu_y.int()]
+        dir_xy = torch.tensor((torch.sin(dir_xy), torch.cos(dir_xy)))
+        # determine whether zeroed mu is same sign as direction
         zeroed_mu = torch.sub(torch.tensor([mu_x, mu_y]), img_shape / 2.)
+        change_sign = torch.sign(torch.mul(zeroed_mu, dir_xy))
         # update mu, sigma
-        mu_x = mu_x + weight * mag_xy * torch.sin(dir_xy)
-        mu_y = mu_y + weight * mag_xy * torch.cos(dir_xy)
-        if torch.any(torch.lt(torch.mul(zeroed_mu, dir_xy), 0.)):
+        mu_x = mu_x + weight * mag_xy * dir_xy[0]
+        mu_y = mu_y + weight * mag_xy * dir_xy[1]
+        if torch.any(torch.lt(change_sign, 0.)):
             s = s / ((sigma_weight * mag_xy) + 1.)
         else:
             s = s * ((sigma_weight * mag_xy) + 1.)
