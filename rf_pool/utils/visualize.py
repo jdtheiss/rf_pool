@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt 
 from matplotlib import offsetbox
 
-def cosine_similarity(i1, i2, labels, feature_vectors):
+def cosine_similarity(i1, i2, feature_vectors, labels):
     """
     Computes the average cosine similarity between 
     all pairs of feature vectors between class labels i1 and i2 
@@ -35,40 +35,52 @@ def cosine_similarity(i1, i2, labels, feature_vectors):
     norm = torch.matmul(torch.t(norm_i1), norm_i2)
     
     # avarage over the cosine similarity 
-    score = torch.mean(torch.divide(inner, norm)) 
+    score = torch.mean(inner/norm) 
     
     return score
 
-def cosine_similarity_matrix(labels, feature_vectors):
+def cosine_similarity_matrix(feature_vectors, labels):
     """
     Computes a mean cosine similarity matrix 
     from a set of feature vectors and corresponding class labels
     
     Parameters
     ----------
-    labels: torch.tensor
-        set of all class labels
     feature_vectors: torch.tensor
         set of all corresponding class feature vectors
-        
+    labels: torch.tensor
+        set of all class labels
+  
     Returns
     -------
     matrix: torch.tensor
-        confusion matrix of average cosine similarity
+        confusion matrix of average cosine similarities
     unique_labels: torch.tensor
        class labels corresponding to matrix entries
     """
-    unique_labels = torch.unique(labels)
+    unique_labels = torch.unique(labels, sorted=True)
     matrix = torch.zeros((len(unique_labels),)*2)
     
     for i, label_i in enumerate(unique_labels):
-        for j, label_j in enumerate(unique_label):
-            matrix[i, j] = confusion_score(label_i, label_j, labels, feature_vectors)
+        for j, label_j in enumerate(unique_labels):
+            matrix[i, j] = cosine_similarity(label_i, label_j, feature_vectors, labels)
     
     return matrix, unique_labels
 
-def show_confusion_matrix(m):
-    raise NotImplemented                       
+def show_confusion_matrix(data, labels):
+    """
+    TODO
+    """
+    fig, ax = plt.subplots(1,1)
+    ax.pcolor(data, cmap=plt.cm.Blues)
+    ax.set_xticks(np.arange(data.shape[0])+0.5, minor=False)
+    ax.set_yticks(np.arange(data.shape[1])+0.5, minor=False)
+    
+    ax.invert_yaxis()
+    ax.xaxis.tick_top()
+
+    ax.set_xticklabels(labels.numpy(), minor=False)
+    ax.set_yticklabels(labels.numpy(), minor=False)                      
 
 def visualize_embedding(embeddings, images, labels=None, cmap='tab10', figsize=(15,15)):
     """
