@@ -55,7 +55,7 @@ def multiply_gaussians(mu0, mu1, sigma0, sigma1):
     mu0 = torch.unsqueeze(mu0, -1)
     mu1 = torch.unsqueeze(mu1.t(), 0)
     sigma0 = torch.unsqueeze(sigma0, -1)
-    sigma1 = torch.unsqueeze(sigma1, 0)
+    sigma1 = torch.unsqueeze(sigma1.t(), 0)
     # compute multiplication of gaussians
     sigma0_2 = torch.pow(sigma0, 2)
     sigma1_2 = torch.pow(sigma1, 2)
