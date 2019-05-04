@@ -67,12 +67,12 @@ def cosine_similarity_matrix(feature_vectors, labels):
     
     return matrix, unique_labels
 
-def show_confusion_matrix(data, labels):
+def show_confusion_matrix(data, labels, cmap=plt.cm.afmhot):
     """
     TODO
     """
     fig, ax = plt.subplots(1,1)
-    ax.pcolor(data, cmap=plt.cm.Blues)
+    heatmap = ax.pcolor(data, cmap=cmap)
     ax.set_xticks(np.arange(data.shape[0])+0.5, minor=False)
     ax.set_yticks(np.arange(data.shape[1])+0.5, minor=False)
     
@@ -80,7 +80,8 @@ def show_confusion_matrix(data, labels):
     ax.xaxis.tick_top()
 
     ax.set_xticklabels(labels.numpy(), minor=False)
-    ax.set_yticklabels(labels.numpy(), minor=False)                      
+    ax.set_yticklabels(labels.numpy(), minor=False) 
+    fig.colorbar(heatmap)
 
 def visualize_embedding(embeddings, images, labels=None, cmap='tab10', figsize=(15,15)):
     """
