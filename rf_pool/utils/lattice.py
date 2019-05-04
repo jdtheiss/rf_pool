@@ -51,10 +51,20 @@ import imageio
 import matplotlib.pyplot as plt
 
 def multiply_gaussians(mu0, mu1, sigma0, sigma1):
+    # reshape to (mu0_batch, 2, 1) (1, 2, mu1_batch)
+    mu0 = torch.unsqueeze(mu0, -1)
+    mu1 = torch.unsqueeze(mu1.t(), 0)
+    sigma0 = torch.unsqueeze(sigma0, -1)
+    sigma1 = torch.unsqueeze(sigma1, 0)
+    # compute multiplication of gaussians
     sigma0_2 = torch.pow(sigma0, 2)
     sigma1_2 = torch.pow(sigma1, 2)
     mu = (sigma1_2 * mu0 + sigma0_2 * mu1) / (sigma0_2 + sigma1_2)
     sigma = torch.sqrt(sigma0_2 * sigma1_2 / (sigma0_2 + sigma1_2))
+    # return weighted combination based on mu1_batch size
+    w = torch.ones(mu1.shape[-1], 1) / torch.tensor(mu1.shape[-1])
+    mu = torch.matmul(mu, w).squeeze(-1)
+    sigma = torch.matmul(sigma, w).squeeze(-1)
     return mu, sigma
 
 def exp_kernel_2d(mu, sigma, xy):
@@ -145,41 +155,20 @@ def update_mu_sigma(mu, sigma, priority_map, weight=1., sigma_weight=1.):
     Each location within priority_map should contain the precision associated
     with the gaussian at that location. Zero-valued locations will be ignored.
     """
-    # get gaussian field
-    img_shape = torch.tensor(priority_map.shape).float()
-    field = gaussian_field(priority_map)
-    # get gradient of gaussian field
-    grad = gaussian_gradient(field)
-    # get magnitude and direction of gradient
-    mag = torch.sqrt(torch.sum(torch.pow(grad, 2.), 0))
-    direc = torch.atan2(grad[1], grad[0])
-    # update mu and sigma
-    new_mu = []
-    new_sigma = []
-    for (mu_x, mu_y), s in zip(mu, sigma):
-        if mu_x.int() > mag.shape[0] or mu_y.int() > mag.shape[1]:
-            new_mu.append(torch.as_tensor([mu_x, mu_y]))
-            new_sigma.append(s)
-            continue
-        # get magnitude, direction at x, y
-        mag_xy = mag[mu_x.int(), mu_y.int()]
-        dir_xy = direc[mu_x.int(), mu_y.int()]
-        dir_xy = torch.tensor((torch.sin(dir_xy), torch.cos(dir_xy)))
-        # determine whether zeroed mu is same sign as direction
-        zeroed_mu = torch.sub(torch.tensor([mu_x, mu_y]), img_shape / 2.)
-        change_sign = torch.sign(torch.mul(zeroed_mu, dir_xy))
-        # update mu, sigma
-        mu_x = mu_x + weight * mag_xy * dir_xy[0]
-        mu_y = mu_y + weight * mag_xy * dir_xy[1]
-        if torch.any(torch.lt(change_sign, 0.)):
-            s = s / ((sigma_weight * mag_xy) + 1.)
-        else:
-            s = s * ((sigma_weight * mag_xy) + 1.)
-        new_mu.append(torch.as_tensor([mu_x, mu_y]))
-        new_sigma.append(s)
-    new_mu = torch.stack(new_mu)
-    new_sigma = torch.stack(new_sigma)
-    return new_mu, new_sigma
+    # get mu and sigma for map
+    x = torch.arange(priority_map.shape[0])
+    y = torch.arange(priority_map.shape[1])
+    xy = torch.stack(torch.meshgrid(x, y), dim=0)
+    # get mu, sigma from priority map
+    map_mu = xy.reshape(2, -1).t()
+    map_sigma = priority_map.reshape(-1, 1)
+    # remove nonzero values
+    keep_indices = map_sigma.nonzero()[:,0]
+    if keep_indices.numel() == 0:
+        return mu, sigma
+    map_mu = map_mu[keep_indices].type(priority_map.dtype)
+    map_sigma = 1. / map_sigma[keep_indices].type(priority_map.dtype)
+    return multiply_gaussians(mu, map_mu, sigma, map_sigma)
 
 def mu_mask(mu, kernel_shape):
     """
