@@ -300,6 +300,8 @@ class Model(nn.Module):
                 if options.get('layer_id') is not None:
                     # get inputs for layer_id
                     layer_input = self.apply_layers(inputs[0], pre_layer_ids)
+                    if len(inputs[1:]) > 0 and options.get('add_loss') == {}:
+                        layer_input = (layer_input,) + tuple(inputs[1:])
                     # train
                     loss = self.layers[layer_id].train(layer_input,
                                                        add_loss=options.get('add_loss'),
@@ -595,13 +597,17 @@ class DeepBeliefNetwork(Model):
     def __init__(self):
         super(DeepBeliefNetwork, self).__init__()
 
-    def posterior(self, layer_id, input, k=1):
+    def posterior(self, layer_id, input, top_down_input=None, k=1):
         # get layer_ids
         layer_ids = list(self.layers.keys())
         # get output of n_layers-1
         top_layer_input = self.apply_layers(input, layer_ids[:-1])
         # gibbs sample top layer
-        top_down = self.layers[layer_ids[-1]].gibbs_vhv(top_layer_input, k=k)[-3]
+        if top_down_input is not None:
+            top_down = self.layers[layer_ids[-1]].gibbs_vhv(top_layer_input,
+                                                            top_down_input, k=k)[3]
+        else:
+            top_down = self.layers[layer_ids[-1]].gibbs_vhv(top_layer_input, k=k)[3]
         # reconstruct down to layer_id
         post_layer_ids = self.post_layer_ids(layer_id)
         layer_top_down = self.apply_layers(top_down, post_layer_ids[:-1],
