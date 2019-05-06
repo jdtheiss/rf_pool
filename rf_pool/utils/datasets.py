@@ -18,6 +18,7 @@ class Dataset(torch.utils.data.Dataset):
         self.root = None
         self.data_info = {}
         self.data = None
+        self.extras = None
         self.labels = None
         self.transform = None
         self.label_map = {}
@@ -105,7 +106,11 @@ class Dataset(torch.utils.data.Dataset):
         # apply transform
         if self.transform:
             img = self.transform(img)
-        return (img, label)
+        if self.extras is not None:
+            output = (img, self.extras[index], label)
+        else:
+            output = (img, label)
+        return output
 
     def __len__(self):
         return len(self.data)
@@ -364,7 +369,7 @@ class CrowdedDataset(Dataset):
     """
     def __init__(self, dataset, n_flankers, n_images, target_labels=[],
                  flanker_labels=[], repeat_flankers=True, same_flankers=False,
-                 target_flankers=False, transform=None, label_map={}, 
+                 target_flankers=False, transform=None, label_map={},
                  load_previous=False, **kwargs):
         super(CrowdedDataset, self).__init__()
         self.n_flankers = n_flankers
@@ -381,7 +386,7 @@ class CrowdedDataset(Dataset):
         # get labels from dataset
         _, labels = self.get_data_labels(dataset, [],
                                          ['labels','train_labels','test_labels'])
-        
+
         if not self.load_previous:
             # set target_labels, flanker_labels
             if len(self.target_labels) == 0:
