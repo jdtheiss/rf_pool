@@ -182,6 +182,15 @@ def get_max_location(input, out_shape=None, normalized_units=True):
         col = torch.round(col * scale[-1]).type(torch.int)
     return row, col
 
+def one_hot(i, n_classes):
+    output = torch.zeros(n_classes)
+    output[i] = 1.
+    return output
+
+def binomial_zstat(p1, p2, n1, n2):
+    p_hat = (n1 * p1 + n2 * p2)/(n1 + n2)
+    return np.abs(p1 - p2)/np.sqrt(p_hat * (1. - p_hat) * (1./n1 + 1./n2))
+
 if __name__ == '__main__':
     import doctest
     doctest.testmod()
