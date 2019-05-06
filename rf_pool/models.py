@@ -173,6 +173,9 @@ class Model(nn.Module):
         elif type(extras) is dict and 'model_weights' in extras:
             self.load_weights(extras.get('model_weights'), param_dict)
             model = self
+        if type(model) is dict:
+            self.load_weights(model, param_dict)
+            model = self
         return model, extras
 
     def download_weights(self, pattern=''):
