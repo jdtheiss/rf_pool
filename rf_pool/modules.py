@@ -513,7 +513,7 @@ class RBM(Module):
             vishidprods = torch.div(posprods - negprods, batch_size)
             hidact = torch.mean(ph - nh, dim=0)
             visact = torch.mean(pv - nv, dim=0)
-        return {'hidden_weight':vishidprods, 'hid_bias':hidact, 'vis_bias':visact}
+        return vishidprods, hidact, visact
 
     def update_grads(self, grad):
         assert type(grad) is dict
@@ -581,7 +581,10 @@ class RBM(Module):
             if self.persistent is not None:
                 self.hidden_weight.sub_(self.persistent_weights)
             # compute loss with contrastive_divergence
-            grads = self.contrastive_divergence(input, ph_mean, nv_mean, nh_mean)
+            grads = {}
+            prods = self.contrastive_divergence(input, ph_mean, nv_mean, nh_mean)
+            grads.update({'hidden_weight': prods[0], 'hidden_bias': prods[1],
+                          'hidden_transpose_bias': prods[2]})
             self.update_grads(grads)
             sum_grads = [torch.sum(torch.abs(g)) for g in grads.values()]
             loss = torch.sum(torch.stack(sum_grads))
@@ -704,31 +707,6 @@ class CRBM(RBM):
         dy = torch.sum(torch.mul(y, self.y_bias.reshape((1,-1) + y_dims)).flatten(1))
         return -hWv - bv - ch - dy - hUy
 
-    def contrastive_divergence(self, pv, ph, nv, nh):
-        # get sizes to normalize params
-        batch_size = torch.as_tensor(pv.shape[0], dtype=pv.dtype)
-        # compute contrastive_divergence for conv layer
-        if pv.ndimension() == 4:
-            v_shp = torch.as_tensor(pv.shape[-2:], dtype=pv.dtype)
-            W_shp = torch.as_tensor(self.hidden_weight.shape[-2:], dtype=pv.dtype)
-            hidsize = torch.prod(v_shp - W_shp + 1)
-            # compute vishidprods, hidact, visact
-            posprods = torch.conv2d(pv.transpose(1,0),
-                                    ph.transpose(1,0)).transpose(1,0)
-            negprods = torch.conv2d(nv.transpose(1,0),
-                                    nh.transpose(1,0)).transpose(1,0)
-            vishidprods = torch.div(posprods - negprods, (batch_size * hidsize))
-            hidact = torch.mean(ph - nh, dim=(0,2,3))
-            visact = torch.mean(pv - nv, dim=(0,2,3))
-        # compute contrastive_divergence for fc layer
-        else:
-            posprods = torch.matmul(pv.t(), ph)
-            negprods = torch.matmul(nv.t(), nh)
-            vishidprods = torch.div(posprods - negprods, batch_size)
-            hidact = torch.mean(ph - nh, dim=0)
-            visact = torch.mean(pv - nv, dim=0)
-        return vishidprods, hidact, visact
-
     def train(self, inputs, k=1, monitor_fn=nn.MSELoss(), optimizer=None,
               **kwargs):
         """
@@ -767,11 +745,11 @@ class CRBM(RBM):
             # compute loss with contrastive_divergence
             grads = {}
             prods = self.contrastive_divergence(input, ph_mean, nv_mean, nh_mean)
-            grads.update({'hidden_weight': prods[0], 'hid_bias': prods[1],
-                          'vis_bias': prods[2]})
+            grads.update({'hidden_weight': prods[0], 'hidden_bias': prods[1],
+                          'hidden_transpose_bias': prods[2]})
             y_prods = self.contrastive_divergence(top_down, ph_mean, ny_mean, nh_mean)
             grads.update({'top_down_transpose_weight': y_prods[0],
-                          'y_bias': y_prods[2]})
+                          'top_down_transpose_bias': y_prods[2]})
             self.update_grads(grads)
             sum_grads = [torch.sum(torch.abs(g)) for g in grads.values()]
             loss = torch.sum(torch.stack(sum_grads))
