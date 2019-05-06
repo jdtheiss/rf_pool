@@ -157,24 +157,23 @@ class Model(nn.Module):
         post_layer_ids.reverse()
         return post_layer_ids
 
-    def save_model(self, filename, extras=[]):
-        if type(extras) is not list:
-            extras = [extras]
-        model_str = str(self)
-        model_dict = self.download_weights()
+    def save_model(self, filename, extras={}):
+        if type(extras) is not dict:
+            extras = {'extras': extras}
+        extras.update({'model_str': str(self)})
+        extras.update({'model_weights': self.download_weights()})
         with open(filename, 'wb') as f:
-            pickle.dump([model_dict,model_str] + extras, f)
+            pickle.dump(extras, f)
 
     def load_model(self, filename, param_dict={}):
-        model = pickle.load(open(filename, 'rb'))
-        extras = []
-        if type(model) is list:
-            extras = model[1:]
-            model = model[0]
-        if type(model) is dict:
-            self.load_weights(model, param_dict)
+        extras = pickle.load(open(filename, 'rb'))
+        model = []
+        if type(extras) is list:
+            model = extras.pop(0)
+        elif type(extras) is dict and 'model_weights' in extras:
+            self.load_weights(extras.get('model_weights'), param_dict)
             model = self
-        return [model] + extras
+        return model, extras
 
     def download_weights(self, pattern=''):
         model_dict = {}
