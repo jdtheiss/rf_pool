@@ -80,10 +80,9 @@ class Module(nn.Module):
                 if name.endswith(suffix):
                     param.set_(fn(param))
 
-    def make_layer(self, **kwargs):
-        # init forward_layer and reconstruct_layer
-        self.forward_layer = nn.Sequential()
-        self.reconstruct_layer = nn.Sequential()
+    def make_layer(self, layer_name, transpose=False, **kwargs):
+        # init layer to nn.Sequential()
+        setattr(self, layer_name, nn.Sequential())
 
         # set None to nn.Sequential()
         for key, value in kwargs.items():
@@ -91,13 +90,47 @@ class Module(nn.Module):
                 kwargs.update({key: nn.Sequential()})
 
         # update layers
-        self.update_layer(**kwargs)
+        self.update_layer(layer_name, transpose=transpose, **kwargs)
 
-    def update_layer(self, **kwargs):
-        # update forward_layer
+    def update_layer(self, layer_name, transpose=False, **kwargs):
+        # get layer
+        if hasattr(self, layer_name):
+            layer = getattr(self, layer_name)
+        else:
+            layer = nn.Sequential()
+        # update layer
         for key, value in kwargs.items():
+            if transpose:
+                key = key + '_transpose'
+                value = self.transposed_fn(value)
             if value is not None:
-                self.forward_layer.add_module(key, value)
+                layer.add_module(key, value)
+        # set layer
+        setattr(self, layer_name, layer)
+
+    def transposed_fn(self, fn):
+        # transposed conv
+        if hasattr(fn, 'weight') and torch.typename(fn).find('conv') >= 0:
+            conv_kwargs = functions.get_attributes(fn, ['stride','padding','dilation'])
+            transposed_fn = nn.ConvTranspose2d(fn.out_channels, fn.in_channels,
+                                               fn.kernel_size, **conv_kwargs)
+            transposed_fn.weight = fn.weight
+        # transposed linear
+        elif hasattr(fn, 'weight') and torch.typename(fn).find('linear') >= 0:
+            transposed_fn = nn.Linear(fn.out_features, fn.in_features)
+            transposed_fn.weight = nn.Parameter(fn.weight.t())
+        elif hasattr(fn, 'weight'):
+            #TODO: how to use transposed version of fn implicitly
+            raise Exception('fn type not understood')
+        # unpool with indices
+        elif hasattr(fn, 'return_indices') and fn.return_indices:
+            pool_kwargs = functions.get_attributes(fn, ['stride', 'padding'])
+            transposed_fn = nn.MaxUnpool2d(fn.kernel_size, **pool_kwargs)
+        elif hasattr(fn, 'kernel_size'): #TODO: how to determine if pool
+            transposed_fn = nn.Upsample(scale_factor=fn.kernel_size)
+        else:
+            transposed_fn = fn
+        return transposed_fn
 
     def get_module_names(self, layer, module_name=None):
         module_names = []
@@ -225,7 +258,10 @@ class FeedForward(Module):
     def __init__(self, input_shape=None, **kwargs):
         super(FeedForward, self).__init__(input_shape)
         # build layer
-        self.make_layer(**kwargs)
+        self.make_layer('forward_layer', **kwargs)
+        # init weights, biases
+        self.init_weights(suffix='weight', fn=torch.randn_like)
+        self.init_weights(suffix='bias', fn=torch.zeros_like)
         # link parameters
         self.link_parameters(self.forward_layer)
 
@@ -280,7 +316,10 @@ class Control(Module):
         super(Control, self).__init__(input_shape)
         assert 'control' in kwargs.keys(), ('must contain "control" module')
         # build layer
-        self.make_layer(**kwargs)
+        self.make_layer('forward_layer', **kwargs)
+        # init weights, biases
+        self.init_weights(suffix='weight', fn=torch.randn_like)
+        self.init_weights(suffix='bias', fn=torch.zeros_like)
         # link parameters
         self.link_parameters(self.forward_layer)
 
@@ -377,62 +416,23 @@ class RBM(Module):
         self.hid_sample_fn = hid_sample_fn
         # initialize persistent
         self.persistent = None
-        # make layers
-        self.make_layer(hidden=hidden, activation=activation,
+        # make forward layer
+        self.make_layer('forward_layer', hidden=hidden, activation=activation,
                         pool=pool, dropout=dropout)
+        # init weights
+        self.init_weights(suffix='weight', fn=torch.randn_like)
+        # make reconstruct layer
+        self.make_layer('reconstruct_layer', transpose=True, pool=pool,
+                        hidden=hidden)
+        self.update_layer('reconstruct_layer', activation=self.vis_activation_fn)
+        # init biases
+        self.init_weights(suffix='bias', fn=torch.zeros_like)
         # link parameters to self
         self.link_parameters(self.forward_layer)
         self.link_parameters(self.reconstruct_layer)
         # set vis_bias and hid_bias
         self.vis_bias = self.hidden_transpose_bias
         self.hid_bias = self.hidden_bias
-
-    def update_layer(self, **kwargs):
-        # update forward_layer
-        for key, value in kwargs.items():
-            if value is not None:
-                self.forward_layer.add_module(key, value)
-
-        # update reconstruct_layer unpool
-        pool = kwargs.get('pool')
-        if pool and hasattr(pool, 'return_indices') and pool.return_indices:
-            pool_kwargs = functions.get_attributes(pool, ['stride', 'padding'])
-            unpool = nn.MaxUnpool2d(pool.kernel_size, **pool_kwargs)
-            self.reconstruct_layer.add_module('unpool', unpool)
-        elif pool and hasattr(pool, 'kernel_size'):
-            unpool = nn.Upsample(scale_factor=pool.kernel_size)
-            self.reconstruct_layer.add_module('unpool', unpool)
-
-        # update reconstruct_layer hidden transpose
-        hidden = kwargs.get('hidden')
-        if hidden:
-            # initialize weights with randn
-            self.init_weights('hidden_weight', torch.randn_like)
-            # set transpose layer based on hidden type
-            if torch.typename(hidden).find('conv') >= 0:
-                conv_kwargs = functions.get_attributes(hidden, ['stride',
-                                                                'padding',
-                                                                'dilation'])
-                hidden_transpose = nn.ConvTranspose2d(hidden.out_channels,
-                                                      hidden.in_channels,
-                                                      hidden.kernel_size,
-                                                      **conv_kwargs)
-                hidden_transpose.weight = hidden.weight
-            elif torch.typename(hidden).find('linear') >= 0:
-                hidden_transpose = nn.Linear(hidden.out_features,
-                                             hidden.in_features)
-                hidden_transpose.weight = nn.Parameter(hidden.weight.t())
-            else:
-                raise Exception('hidden type not understood')
-            self.reconstruct_layer.add_module('hidden_transpose', hidden_transpose)
-            # initialize biases with zeros
-            self.init_weights('bias', torch.zeros_like)
-
-        # update reconstruct_layer activation
-        if self.vis_activation_fn:
-            self.reconstruct_layer.add_module('activation', self.vis_activation_fn)
-        else:
-            self.reconstruct_layer.add_module('activation', nn.Sequential())
 
     def sample_h_given_v(self, v):
         # apply each non-pooling module (unless rf_pool)
@@ -530,7 +530,7 @@ class RBM(Module):
         """
         # gibbs sample
         with torch.no_grad():
-            neg = self.gibbs_vhv(v, k=k)[-2]
+            neg = self.gibbs_vhv(v, k=k)[4]
         # reshape, permute for plotting
         if img_shape:
             v = torch.reshape(v, (-1,1) + img_shape)
@@ -587,6 +587,201 @@ class RBM(Module):
             loss = torch.sum(torch.stack(sum_grads))
             # update persistent weights
             if self.persistent is not None:
+                self.persistent_weights.mul_(0.95)
+                self.persistent_weights.grad = self.hidden_weight.grad
+        # compute additional loss from add_loss
+        if kwargs.get('add_loss'):
+            if kwargs.get('add_loss').get('module_name'):
+                added_loss = self.add_loss(input, **kwargs.get('add_loss'))
+            else:
+                added_loss = self.add_loss(ph_mean, **kwargs.get('add_loss'))
+            added_loss.backward()
+        # sparsity
+        if kwargs.get('sparsity'):
+            if kwargs.get('sparsity').get('module_name'):
+                self.sparsity(input, **kwargs.get('sparsity'))
+            else:
+                self.sparsity(ph_mean, **kwargs.get('sparsity'))
+        # update parameters
+        if optimizer:
+            optimizer.step()
+        # monitor loss
+        if monitor_fn:
+            out = monitor_fn(input, nv_mean)
+        else:
+            out = loss
+        return out.item()
+
+class CRBM(RBM):
+    """
+    #TODO:WRITEME
+    """
+    def __init__(self, top_down=None, y_activation_fn=None, y_sample_fn=None,
+                 **kwargs):
+        super(CRBM, self).__init__(**kwargs)
+        self.y_activation_fn = y_activation_fn
+        self.y_sample_fn = y_sample_fn
+        # update forward layer
+        self.update_layer('forward_layer', transpose=True, top_down=top_down)
+        # init weights
+        self.init_weights(suffix='weight', fn=torch.randn_like)
+        # make reconstruct layer
+        self.make_layer('reconstruct_layer', top_down=top_down)
+        self.update_layer('reconstruct_layer', transpose=True,
+                          pool=kwargs.get('pool'), hidden=kwargs.get('hidden'))
+        self.update_layer('reconstruct_layer', activation=self.vis_activation_fn)
+        # init biases
+        self.init_weights(suffix='bias', fn=torch.zeros_like)
+        # remove top_down_bias
+        self.reconstruct_layer.top_down.bias = None
+        # link parameters to self
+        self.link_parameters(self.forward_layer)
+        self.link_parameters(self.reconstruct_layer)
+        # set vis_bias, hid_bias, y_bias
+        self.vis_bias = self.hidden_transpose_bias
+        self.hid_bias = self.hidden_bias
+        self.y_bias = self.top_down_transpose_bias
+
+    def sample_h_given_vy(self, v, y):
+        # get top down input from y
+        Uy = self.apply_modules(self.reconstruct_layer, y, ['top_down'])
+        return self.sample_h_given_vt(v, Uy)
+
+    def sample_y_given_h(self, h):
+        pre_act_y = self.apply_modules(self.forward_layer, h, ['top_down_transpose'])
+        if self.y_activation_fn:
+            y_mean = self.y_activation_fn(pre_act_y)
+        else:
+            y_mean = pre_act_y
+        if self.y_sample_fn:
+            y_sample = self.hid_sample_fn(probs=y_mean).sample()
+        else:
+            y_sample = y_mean
+        return pre_act_y, y_mean, y_sample
+
+    def sample_y_given_v(self, v):
+        h_sample = self.sample_h_given_v(v)[-1]
+        return self.sample_y_given_h(h_sample)
+
+    def gibbs_vhv(self, v_sample, y_sample, k=1):
+        for _ in range(k):
+            pre_act_h, h_mean, h_sample = self.sample_h_given_vy(v_sample, y_sample)
+            v_outputs = self.sample_v_given_h(h_sample)
+            y_outputs = self.sample_y_given_h(h_sample)
+        return (pre_act_h, h_mean, h_sample) + v_outputs + y_outputs
+
+    def gibbs_hvh(self, h_sample, k=1):
+        for _ in range(k):
+            pre_act_v, v_mean, v_sample = self.sample_v_given_h(h_sample)
+            pre_act_y, y_mean, y_sample = self.sample_y_given_h(h_sample)
+            h_outputs = self.sample_h_given_vy(v_sample, y_sample)
+        return (pre_act_v, v_mean, v_sample, pre_act_y, y_mean, y_sample) + h_outputs
+
+    def energy(self, v, y, h):
+        #E(v,y,h) = −hTWv−bTv−cTh−dTy−hTUy
+        # get dims for each input
+        v_dims = tuple([1 for _ in range(v.ndimension() - 2)])
+        h_dims = tuple([1 for _ in range(h.ndimension() - 2)])
+        y_dims = tuple([1 for _ in range(y.ndimension() - 2)])
+        # detach h from graph
+        h = h.detach()
+        # get Wv, Uy
+        Wv = self.apply_modules(self.forward_layer, v, ['hidden'])
+        with torch.no_grad():
+            Wv = Wv - self.hid_bias.reshape((1,-1) + h_dims)
+        Uy = self.apply_modules(self.reconstruct_layer, y, ['top_down'])
+        # flatten if ndim > 2
+        if len(h_dims) > 0:
+            h = torch.flatten(h, 1)
+            Wv = torch.flatten(Wv, 1)
+            Uy = torch.flatten(Uy, 1)
+        # get hWv, hUy
+        hWv = torch.sum(torch.mul(h, Wv), 1)
+        hUy = torch.sum(torch.mul(h, Uy), 1)
+        # get bv, ch, dy
+        bv = torch.sum(torch.mul(v, self.vis_bias.reshape((1,-1) + v_dims)).flatten(1))
+        ch = torch.sum(torch.mul(h, self.hid_bias.reshape((1,-1) + h_dims)).flatten(1))
+        dy = torch.sum(torch.mul(y, self.y_bias.reshape((1,-1) + y_dims)).flatten(1))
+        return -hWv - bv - ch - dy - hUy
+
+    def contrastive_divergence(self, pv, ph, nv, nh):
+        # get sizes to normalize params
+        batch_size = torch.as_tensor(pv.shape[0], dtype=pv.dtype)
+        # compute contrastive_divergence for conv layer
+        if pv.ndimension() == 4:
+            v_shp = torch.as_tensor(pv.shape[-2:], dtype=pv.dtype)
+            W_shp = torch.as_tensor(self.hidden_weight.shape[-2:], dtype=pv.dtype)
+            hidsize = torch.prod(v_shp - W_shp + 1)
+            # compute vishidprods, hidact, visact
+            posprods = torch.conv2d(pv.transpose(1,0),
+                                    ph.transpose(1,0)).transpose(1,0)
+            negprods = torch.conv2d(nv.transpose(1,0),
+                                    nh.transpose(1,0)).transpose(1,0)
+            vishidprods = torch.div(posprods - negprods, (batch_size * hidsize))
+            hidact = torch.mean(ph - nh, dim=(0,2,3))
+            visact = torch.mean(pv - nv, dim=(0,2,3))
+        # compute contrastive_divergence for fc layer
+        else:
+            posprods = torch.matmul(pv.t(), ph)
+            negprods = torch.matmul(nv.t(), nh)
+            vishidprods = torch.div(posprods - negprods, batch_size)
+            hidact = torch.mean(ph - nh, dim=0)
+            visact = torch.mean(pv - nv, dim=0)
+        return vishidprods, hidact, visact
+
+    def train(self, inputs, k=1, monitor_fn=nn.MSELoss(), optimizer=None,
+              **kwargs):
+        """
+        #TODO:WRITEME
+        """
+        # get input, top_down
+        input, top_down = inputs[:2]
+        if optimizer:
+            optimizer.zero_grad()
+        with torch.no_grad():
+            # positive phase
+            pre_act_ph, ph_mean, ph_sample = self.sample_h_given_vy(input, top_down)
+            # persistent
+            if self.persistent is not None:
+                ph_sample = self.persistent
+                self.hidden_weight.add_(self.persistent_weights)
+            elif kwargs.get('persistent') is not None:
+                self.persistent = kwargs.get('persistent')
+                ph_sample = self.persistent
+                self.persistent_weights = torch.zeros_like(self.hidden_weight,
+                                                           requires_grad=True)
+                self.persistent_weights = nn.Parameter(self.persistent_weights)
+                optimizer.add_param_group({'params': self.persistent_weights})
+            # dropout
+            ph_sample = self.apply_modules(self.forward_layer, ph_sample,
+                                           ['dropout'])
+            # negative phase
+            [
+                pre_act_nv, nv_mean, nv_sample,
+                pre_act_ny, ny_mean, ny_sample,
+                pre_act_nh, nh_mean, nh_sample,
+            ] = self.gibbs_hvh(ph_sample, k=k)
+            # persistent
+            if self.persistent is not None:
+                self.hidden_weight.sub_(self.persistent_weights)
+            # compute loss with contrastive_divergence
+            grads = {}
+            prods = self.contrastive_divergence(input, ph_mean, nv_mean, nh_mean)
+            grads.update({'hidden_weight': prods[0], 'hid_bias': prods[1],
+                          'vis_bias': prods[2]})
+            y_prods = self.contrastive_divergence(top_down, ph_mean, ny_mean, nh_mean)
+            grads.update({'top_down_transpose_weight': y_prods[0],
+                          'y_bias': y_prods[2]})
+            self.update_grads(grads)
+            sum_grads = [torch.sum(torch.abs(g)) for g in grads.values()]
+            loss = torch.sum(torch.stack(sum_grads))
+        # # compute loss E(pv, py, ph) - E(nv, ny, nh)
+        # loss = torch.sub(torch.mean(self.energy(input, top_down, ph_mean)),
+        #                  torch.mean(self.energy(nv_sample, ny_sample, nh_mean)))
+        # loss.backward()
+        # update persistent weights
+        if self.persistent is not None:
+            with torch.no_grad():
                 self.persistent_weights.mul_(0.95)
                 self.persistent_weights.grad = self.hidden_weight.grad
         # compute additional loss from add_loss
