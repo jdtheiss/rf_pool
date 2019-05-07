@@ -127,8 +127,10 @@ class Model(nn.Module):
         return input
 
     def reconstruct(self, input):
-        for name, layer in self.layers.named_children():
-            input = layer.reconstruct(input)
+        layer_ids = list(self.layers.keys())
+        layer_ids.reverse()
+        for layer_id in layer_ids:
+            input = self.layers[layer_id].reconstruct(input)
         return input
 
     def pre_layer_ids(self, layer_id):
