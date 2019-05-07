@@ -359,7 +359,7 @@ class RBM(Module):
         function used for sampling from hidden unit mean field estimates
     vis_bias : torch.Tensor
         bias for visible units
-    hid_bias : torch.Tensor
+    hidden_bias : torch.Tensor
         bias for hidden units
     output_shape : tuple
         output shape for layer
@@ -430,9 +430,9 @@ class RBM(Module):
         # link parameters to self
         self.link_parameters(self.forward_layer)
         self.link_parameters(self.reconstruct_layer)
-        # set vis_bias and hid_bias
+        # set vis_bias and hidden_bias
         self.vis_bias = self.hidden_transpose_bias
-        self.hid_bias = self.hidden_bias
+        self.hidden_bias = self.hidden_bias
 
     def sample_h_given_v(self, v):
         # apply each non-pooling module (unless rf_pool)
@@ -640,9 +640,8 @@ class CRBM(RBM):
         # link parameters to self
         self.link_parameters(self.forward_layer)
         self.link_parameters(self.reconstruct_layer)
-        # set vis_bias, hid_bias, y_bias
+        # set vis_bias, hidden_bias, y_bias
         self.vis_bias = self.hidden_transpose_bias
-        self.hid_bias = self.hidden_bias
         self.y_bias = self.top_down_transpose_bias
 
     def sample_h_given_vy(self, v, y):
@@ -666,19 +665,25 @@ class CRBM(RBM):
         h_sample = self.sample_h_given_v(v)[-1]
         return self.sample_y_given_h(h_sample)
 
-    def gibbs_vhv(self, v_sample, y_sample, k=1):
+    def gibbs_vhv(self, v_sample, y_sample=None, k=1):
         for _ in range(k):
-            pre_act_h, h_mean, h_sample = self.sample_h_given_vy(v_sample, y_sample)
+            if y_sample is not None:
+                h_outputs = self.sample_h_given_vy(v_sample, y_sample)
+            else:
+                h_outputs = self.sample_h_given_v(v_sample)
+            h_sample = h_outputs[-1]
             v_outputs = self.sample_v_given_h(h_sample)
             y_outputs = self.sample_y_given_h(h_sample)
-        return (pre_act_h, h_mean, h_sample) + v_outputs + y_outputs
+        return h_outputs + v_outputs + y_outputs
 
     def gibbs_hvh(self, h_sample, k=1):
         for _ in range(k):
-            pre_act_v, v_mean, v_sample = self.sample_v_given_h(h_sample)
-            pre_act_y, y_mean, y_sample = self.sample_y_given_h(h_sample)
+            v_outputs = self.sample_v_given_h(h_sample)
+            v_sample = v_outputs[-1]
+            y_outputs = self.sample_y_given_h(h_sample)
+            y_sample = y_outputs[-1]
             h_outputs = self.sample_h_given_vy(v_sample, y_sample)
-        return (pre_act_v, v_mean, v_sample, pre_act_y, y_mean, y_sample) + h_outputs
+        return v_outputs + y_outputs + h_outputs
 
     def energy(self, v, y, h):
         #E(v,y,h) = −hTWv−bTv−cTh−dTy−hTUy
@@ -691,7 +696,7 @@ class CRBM(RBM):
         # get Wv, Uy
         Wv = self.apply_modules(self.forward_layer, v, ['hidden'])
         with torch.no_grad():
-            Wv = Wv - self.hid_bias.reshape((1,-1) + h_dims)
+            Wv = Wv - self.hidden_bias.reshape((1,-1) + h_dims)
         Uy = self.apply_modules(self.reconstruct_layer, y, ['top_down'])
         # flatten if ndim > 2
         if len(h_dims) > 0:
@@ -703,7 +708,7 @@ class CRBM(RBM):
         hUy = torch.sum(torch.mul(h, Uy), 1)
         # get bv, ch, dy
         bv = torch.sum(torch.mul(v, self.vis_bias.reshape((1,-1) + v_dims)).flatten(1))
-        ch = torch.sum(torch.mul(h, self.hid_bias.reshape((1,-1) + h_dims)).flatten(1))
+        ch = torch.sum(torch.mul(h, self.hidden_bias.reshape((1,-1) + h_dims)).flatten(1))
         dy = torch.sum(torch.mul(y, self.y_bias.reshape((1,-1) + y_dims)).flatten(1))
         return -hWv - bv - ch - dy - hUy
 
