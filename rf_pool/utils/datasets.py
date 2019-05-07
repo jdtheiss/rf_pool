@@ -106,7 +106,7 @@ class Dataset(torch.utils.data.Dataset):
         # apply transform
         if self.transform:
             img = self.transform(img)
-        if self.extras is not None:
+        if hasattr(self, 'extras') and self.extras is not None:
             output = (img, self.extras[index], label)
         else:
             output = (img, label)
