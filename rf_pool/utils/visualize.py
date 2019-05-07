@@ -3,45 +3,82 @@ import numpy as np
 import matplotlib.pyplot as plt 
 from matplotlib import offsetbox
 
-def cosine_similarity(i1, i2, feature_vectors, labels):
+def rf_interference(feat_i, feat_j):
     """
-    Computes the average cosine similarity between 
-    all pairs of feature vectors between class labels i1 and i2 
+    Computes a receptive field interference score:
+    mena cosine similarity between feat_i and rf_pool(feat_i, feat_j)
     
     Parameters
     ----------
-    i1: int
-        first class label
-    i2: int
-        second class label
+    feat_i: torch.tensor
+        features correspinding to first class label
+    feat_j: torch.tensor
+        features correspinding to second class label
         
     Returns
     -------
     score: torch.tensor
         the average cosine similarity between all pairs 
-        of feature vectors between class label i1 and i2
+        of feature vectors between class label i and rf_pool(i,j)
     """
+    n_i = feat_i.shape[0]
+    n_j = feat_j.shape[0]
+    feat_i_r = torch.unsqueeze(feat_i, -1).repeat(1,1,n_j)
+    feat_j_r = torch.unsqueeze(feat_j, -1).repeat(1,1,n_i)
     
-    # get feature vectors
-    features_i1 = feature_vectors[np.where(labels == i1)[0]]
-    features_i2 = feature_vectors[np.where(labels == i2)[0]]
+    # max across channels
+    feat_p = torch.max(feat_i_r, feat_j_r.permute(2,1,0))
     
+    # inner product
+    inner = torch.sum(feat_i_r * feat_p, dim=1)
+    
+    # norms
+    norm_i = torch.sqrt(torch.diagonal(torch.matmul(feat_i, torch.t(feat_i))))
+    norm_i = torch.unsqueeze(norm_i, -1).repeat(1,n_j)
+    norm_j = torch.sqrt(torch.sum(torch.pow(feat_p, 2), dim=1))
+    norm = norm_i * norm_j
+    
+    # average over cosine similarity
+    score = torch.mean(inner / norm)
+    
+    return score
+    
+    
+def cosine_similarity(feat_i, feat_j):
+    """
+    Computes the mena cosine similarity between 
+    feat_i and feat_j
+    
+    Parameters
+    ----------
+    feat_i: torch.tensor
+        features correspinding to class label i
+    feat_j: torch.tensor
+        features correspinding to class label j
+        
+    Returns
+    -------
+    score: torch.tensor
+        the average cosine similarity between all pairs 
+        of feature vectors between class label i and j
+    """
     # compute inner products
-    inner = torch.matmul(features_i1, torch.t(features_i2))
+    inner = torch.matmul(feat_i, torch.t(feat_j))
     
     # calculate the norms
-    norm_i1 = torch.sqrt(torch.diagonal(torch.matmul(features_i1, torch.t(features_i1))).reshape(1,-1))
-    norm_i2 = torch.sqrt(torch.diagonal(torch.matmul(features_i2, torch.t(features_i2))).reshape(1,-1))
-    norm = torch.matmul(torch.t(norm_i1), norm_i2)
+    norm_i = torch.sqrt(torch.diagonal(torch.matmul(feat_i, torch.t(feat_i)))).reshape(1,-1)
+    norm_j = torch.sqrt(torch.diagonal(torch.matmul(feat_j, torch.t(feat_j)))).reshape(1,-1)
+    norm = torch.matmul(torch.t(norm_i), norm_j)
     
     # avarage over the cosine similarity 
     score = torch.mean(inner/norm) 
     
     return score
 
-def cosine_similarity_matrix(feature_vectors, labels):
+
+def confusion_matrix(feature_vectors, labels, interference_fn=cosine_similarity):
     """
-    Computes a mean cosine similarity matrix 
+    Computes a mean cosine similarity matrix
     from a set of feature vectors and corresponding class labels
     
     Parameters
@@ -50,11 +87,12 @@ def cosine_similarity_matrix(feature_vectors, labels):
         set of all corresponding class feature vectors
     labels: torch.tensor
         set of all class labels
-  
+    interference_fn: visualize.fn
+        computes an interference score between features
     Returns
     -------
     matrix: torch.tensor
-        confusion matrix of average cosine similarities
+        confusion matrix of mean rf-interference scores
     unique_labels: torch.tensor
        class labels corresponding to matrix entries
     """
@@ -63,9 +101,13 @@ def cosine_similarity_matrix(feature_vectors, labels):
     
     for i, label_i in enumerate(unique_labels):
         for j, label_j in enumerate(unique_labels):
-            matrix[i, j] = cosine_similarity(label_i, label_j, feature_vectors, labels)
+            feat_i = feature_vectors[np.where(labels == label_i)[0]]
+            feat_j = feature_vectors[np.where(labels == label_j)[0]] 
+            # compute the mean cosine similarity cosine
+            matrix[i, j] = interference_fn(feat_i, feat_j)
     
     return matrix, unique_labels
+    
 
 def show_confusion_matrix(data, labels, cmap=plt.cm.afmhot):
     """
