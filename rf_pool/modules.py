@@ -75,6 +75,7 @@ class Module(nn.Module):
             self.register_parameter(param_name, param)
 
     def init_weights(self, suffix='weight', fn=torch.randn_like):
+        #TODO: figure out how to have fn have specific range (e.g., normal(0, 0.01))
         for name, param in self.named_parameters():
             with torch.no_grad():
                 if name.endswith(suffix):
@@ -259,8 +260,7 @@ class FeedForward(Module):
         super(FeedForward, self).__init__(input_shape)
         # build layer
         self.make_layer('forward_layer', **kwargs)
-        # init weights, biases
-        self.init_weights(suffix='weight', fn=torch.randn_like)
+        # initialize biases to zeros
         self.init_weights(suffix='bias', fn=torch.zeros_like)
         # link parameters
         self.link_parameters(self.forward_layer)
@@ -317,8 +317,7 @@ class Control(Module):
         assert 'control' in kwargs.keys(), ('must contain "control" module')
         # build layer
         self.make_layer('forward_layer', **kwargs)
-        # init weights, biases
-        self.init_weights(suffix='weight', fn=torch.randn_like)
+        # init biases
         self.init_weights(suffix='bias', fn=torch.zeros_like)
         # link parameters
         self.link_parameters(self.forward_layer)
@@ -758,10 +757,6 @@ class CRBM(RBM):
             self.update_grads(grads)
             sum_grads = [torch.sum(torch.abs(g)) for g in grads.values()]
             loss = torch.sum(torch.stack(sum_grads))
-        # # compute loss E(pv, py, ph) - E(nv, ny, nh)
-        # loss = torch.sub(torch.mean(self.energy(input, top_down, ph_mean)),
-        #                  torch.mean(self.energy(nv_sample, ny_sample, nh_mean)))
-        # loss.backward()
         # update persistent weights
         if self.persistent is not None:
             with torch.no_grad():
