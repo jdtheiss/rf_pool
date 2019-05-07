@@ -133,22 +133,25 @@ class Module(nn.Module):
             transposed_fn = fn
         return transposed_fn
 
-    def get_module_names(self, layer, module_name=None):
+    def get_module_names(self, layer_name, module_name=None):
         module_names = []
+        layer = getattr(self, layer_name)
         for name, _ in layer.named_children():
             module_names.append(name)
             if module_name and name == module_name:
                 break
         return module_names
 
-    def get_modules(self, layer, module_names):
+    def get_modules(self, layer_name, module_names):
         modules = []
+        layer = getattr(self, layer_name)
         for name, module in layer.named_children():
             if name in module_names:
                 modules.append(module)
         return modules
 
-    def apply_modules(self, layer, input, module_names):
+    def apply_modules(self, input, layer_name, module_names):
+        layer = getattr(self, layer_name)
         for i, (name, module) in enumerate(layer.named_children()):
             if name in module_names:
                 if i==0 and layer == self.forward_layer:
@@ -195,10 +198,10 @@ class Module(nn.Module):
         """
         #TODO:WRITEME
         """
-        module_names = self.get_module_names(self.forward_layer, module_name)
+        module_names = self.get_module_names('forward_layer', module_name)
         outputs = []
         for input in inputs:
-            output = self.apply_modules(self.forward_layer, input, module_names)
+            output = self.apply_modules(input, 'forward_layer', module_names)
             if type(output) is list:
                 output = torch.cat([torch.flatten(o) for o in output])
             outputs.append(output)
@@ -207,8 +210,8 @@ class Module(nn.Module):
     def sparsity(self, input, target, cost=1., module_name=None):
         # (SparseRBM; Lee et al., 2008)
         if module_name:
-            module_names = self.get_module_names(self.forward_layer, module_name)
-            activity = self.apply_modules(self.forward_layer, input, module_names)
+            module_names = self.get_module_names('forward_layer', module_name)
+            activity = self.apply_modules(input, 'forward_layer', module_names)
         else:
             activity = input
         q = torch.mean(activity.transpose(1,0).flatten(1), -1)
@@ -435,10 +438,10 @@ class RBM(Module):
 
     def sample_h_given_v(self, v):
         # apply each non-pooling module (unless rf_pool)
-        pre_act_h = self.apply_modules(self.forward_layer, v, ['hidden'])
-        h_mean = self.apply_modules(self.forward_layer, pre_act_h, ['activation'])
+        pre_act_h = self.apply_modules(v, 'forward_layer', ['hidden'])
+        h_mean = self.apply_modules(pre_act_h, 'forward_layer', ['activation'])
         # apply pool module if rf_pool type
-        pool_module = self.get_modules(self.forward_layer, ['pool'])[0]
+        pool_module = self.get_modules('forward_layer', ['pool'])[0]
         if torch.typename(pool_module).find('layers') >= 0:
             h_mean = pool_module.apply(h_mean)[0]
         # sample from h_mean
@@ -450,8 +453,8 @@ class RBM(Module):
 
     def sample_v_given_h(self, h):
         # apply each non-pooling module
-        pre_act_v = self.apply_modules(self.reconstruct_layer, h, ['hidden_transpose'])
-        v_mean = self.apply_modules(self.reconstruct_layer, pre_act_v, ['activation'])
+        pre_act_v = self.apply_modules(h, 'reconstruct_layer', ['hidden_transpose'])
+        v_mean = self.apply_modules(pre_act_v, 'reconstruct_layer', ['activation'])
         # sample from v_mean
         if self.vis_sample_fn:
             v_sample = self.vis_sample_fn(probs=v_mean).sample()
@@ -461,13 +464,13 @@ class RBM(Module):
 
     def sample_h_given_vt(self, v, t):
         # apply each module, add t instead of pooling (unless rf_pool)
-        pre_act_h = self.apply_modules(self.forward_layer, v, ['hidden'])
+        pre_act_h = self.apply_modules(v, 'forward_layer', ['hidden'])
         shape = [v_shp//t_shp for (v_shp,t_shp) in zip(pre_act_h.shape,t.shape)]
         t = functions.repeat(t, shape)
-        h_mean = self.apply_modules(self.forward_layer, torch.add(pre_act_h, t),
+        h_mean = self.apply_modules(torch.add(pre_act_h, t), 'forward_layer',
                                    ['activation'])
         # apply pool module if rf_pool type
-        pool_module = self.get_modules(self.forward_layer, ['pool'])[0]
+        pool_module = self.get_modules('forward_layer', ['pool'])[0]
         if torch.typename(pool_module).find('layers') >= 0:
             h_mean = pool_module.apply(h_mean)[0]
         # sample from h_mean
@@ -570,8 +573,7 @@ class RBM(Module):
                 self.persistent_weights = nn.Parameter(self.persistent_weights)
                 optimizer.add_param_group({'params': self.persistent_weights})
             # dropout
-            ph_sample = self.apply_modules(self.forward_layer, ph_sample,
-                                           ['dropout'])
+            ph_sample = self.apply_modules(ph_sample, 'forward_layer', ['dropout'])
             # negative phase
             [
                 pre_act_nv, nv_mean, nv_sample, pre_act_nh, nh_mean, nh_sample
@@ -645,11 +647,11 @@ class CRBM(RBM):
 
     def sample_h_given_vy(self, v, y):
         # get top down input from y
-        Uy = self.apply_modules(self.reconstruct_layer, y, ['top_down'])
+        Uy = self.apply_modules(y, 'reconstruct_layer', ['top_down'])
         return self.sample_h_given_vt(v, Uy)
 
     def sample_y_given_h(self, h):
-        pre_act_y = self.apply_modules(self.forward_layer, h, ['top_down_transpose'])
+        pre_act_y = self.apply_modules(h, 'forward_layer', ['top_down_transpose'])
         if self.y_activation_fn:
             y_mean = self.y_activation_fn(pre_act_y)
         else:
@@ -693,10 +695,10 @@ class CRBM(RBM):
         # detach h from graph
         h = h.detach()
         # get Wv, Uy
-        Wv = self.apply_modules(self.forward_layer, v, ['hidden'])
+        Wv = self.apply_modules(v, 'forward_layer', ['hidden'])
         with torch.no_grad():
             Wv = Wv - self.hidden_bias.reshape((1,-1) + h_dims)
-        Uy = self.apply_modules(self.reconstruct_layer, y, ['top_down'])
+        Uy = self.apply_modules(y, 'reconstruct_layer', ['top_down'])
         # flatten if ndim > 2
         if len(h_dims) > 0:
             h = torch.flatten(h, 1)
@@ -735,8 +737,7 @@ class CRBM(RBM):
                 self.persistent_weights = nn.Parameter(self.persistent_weights)
                 optimizer.add_param_group({'params': self.persistent_weights})
             # dropout
-            ph_sample = self.apply_modules(self.forward_layer, ph_sample,
-                                           ['dropout'])
+            ph_sample = self.apply_modules(ph_sample, 'forward_layer', ['dropout'])
             # negative phase
             [
                 pre_act_nv, nv_mean, nv_sample,
