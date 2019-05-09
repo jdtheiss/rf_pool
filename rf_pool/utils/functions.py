@@ -160,7 +160,10 @@ def pop_attributes(obj, keys, default=None):
 
 def set_attributes(obj, **kwargs):
     for key, value in kwargs.items():
-        setattr(obj, key, value)
+        if hasattr(obj, 'update'):
+            obj.update({key: value})
+        else:
+            setattr(obj, key, value)
 
 def get_max_location(input, out_shape=None, normalized_units=True):
     h,w = input.shape[-2:]
@@ -182,7 +185,7 @@ def get_max_location(input, out_shape=None, normalized_units=True):
         col = torch.round(col * scale[-1]).type(torch.int)
     return row, col
 
-def one_hot(i, n_classes):
+def one_hot(i, n_classes): #TODO: allow i to be tensor with shape[0] > 1
     output = torch.zeros(n_classes)
     output[i] = 1.
     return output
