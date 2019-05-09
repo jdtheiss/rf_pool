@@ -16,10 +16,10 @@ class Layer(torch.nn.Module):
         self.sigma = sigma
         self.img_shape = img_shape
         self.lattice_fn = lattice_fn
-        # extra parameters
-        self.ratio = None
-        self.delta_mu = None
-        self.delta_sigma = None
+        # check for optional kwargs
+        options = functions.pop_attributes(kwargs, ['ratio','delta_mu',
+                                           'delta_sigma','update_img_shape'])
+        functions.set_attributes(self, **options)
         # set inputs for rf_pool
         self.rfs = None
         self.pool_type = None
@@ -69,12 +69,15 @@ class Layer(torch.nn.Module):
         assert self.rfs is not None
         assert self.img_shape is not None
         # update mu if img_shape doesnt match rfs.shape[-2:]
-        if self.rfs.shape[-2:] != self.img_shape:
+        if self.update_img_shape and self.rfs.shape[-2:] != self.img_shape:
             with torch.no_grad():
-                self.mu.add_(torch.sub(torch.as_tensor(self.img_shape,
-                                                       dtype=self.mu.dtype),
-                                       torch.as_tensor(self.rfs.shape[-2:],
-                                                       dtype=self.mu.dtype)))
+                img_diff = torch.sub(torch.tensor(self.img_shape,
+                                                  dtype=self.mu.dtype),
+                                     torch.tensor(self.rfs.shape[-2:],
+                                                  dtype=self.mu.dtype))
+                self.mu.add_(img_diff / 2.)
+        elif self.rfs.shape[-2:] != self.img_shape:
+            raise Exception('rfs.shape[-2:] != self.img_shape')
         # update mu and sigma
         mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma)
         # update rfs
