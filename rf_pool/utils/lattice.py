@@ -60,7 +60,7 @@ def multiply_gaussians(mu0, mu1, sigma0, sigma1):
     sigma0_2 = torch.pow(sigma0, 2)
     sigma1_2 = torch.pow(sigma1, 2)
     mu = (sigma1_2 * mu0 + sigma0_2 * mu1) / (sigma0_2 + sigma1_2)
-    sigma = torch.sqrt(sigma0_2 * sigma1_2 / (sigma0_2 + sigma1_2))
+    sigma = torch.sqrt((sigma0_2 * sigma1_2) / (sigma0_2 + sigma1_2))
     # return weighted combination based on mu1_batch size
     w = torch.ones(mu1.shape[-1], 1) / torch.tensor(mu1.shape[-1])
     mu = torch.matmul(mu, w).squeeze(-1)
@@ -120,7 +120,7 @@ def gaussian_gradient(kernels):
     w[1,0,0,:] = -1.
     return torch.conv2d(kernels, w)[0]
 
-def update_mu_sigma(mu, sigma, priority_map, weight=1., sigma_weight=1.):
+def update_mu_sigma(mu, sigma, priority_map):
     """
     Returns updated mu and sigma after multiplication with a map of gaussian
     precision values
@@ -133,8 +133,6 @@ def update_mu_sigma(mu, sigma, priority_map, weight=1., sigma_weight=1.):
         kernel standard deviations with shape (n_kernels, 1)
     priority_map : torch.Tensor
         map of precisions to update mu, sigma with shape kernel_shape
-    weight : float
-        #TODO:WRITEME
 
     Returns
     -------
