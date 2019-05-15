@@ -402,7 +402,7 @@ def init_foveated_lattice(img_shape, scale, spacing, n_rf=None, n_rings=None,
         n_rf = n_rf + 1
 
     # get angular positions for each receptive field
-    angles = 2. * np.pi * torch.linspace(0., 1., int(n_rf))
+    angles = 2. * np.pi * torch.linspace(0., 1., int(n_rf))[:-1]
     x_mu = torch.cos(angles)
     y_mu = torch.sin(angles)
 
@@ -415,7 +415,7 @@ def init_foveated_lattice(img_shape, scale, spacing, n_rf=None, n_rings=None,
     eFactor = (cfPlusR2 - np.sqrt(np.square(cfPlusR2) + np.square(cf) * (np.square(scale) - 1.)))/np.square(cf)
 
     # get rotation angle between each ring
-    rot_angle = torch.as_tensor(np.pi * n_rf, dtype=torch.float32)
+    rot_angle = torch.as_tensor(np.pi / n_rf, dtype=torch.float32)
     x_mu_rot = torch.cos(rot_angle)*x_mu + torch.sin(rot_angle)*y_mu
     y_mu_rot = -torch.sin(rot_angle)*x_mu + torch.cos(rot_angle)*y_mu
 
