@@ -84,8 +84,8 @@ def dog_kernel_2d(mu, sigma, ratio, xy):
 
 def mask_kernel_2d(mu, sigma, xy):
     kernels = exp_kernel_2d(mu, sigma, xy)
-    thr = torch.exp(torch.as_tensor(-1, dtype=kernels.dtype))
-    mask = torch.as_tensor(torch.gt(kernels, thr), dtype=kernels.dtype)
+    thr = torch.exp(torch.as_tensor(-0.5, dtype=kernels.dtype))
+    mask = torch.as_tensor(torch.ge(kernels, thr), dtype=kernels.dtype)
     with torch.no_grad():
         kernels_no_grad = torch.add(kernels, 1e-6)
     return torch.div(torch.mul(kernels, mask), kernels_no_grad)
