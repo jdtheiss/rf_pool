@@ -350,7 +350,7 @@ def mask_kernel_lattice(mu, sigma, kernel_shape):
     return mask_kernel_2d(mu, sigma, xy)
 
 def init_foveated_lattice(img_shape, scale, spacing, n_rf=None, n_rings=None,
-                          min_ecc=1., offset=[0.,0.]):
+                          min_ecc=1., offset=[0.,0.], rotate_rings=False):
     """
     Creates a foveated lattice of kernel centers (mu) and
     stantard deviations (sigma)
@@ -365,6 +365,8 @@ def init_foveated_lattice(img_shape, scale, spacing, n_rf=None, n_rings=None,
         spacing between receptive field centers (as fraction of radius)
     min_ecc : float
         minimum eccentricity for gaussian rings [default: 1.]
+    rotate_rings : bool
+        rotate receptive fields between rings [default: False]
 
     Returns
     -------
@@ -390,8 +392,7 @@ def init_foveated_lattice(img_shape, scale, spacing, n_rf=None, n_rings=None,
     References
     ----------
     (Winawer & Horiguchi, 2015) https://archive.nyu.edu/handle/2451/33887
-    """#TODO: ensure center is filled with ones if min_ecc > 0.
-    #TODO: also remove completely overlapping mus
+    """
     assert scale > 0.
     assert min_ecc > 0.
 
@@ -415,16 +416,17 @@ def init_foveated_lattice(img_shape, scale, spacing, n_rf=None, n_rings=None,
     eFactor = (cfPlusR2 - np.sqrt(np.square(cfPlusR2) + np.square(cf) * (np.square(scale) - 1.)))/np.square(cf)
 
     # get rotation angle between each ring
-    rot_angle = torch.as_tensor(np.pi / n_rf, dtype=torch.float32)
-    x_mu_rot = torch.cos(rot_angle)*x_mu + torch.sin(rot_angle)*y_mu
-    y_mu_rot = -torch.sin(rot_angle)*x_mu + torch.cos(rot_angle)*y_mu
+    if rotate_rings:
+        rot_angle = torch.as_tensor(np.pi / n_rf, dtype=torch.float32)
+        x_mu_rot = torch.cos(rot_angle)*x_mu + torch.sin(rot_angle)*y_mu
+        y_mu_rot = -torch.sin(rot_angle)*x_mu + torch.cos(rot_angle)*y_mu
 
     # append mu, sigma for each eccentricity
     ecc = min_ecc / ((1 + scale) * eFactor)
     mu = []
     sigma = []
     for n in range(n_rings):
-        if np.mod(n, 2):
+        if rotate_rings and np.mod(n, 2):
             mu.append(torch.stack([ecc*x_mu_rot, ecc*y_mu_rot], dim=-1))
         else:
             mu.append(torch.stack([ecc*x_mu, ecc*y_mu], dim=-1))
