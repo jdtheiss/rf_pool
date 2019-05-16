@@ -17,7 +17,7 @@ class Layer(torch.nn.Module):
         self.img_shape = img_shape
         self.lattice_fn = lattice_fn
         # check for optional kwargs
-        options = functions.pop_attributes(kwargs, ['ratio','delta_mu',
+        options = functions.pop_attributes(kwargs, ['ratio','thr','delta_mu',
                                            'delta_sigma','update_img_shape'])
         functions.set_attributes(self, **options)
         # set inputs for rf_pool
@@ -59,6 +59,8 @@ class Layer(torch.nn.Module):
         assert self.img_shape is not None
         if self.ratio is not None:
             rfs = self.lattice_fn(self.mu, self.sigma, self.img_shape, self.ratio)
+        elif self.thr is not None:
+            rfs = self.lattice_fn(self.mu, self.sigma, self.img_shape, self.thr)
         else:
             rfs = self.lattice_fn(self.mu, self.sigma, self.img_shape)
         return rfs
@@ -83,6 +85,8 @@ class Layer(torch.nn.Module):
         # update rfs
         if self.ratio is not None:
             rfs = self.lattice_fn(mu, sigma, self.img_shape, self.ratio)
+        elif self.thr is not None:
+            rfs = self.lattice_fn(mu, sigma, self.img_shape, self.thr)
         else:
             rfs = self.lattice_fn(mu, sigma, self.img_shape)
         return rfs
