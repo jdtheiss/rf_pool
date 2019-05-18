@@ -145,6 +145,34 @@ def confusion_matrix(feature_vectors, labels, interference_fn=cosine_similarity)
 
     return mean_matrix, std_matrix, unique_labels
 
+def index_rfs(model, layer_id, input, thr=1e-3):
+    rf_layer = model.layers[layer_id].forward_layer.pool
+    assert torch.typename(rf_layer).find('layers') > -1, (
+        'No rf_pool layer found.'
+    )
+    # get layers before layer id
+    pre_layer_ids = model.pre_layer_ids(layer_id)
+    # apply forward up to layer id
+    layer_input = model.apply_layers(input, pre_layer_ids)
+    # get modules before pool
+    module_names = model.layers[layer_id].get_module_names('forward_layer')
+    pool_idx = [i for i, m in enumerate(module_names) if m == 'pool']
+    module_names = module_names[:pool_idx[0]]
+    # apply modules before pool
+    pool_input = model.layers[layer_id].apply_modules(layer_input, 'forward_layer',
+                                                      module_names)
+    # apply pooling with retain_shape=True
+    pool_output = rf_layer.apply(pool_input, retain_shape=True)[1]
+    # sum across channels
+    rf_outputs = torch.sum(pool_output, 1)
+    # find rf_outputs with var > thr
+    rf_var = torch.var(rf_outputs.flatten(-2), -1)
+    rf_index = torch.gt(rf_var, thr)
+    return rf_index
+
+def rf_heatmap(model, layer_id, img_shape):
+    raise NotImplementedError
+
 def show_confusion_matrix(data, labels, cmap=plt.cm.afmhot):
     """
     TODO
