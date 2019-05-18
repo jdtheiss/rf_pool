@@ -190,10 +190,6 @@ def one_hot(i, n_classes): #TODO: allow i to be tensor with shape[0] > 1
     output[i] = 1.
     return output
 
-def binomial_zstat(p1, p2, n1, n2):
-    p_hat = (n1 * p1 + n2 * p2)/(n1 + n2)
-    return np.abs(p1 - p2)/np.sqrt(p_hat * (1. - p_hat) * (1./n1 + 1./n2))
-
 if __name__ == '__main__':
     import doctest
     doctest.testmod()
