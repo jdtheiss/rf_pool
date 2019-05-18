@@ -347,8 +347,8 @@ def sum_pool(u, out_shape, mask=None):
     p_mean = torch.mul(sum_val, h_sample)
     return h_mean, p_mean
 
-def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type=None, kernel_size=2,
-            return_indices=False, **kwargs):
+def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
+            mu_mask=None, return_indices=False, retain_shape=False, **kwargs):
     """
     Receptive field pooling
 
@@ -364,19 +364,27 @@ def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type=None, kernel_size=2,
         (n_kernels, h, w) (see lattice_utils)
         kernels are element-wise multiplied with (u+t) prior to pooling
         [default: None, applies pooling over blocks]
-    mu_mask : torch.Tensor or None
-        mask with center locations for receptive fields with shape
-        (n_kernels, h, w)
-        [default: None, outputs are indexed at position of maximum unit in each
-        receptive field]
     pool_type : string
         type of pooling ('prob','stochastic','div_norm','max','average','sum')
         [default: 'max']
     kernel_size : int or tuple
         size of blocks in hidden layer connected to pooling units
         [default: 2]
+    mask_thr : float
+        threshold used to binarize rfs as mask input for pooling operations
+        (overridden if 'mask' in kwargs)
+        [default: 1e-6]
+    mu_mask : torch.Tensor or None
+        mask with center locations for receptive fields with shape
+        (n_kernels, h, w)
+        [default: None, outputs are indexed at position of maximum unit in each
+        receptive field]
     return_indices : bool
         boolean whether to return indices of max-pooling (for kernel_size > 1)
+        [default: False]
+    retain_shape : bool
+        boolean whether to retain the shape of output after multiplying u with
+        rfs (i.e. shape=(batch_size, ch, n_rfs, u_h, u_w))
         [default: False]
     **kwargs : dict
         extra arguments passed to pooling function indicated by pool_type
@@ -423,9 +431,9 @@ def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type=None, kernel_size=2,
     # get bottom-up shape
     batch_size, ch, u_h, u_w = u.shape
     if type(kernel_size) is tuple:
-        b_w, b_h = kernel_size
+        b_h, b_w = kernel_size
     else:
-        b_w = b_h = kernel_size
+        b_h = b_w = kernel_size
 
     top_down = (type(t) is torch.Tensor)
     receptive_fields = (type(rfs) is torch.Tensor)
@@ -468,14 +476,20 @@ def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type=None, kernel_size=2,
 
     # pooling across receptive fields
     if receptive_fields:
-        # elemwise multiply u with rf_kernels (batch_size, ch, rf, u_h, u_w)
+        # elemwise multiply u with rf_kernels (batch_size, ch, n_rfs, u_h, u_w)
         rf_u = torch.mul(torch.unsqueeze(u, 2), rfs)
 
         # apply pooling function
         if pool_fn:
-            rfs_mask = torch.reshape(rfs, (1,1) + rfs.shape)
+            # get mask from kwargs
+            rfs_mask = functions.pop_attributes(kwargs, ['mask'])['mask']
+            if rfs_mask is None:
+                rfs_mask = torch.reshape(rfs, (1,1) + rfs.shape)
+                rfs_mask = torch.gt(rfs_mask, mask_thr).float()
+                rfs_mask = torch.flatten(rfs_mask, -2)
+            # apply pooling operation
             h_mean, p_mean = pool_fn(torch.flatten(rf_u, -2), rf_u.shape,
-                                     mask=torch.flatten(rfs_mask, -2), **kwargs)
+                                     mask=rfs_mask, **kwargs)
         else:
             h_mean = rf_u
             p_mean = rf_u
@@ -486,15 +500,13 @@ def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type=None, kernel_size=2,
             p_mean = torch.max(torch.flatten(p_mean, -2), -1, keepdim=True)[0]
             p_mean = torch.unsqueeze(p_mean, -1)
             p_mean = torch.mul(mu_mask, p_mean)
-            p_mean = torch.max(p_mean, -3)[0]
         # get max index in each RF
         elif pool_fn is None:
             h_sample = max_index(torch.flatten(h_mean, -2))
             h_sample = torch.reshape(h_sample, h_mean.shape)
-            h_sample = torch.max(h_sample, -3)[0]
-            h_mean = torch.max(h_mean, -3)[0]
             p_mean = torch.mul(h_sample, h_mean)
-        else: # max across RFs
+        # max across RFs
+        if not retain_shape:
             h_mean = torch.max(h_mean, -3)[0]
             p_mean = torch.max(p_mean, -3)[0]
 
@@ -506,17 +518,23 @@ def rf_pool(u, t=None, rfs=None, mu_mask=None, pool_type=None, kernel_size=2,
         # pool across blocks
         assert pool_fn is not None, ('pool_type cannot be None if rfs is None')
         h_mean_b, p_mean_b = pool_fn(b, b.shape, **kwargs)
-        for r in xrange(b_w):
-            for c in xrange(b_h):
-                h_mean[:, :, r::b_w, c::b_h] = h_mean_b[:,:,:,:,(r*b_w) + c]
-                p_mean[:, :, r::b_w, c::b_h] = p_mean_b[:,:,:,:,(r*b_w) + c]
+        for r in xrange(b_h):
+            for c in xrange(b_w):
+                h_mean[:, :, r::b_h, c::b_w] = h_mean_b[:,:,:,:,(r*b_h) + c]
+                p_mean[:, :, r::b_h, c::b_w] = p_mean_b[:,:,:,:,(r*b_h) + c]
 
     else:
         raise Exception('rfs type not understood')
 
     # max pool across blocks
-    if (b_w > 1 or b_h > 1):
-        p_mean = F.max_pool2d(p_mean, kernel_size, return_indices=return_indices)
+    if (b_h > 1 or b_w > 1):
+        if retain_shape:
+            kernel_size = (1, b_h, b_w)
+            p_mean = F.max_pool3d(p_mean, kernel_size,
+                                  return_indices=return_indices)
+        else:
+            p_mean = F.max_pool2d(p_mean, kernel_size,
+                                  return_indices=return_indices)
 
     return h_mean, p_mean
 
