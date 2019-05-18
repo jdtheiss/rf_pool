@@ -145,7 +145,7 @@ def confusion_matrix(feature_vectors, labels, interference_fn=cosine_similarity)
 
     return mean_matrix, std_matrix, unique_labels
 
-def index_rfs(model, layer_id, input, thr=1e-3):
+def index_rfs(model, layer_id, input, thr=0.):
     rf_layer = model.layers[layer_id].forward_layer.pool
     assert torch.typename(rf_layer).find('layers') > -1, (
         'No rf_pool layer found.'
@@ -153,7 +153,7 @@ def index_rfs(model, layer_id, input, thr=1e-3):
     # get layers before layer id
     pre_layer_ids = model.pre_layer_ids(layer_id)
     # apply forward up to layer id
-    layer_input = model.apply_layers(input, pre_layer_ids)
+    layer_input = model.apply_layers(input.detach(), pre_layer_ids)
     # get modules before pool
     module_names = model.layers[layer_id].get_module_names('forward_layer')
     pool_idx = [i for i, m in enumerate(module_names) if m == 'pool']
@@ -170,8 +170,36 @@ def index_rfs(model, layer_id, input, thr=1e-3):
     rf_index = torch.gt(rf_var, thr)
     return rf_index
 
-def rf_heatmap(model, layer_id, img_shape):
-    raise NotImplementedError
+def rf_heatmap(model, layer_id):
+    rf_layer = model.layers[layer_id].forward_layer.pool
+    assert torch.typename(rf_layer).find('layers') > -1, (
+        'No rf_pool layer found.'
+    )
+    # get layers before layer id
+    pre_layer_ids = model.pre_layer_ids(layer_id)
+    # layer_ids = pre_layer_ids + [layer_id]
+    pre_layer_ids.reverse()
+    # for each layer apply transpose convolution of ones and unpooling
+    rfs = torch.unsqueeze(rf_layer.rfs, 1).detach()
+    w_shape = model.layers[layer_id].forward_layer.hidden.weight.shape[-2:]
+    w = torch.ones((1, 1) + w_shape)
+    heatmap = torch.conv_transpose2d(rfs, w)
+    heatmap = torch.gt(heatmap, 0.).float()
+    for id in pre_layer_ids:
+        # upsample
+        pool = model.layers[id].get_modules('forward_layer', ['pool'])
+        if len(pool) == 1 and hasattr(pool[0], 'kernel_size'):
+            pool_size = pool[0].kernel_size
+            heatmap = torch.nn.functional.interpolate(heatmap,
+                                                      scale_factor=pool_size)
+        # conv_transpose2d
+        hidden = model.layers[id].get_modules('forward_layer', ['hidden'])
+        if len(hidden) == 1 and hasattr(hidden[0], 'weight'):
+            w_shape = hidden[0].weight.shape[-2:]
+            w = torch.ones((1, 1) + w_shape)
+            heatmap = torch.conv_transpose2d(heatmap, w)
+        heatmap = torch.gt(heatmap, 0.).float()
+    return heatmap.squeeze(1)
 
 def show_confusion_matrix(data, labels, cmap=plt.cm.afmhot):
     """
