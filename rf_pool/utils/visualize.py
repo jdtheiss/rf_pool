@@ -20,10 +20,8 @@ def rf_interference(feat_i, feat_j):
 
     Returns
     -------
-    mean: torch.tensor
-        the average cosine similarity
-    std: torch.tensor
-        std dev of cosine similarities
+    interference: torch.tensor
+        vector of (1. - cosine_sim)
     """
     n_i = feat_i.shape[0]
     n_j = feat_j.shape[0]
@@ -43,9 +41,9 @@ def rf_interference(feat_i, feat_j):
     norm = torch.mul(norm_i, norm_j)
 
     # average over cosine similarity
-    cosine_sim = torch.div(inner, norm + 1e-6)
+    cosine_sim = torch.div(inner, norm)
 
-    return 1 - torch.mean(cosine_sim), torch.std(cosine_sim)
+    return 1 - cosine_sim
 
 def pairwise_cosine_similarity(feat_i, feat_j):
     """
@@ -61,10 +59,8 @@ def pairwise_cosine_similarity(feat_i, feat_j):
 
     Returns
     -------
-    mean: torch.tensor
-        the average cosine similarity
-    std: torch.tensor
-        std dev of cosine similarities
+    cosine_sim: torch.tensor
+        vector of cosine similarities
     """
     # inner product
     inner = torch.sum(torch.mul(feat_i, feat_j), 1)
@@ -75,9 +71,9 @@ def pairwise_cosine_similarity(feat_i, feat_j):
     norm = torch.mul(norm_i, norm_j)
 
     # avarage over the cosine similarity
-    cosine_sim = torch.div(inner, norm + 1e-6)
+    cosine_sim = torch.div(inner, norm)
 
-    return torch.mean(cosine_sim), torch.std(cosine_sim)
+    return cosine_sim
 
 def cosine_similarity(feat_i, feat_j):
     """
@@ -94,10 +90,8 @@ def cosine_similarity(feat_i, feat_j):
 
     Returns
     -------
-    mean: torch.tensor
-        the average cosine similarity
-    std: torch.tensor
-        std dev of cosine similarities
+    cosine_sim: torch.tensor
+        vector of cosine similarities
     """
     # compute inner products
     inner = torch.matmul(feat_i, feat_j.t())
@@ -108,9 +102,9 @@ def cosine_similarity(feat_i, feat_j):
     norm = torch.matmul(norm_i.t(), norm_j)
 
     # avarage over the cosine similarity
-    cosine_sim = torch.div(inner, norm + 1e-6)
+    cosine_sim = torch.div(inner, norm)
 
-    return torch.mean(cosine_sim), torch.std(cosine_sim)
+    return cosine_sim
 
 def confusion_matrix(feature_vectors, labels, interference_fn=cosine_similarity):
     """
