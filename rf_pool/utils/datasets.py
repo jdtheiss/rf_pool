@@ -350,6 +350,8 @@ class CrowdedDataset(Dataset):
         transform applied to the data during __getitem__ call
     label_map : dict, optional
         custom mapping applied to the label during __getitem__ call
+    no_target : bool
+        if True, leaves target location empty
     **kwargs : dict
         crowded stimul arguments
         see stimuli.make_crowded_stimuli for details
@@ -370,7 +372,7 @@ class CrowdedDataset(Dataset):
     def __init__(self, dataset, n_flankers, n_images, target_labels=[],
                  flanker_labels=[], repeat_flankers=True, same_flankers=False,
                  target_flankers=False, transform=None, label_map={},
-                 load_previous=False, **kwargs):
+                 load_previous=False, no_target=False, **kwargs):
         super(CrowdedDataset, self).__init__()
         self.n_flankers = n_flankers
         self.n_images = n_images
@@ -382,6 +384,7 @@ class CrowdedDataset(Dataset):
         self.transform = transform
         self.label_map = label_map
         self.load_previous = load_previous
+        self.no_target = no_target
 
         # get labels from dataset
         _, labels = self.get_data_labels(dataset, [],
@@ -423,8 +426,16 @@ class CrowdedDataset(Dataset):
             # sample target/flanker data
             target, target_record = self.sample_data(dataset, [target_label_n])
             flankers, flanker_record = self.sample_data(dataset, flanker_labels_n)
+            
             # create crowded stimuli
-            self.data.append(stimuli.make_crowded_stimuli(target[0], flankers, **kwargs))
+            if self.no_target:
+                target_input = np.zeros_like(target[0])
+            else: 
+                target_input=target[0]
+                
+            crowded_stimuli = stimuli.make_crowded_stimuli(target_input, flankers, **kwargs)
+            self.data.append(crowded_stimuli)
+            
             if self.load_previous:
                 self.labels.append(self.label_map[int(dataset[target_label_n][1])])
             else:
