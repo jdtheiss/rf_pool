@@ -3,8 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import offsetbox
 
-def vector_norm(x):
-    return torch.sqrt(torch.sum(torch.pow(x, 2), 1))
+def vector_norm(x, axis=-1):
+    return torch.sqrt(torch.sum(torch.pow(x, 2), axis))
 
 def rf_interference(feat_i, feat_j):
     """
@@ -47,7 +47,7 @@ def rf_interference(feat_i, feat_j):
 
     return 1 - torch.mean(cosine_sim), torch.std(cosine_sim)
 
-def pairwise_cosine_similarity(feat_i, feat_j):
+def pairwise_cosine_similarity(feat_i, feat_j, axis=-1):
     """
     Computes pair-wise cosine similarity
     between features in feat_i and feat_j
@@ -67,17 +67,17 @@ def pairwise_cosine_similarity(feat_i, feat_j):
         std dev of cosine similarities
     """
     # inner product
-    inner = torch.sum(torch.mul(feat_i, feat_j), 1)
+    inner = torch.sum(torch.mul(feat_i, feat_j), axis)
 
     # norms
-    norm_i = vector_norm(feat_i)
-    norm_j = vector_norm(feat_j)
+    norm_i = vector_norm(feat_i, axis)
+    norm_j = vector_norm(feat_j, axis)
     norm = torch.mul(norm_i, norm_j)
 
     # avarage over the cosine similarity
-    cosine_sim = torch.div(inner, norm + 1e-6)
+    cosine_sim = torch.div(inner, norm)
 
-    return torch.mean(cosine_sim), torch.std(cosine_sim)
+    return cosine_sim #torch.mean(cosine_sim), torch.std(cosine_sim)
 
 def cosine_similarity(feat_i, feat_j):
     """
