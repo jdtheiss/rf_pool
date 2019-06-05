@@ -100,7 +100,7 @@ def prob_max_pool(u, out_shape, mask=None):
     p_mean = torch.add(p_mean, torch.reshape(1. - probs[:,-1], off_p.shape))
     p_mean = torch.reshape(p_mean, out_shape)
     p_mean = torch.mul(p_mean, h_sample)
-    return h_mean, p_mean
+    return h_mean, p_mean, h_sample
 
 def stochastic_max_pool(u, out_shape, mask=None):
     """
@@ -147,7 +147,7 @@ def stochastic_max_pool(u, out_shape, mask=None):
     h_sample = torch.reshape(Multinomial(probs=probs).sample(), out_shape)
     # set pooling mean-field estimates and samples
     p_mean = torch.mul(h_mean, h_sample)
-    return h_mean, p_mean
+    return h_mean, p_mean, h_sample
 
 def div_norm_pool(u, out_shape, mask=None, n=2., s=0.5):
     """
@@ -209,7 +209,7 @@ def div_norm_pool(u, out_shape, mask=None, n=2., s=0.5):
     h_sample = torch.reshape(max_index(probs), out_shape)
     # set pooling mean-field estimates and samples
     p_mean = torch.mul(h_mean, h_sample)
-    return h_mean, p_mean
+    return h_mean, p_mean, h_sample
 
 def max_pool(u, out_shape, mask=None):
     """
@@ -249,7 +249,7 @@ def max_pool(u, out_shape, mask=None):
     h_sample = torch.reshape(max_index(u), out_shape)
     # set pooling mean-field estimates and samples
     p_mean = torch.mul(h_mean, h_sample)
-    return h_mean, p_mean
+    return h_mean, p_mean, h_sample
 
 def average_pool(u, out_shape, mask=None):
     """
@@ -299,7 +299,7 @@ def average_pool(u, out_shape, mask=None):
     h_sample = torch.reshape(max_index(u), out_shape)
     # set pooling mean-field estimates and samples
     p_mean = torch.mul(h_mean, h_sample)
-    return h_mean, p_mean
+    return h_mean, p_mean, h_sample
 
 def sum_pool(u, out_shape, mask=None):
     """
@@ -345,7 +345,7 @@ def sum_pool(u, out_shape, mask=None):
     h_sample = torch.reshape(max_index(u), out_shape)
     # set pooling mean-field estimates and samples
     p_mean = torch.mul(sum_val, h_sample)
-    return h_mean, p_mean
+    return h_mean, p_mean, h_sample
 
 def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
             mu_mask=None, return_indices=False, retain_shape=False, **kwargs):
@@ -488,11 +488,13 @@ def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
                 rfs_mask = torch.gt(rfs_mask, mask_thr).float()
                 rfs_mask = torch.flatten(rfs_mask, -2)
             # apply pooling operation
-            h_mean, p_mean = pool_fn(torch.flatten(rf_u, -2), rf_u.shape,
-                                     mask=rfs_mask, **kwargs)
+            h_mean, p_mean, h_sample = pool_fn(torch.flatten(rf_u, -2), rf_u.shape,
+                                               mask=rfs_mask, **kwargs)
         else:
             h_mean = rf_u
             p_mean = rf_u
+            h_sample = max_index(torch.flatten(h_mean, -2))
+            h_sample = torch.reshape(h_sample, h_mean.shape)
 
         # apply mu_mask
         if mu_mask is not None:
@@ -502,26 +504,29 @@ def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
             p_mean = torch.mul(mu_mask, p_mean)
         # get max index in each RF
         elif pool_fn is None:
-            h_sample = max_index(torch.flatten(h_mean, -2))
-            h_sample = torch.reshape(h_sample, h_mean.shape)
+            # h_sample = max_index(torch.flatten(h_mean, -2))
+            # h_sample = torch.reshape(h_sample, h_mean.shape)
             p_mean = torch.mul(h_sample, h_mean)
         # max across RFs
         if not retain_shape:
             h_mean = torch.max(h_mean, -3)[0]
             p_mean = torch.max(p_mean, -3)[0]
+            h_sample = torch.max(h_sample, -3)[0]
 
     # pooling across blocks
     elif rfs is None:
         # init h_mean, p_mean
         h_mean = torch.zeros_like(u)
         p_mean = torch.zeros_like(u)
+        h_sample = torch.zeros_like(u)
         # pool across blocks
         assert pool_fn is not None, ('pool_type cannot be None if rfs is None')
-        h_mean_b, p_mean_b = pool_fn(b, b.shape, **kwargs)
+        h_mean_b, p_mean_b, h_sample_b = pool_fn(b, b.shape, **kwargs)
         for r in xrange(b_h):
             for c in xrange(b_w):
                 h_mean[:, :, r::b_h, c::b_w] = h_mean_b[:,:,:,:,(r*b_h) + c]
                 p_mean[:, :, r::b_h, c::b_w] = p_mean_b[:,:,:,:,(r*b_h) + c]
+                h_sample[:, :, r::b_h, c::b_w] = h_sample_b[:,:,:,:,(r*b_h) + c]
 
     else:
         raise Exception('rfs type not understood')
@@ -536,7 +541,7 @@ def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
             p_mean = F.max_pool2d(p_mean, kernel_size,
                                   return_indices=return_indices)
 
-    return h_mean, p_mean
+    return h_mean, p_mean, h_sample
 
 if __name__ == '__main__':
     import doctest
