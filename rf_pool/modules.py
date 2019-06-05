@@ -74,8 +74,7 @@ class Module(nn.Module):
                 param_name = name.replace('.','_')
             self.register_parameter(param_name, param)
 
-    def init_weights(self, suffix='weight', fn=torch.randn_like):
-        #TODO: figure out how to have fn have specific range (e.g., normal(0, 0.01))
+    def init_weights(self, suffix='weight', fn=lambda x: 0.01 * torch.randn_like(x)):
         for name, param in self.named_parameters():
             with torch.no_grad():
                 if name.endswith(suffix):
@@ -207,7 +206,7 @@ class Module(nn.Module):
             outputs.append(output)
         return torch.mul(loss_fn(*outputs, **kwargs), cost)
 
-    def sparsity(self, input, target, cost=1., module_name=None):
+    def sparsity(self, input, target, cost=1., module_name=None, l2_reg=0.):
         # (SparseRBM; Lee et al., 2008)
         if module_name:
             module_names = self.get_module_names('forward_layer', module_name)
@@ -219,6 +218,7 @@ class Module(nn.Module):
         sparse_cost =  q - p
         sparse_cost.mul_(cost)
         self.hidden_bias.grad += sparse_cost
+        self.hidden_weight.grad += (l2_reg * self.hidden_weight)
 
     def show_weights(self, field='hidden_weight', img_shape=None,
                      figsize=(5, 5), cmap=None):
@@ -303,6 +303,7 @@ class Branch(Module):
         outputs = []
         for name, branch in self.forward_layer.named_children():
             if len(names) == 0 or name in names:
+                #TODO: slice input channels for each branch
                 output = branch.reconstruct(input)
                 if self.reconstruct_shape:
                     output = torch.reshape(output, self.reconstruct_shape)
@@ -422,7 +423,7 @@ class RBM(Module):
         self.make_layer('forward_layer', hidden=hidden, activation=activation,
                         pool=pool, dropout=dropout)
         # init weights
-        self.init_weights(suffix='weight', fn=torch.randn_like)
+        self.init_weights(suffix='weight', fn=lambda x: 0.01 * torch.randn_like(x))
         # make reconstruct layer
         self.make_layer('reconstruct_layer', transpose=True, pool=pool,
                         hidden=hidden)
@@ -628,7 +629,7 @@ class CRBM(RBM):
         # update forward layer
         self.update_layer('forward_layer', transpose=True, top_down=top_down)
         # init weights
-        self.init_weights(suffix='weight', fn=torch.randn_like)
+        self.init_weights(suffix='weight', fn=lambda x: 0.01 * torch.randn_like(x))
         # make reconstruct layer
         self.make_layer('reconstruct_layer', top_down=top_down)
         self.update_layer('reconstruct_layer', transpose=True,
