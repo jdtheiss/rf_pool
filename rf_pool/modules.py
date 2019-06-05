@@ -444,12 +444,12 @@ class RBM(Module):
         # apply pool module if rf_pool type
         pool_module = self.get_modules('forward_layer', ['pool'])[0]
         if torch.typename(pool_module).find('layers') >= 0:
-            h_mean = pool_module.apply(h_mean)[0]
+            h_mean, _, h_sample = pool_module.apply(h_mean)
+        else:
+            h_sample = h_mean
         # sample from h_mean
         if self.hid_sample_fn:
             h_sample = self.hid_sample_fn(probs=h_mean).sample()
-        else:
-            h_sample = h_mean
         return pre_act_h, h_mean, h_sample
 
     def sample_v_given_h(self, h):
@@ -473,12 +473,12 @@ class RBM(Module):
         # apply pool module if rf_pool type
         pool_module = self.get_modules('forward_layer', ['pool'])[0]
         if torch.typename(pool_module).find('layers') >= 0:
-            h_mean = pool_module.apply(h_mean)[0]
+            h_mean, _, h_sample = pool_module.apply(h_mean)
+        else:
+            h_sample = h_mean
         # sample from h_mean
         if self.hid_sample_fn:
             h_sample = self.hid_sample_fn(probs=h_mean).sample()
-        else:
-            h_sample = h_mean
         return pre_act_h, h_mean, h_sample
 
     def gibbs_vhv(self, v_sample, k=1):
