@@ -272,6 +272,9 @@ class Model(nn.Module):
     def train(self, n_epochs, trainloader, loss_fn, optimizer, monitor=100, **kwargs):
         """
         #TODO:WRITEME
+        Note
+        ----
+        When using kwarg layer_params, batch_size should be equal to 1.
         """
         # get layer_id (layer-wise training) from kwargs
         options = functions.pop_attributes(kwargs, ['layer_id'], default=None)
@@ -433,7 +436,7 @@ class Model(nn.Module):
             self.set_requires_grad(on_parameters, requires_grad=True)
         return loss
 
-    def sparsity(self, input, layer_ids, module_name, target, cost=1.):
+    def sparsity(self, input, layer_ids, module_name, target, cost=1., l2_reg=0.):
         for i, (name, layer) in enumerate(self.layers.named_children()):
             if name in layer_ids:
                 if type(target) is list:
@@ -444,7 +447,11 @@ class Model(nn.Module):
                     cost_i = cost[i]
                 else:
                     cost_i = cost
-                layer.sparsity(input, module_name, target_i, cost_i)
+                if type(l2_reg) is list:
+                    l2_reg_i = l2_reg[i]
+                else:
+                    l2_reg_i = l2_reg
+                layer.sparsity(input, module_name, target_i, cost_i, l2_reg_i)
             input = layer.forward(input)
 
     def show_texture(self, input, seed):
