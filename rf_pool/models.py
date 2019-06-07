@@ -76,6 +76,10 @@ class Model(nn.Module):
         layer (i.e. output[:,:,crop[0],crop[1]])
     get_accuracy(dataLoader)
         return model accuracy given a torch.utils.data.DataLoader with labels
+    rf_index()
+        #TODO:WRITEME
+    rf_heatmap()
+        #TODO:WRITEME
     """
     def __init__(self):
         super(Model, self).__init__()
@@ -578,6 +582,78 @@ class Model(nn.Module):
             ax[r,1].imshow(neg[r], cmap=cmap)
         plt.show()
         return fig
+
+    def rf_output(self, input, layer_id, **kwargs):
+        rf_layer = self.layers[layer_id].forward_layer.pool
+        assert torch.typename(rf_layer).find('layers') > -1, (
+            'No rf_pool layer found.'
+        )
+        # get layers before layer id
+        pre_layer_ids = self.pre_layer_ids(layer_id)
+        # apply forward up to layer id
+        layer_input = self.apply_layers(input.detach(), pre_layer_ids)
+        # get modules before pool
+        module_names = self.layers[layer_id].get_module_names('forward_layer')
+        pool_idx = [i for i, m in enumerate(module_names) if m == 'pool']
+        module_names = module_names[:pool_idx[0]]
+        # apply modules before pool
+        pool_input = self.layers[layer_id].apply_modules(layer_input, 'forward_layer',
+                                                         module_names)
+        # apply pooling with kwargs
+        return rf_layer.apply(pool_input, **kwargs)
+
+    def rf_index(self, input, layer_id, thr=0.):
+        pool_output = self.rf_output(input, layer_id, retain_shape=True)[1]
+        # sum across channels
+        rf_outputs = torch.sum(pool_output, 1)
+        # find rf_outputs with var > thr
+        rf_var = torch.var(rf_outputs.flatten(-2), -1)
+        return torch.gt(rf_var, thr)
+
+    def rf_heatmap(self, layer_id):
+        rf_layer = self.layers[layer_id].forward_layer.pool
+        assert torch.typename(rf_layer).find('layers') > -1, (
+            'No rf_pool layer found.'
+        )
+        # get layers before layer id
+        pre_layer_ids = self.pre_layer_ids(layer_id)
+        # layer_ids = pre_layer_ids + [layer_id]
+        pre_layer_ids.reverse()
+        # for each layer apply transpose convolution of ones and unpooling
+        rfs = torch.unsqueeze(rf_layer.rfs, 1).detach()
+        w_shape = self.layers[layer_id].forward_layer.hidden.weight.shape[-2:]
+        w = torch.ones((1, 1) + w_shape)
+        heatmap = torch.conv_transpose2d(rfs, w)
+        heatmap = torch.gt(heatmap, 0.).float()
+        for id in pre_layer_ids:
+            # upsample
+            pool = self.layers[id].get_modules('forward_layer', ['pool'])
+            if len(pool) == 1 and hasattr(pool[0], 'kernel_size'):
+                pool_size = pool[0].kernel_size
+                heatmap = torch.nn.functional.interpolate(heatmap,
+                                                          scale_factor=pool_size)
+            # conv_transpose2d
+            hidden = self.layers[id].get_modules('forward_layer', ['hidden'])
+            if len(hidden) == 1 and hasattr(hidden[0], 'weight'):
+                w_shape = hidden[0].weight.shape[-2:]
+                w = torch.ones((1, 1) + w_shape)
+                heatmap = torch.conv_transpose2d(heatmap, w)
+            heatmap = torch.gt(heatmap, 0.).float()
+        return heatmap.squeeze(1)
+
+    def image_space_mu_sigma(self, layer_id):
+        layers = self.get_layers(self.pre_layer_ids(layer_id))
+        layers.reverse()
+        mu, sigma = self.layers[layer_id].forward_layer.pool.get(['mu','sigma'])
+        mu = mu + self.layers[layer_id].forward_layer.hidden.kernel_size[0] // 2
+        sigma = sigma + self.layers[layer_id].forward_layer.hidden.kernel_size[0] // 2
+        for layer in layers:
+            mu = mu * layer.forward_layer.pool.kernel_size
+            sigma = sigma * layer.forward_layer.pool.kernel_size
+            mu = mu + layer.forward_layer.hidden.kernel_size[0] // 2
+            sigma = sigma + layer.forward_layer.hidden.kernel_size[0] // 2
+        mu = mu + 0.5
+        return mu, sigma
 
 class FeedForwardNetwork(Model):
     """
