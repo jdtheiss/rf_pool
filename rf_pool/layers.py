@@ -21,7 +21,7 @@ class Layer(torch.nn.Module):
                                            'delta_sigma','update_img_shape'])
         functions.set_attributes(self, **options)
         # set inputs for rf_pool
-        self.rfs = None
+        self.rfs = self.update_rfs()
         self.pool_type = None
         self.kernel_size = 2
         self.input_keys = ['rfs', 'pool_type', 'kernel_size']
@@ -39,57 +39,66 @@ class Layer(torch.nn.Module):
         # apply rf_pool
         return ops.rf_pool(*args, **input_kwargs)
 
-    def update_mu_sigma(self, delta_mu, delta_sigma):
-        mu = self.mu
-        sigma = self.sigma
+    def set(self, **kwargs):
+        functions.set_attributes(self, **kwargs)
+        if 'mu' in kwargs or 'sigma' in kwargs or 'lattice_fn' in kwargs:
+            self.rfs = self.update_rfs()
+        elif 'img_shape' in kwargs:
+            self.mu, self.sigma = self.update_mu_sigma()
+            self.rfs = self.update_rfs()
+
+    def get(self, keys):
+        output = []
+        for key in keys:
+            if hasattr(self, key):
+                output.append(getattr(self, key))
+            else:
+                output.append(None)
+        return output
+
+    def update_mu_sigma(self, delta_mu=None, delta_sigma=None, priority_map=None):
+        if self.mu is None and self.sigma is None:
+            return None
+        else:
+            mu = self.mu
+            sigma = self.sigma
         # add delta_mu to mu
         if delta_mu is not None:
-            mu = torch.add(mu, delta_mu)
+            mu = torch.add(self.mu, delta_mu)
             self.delta_mu = delta_mu
         # multiply sigma by delta_sigma
         if delta_sigma is not None:
-            sigma = torch.mul(sigma, (1. + delta_sigma) + 1e-6)
+            sigma = torch.mul(self.sigma, (1. + delta_sigma) + 1e-6)
             self.delta_sigma = delta_sigma
-        return mu, sigma
-
-    def init_rfs(self):
-        if self.mu is None and self.sigma is None:
-            return None
-        assert self.lattice_fn is not None
-        assert self.img_shape is not None
-        if self.ratio is not None:
-            rfs = self.lattice_fn(self.mu, self.sigma, self.img_shape, self.ratio)
-        elif self.thr is not None:
-            rfs = self.lattice_fn(self.mu, self.sigma, self.img_shape, self.thr)
-        else:
-            rfs = self.lattice_fn(self.mu, self.sigma, self.img_shape)
-        return rfs
-
-    def update_rfs(self, delta_mu, delta_sigma):
-        if self.mu is None and self.sigma is None:
-            return None
-        assert self.rfs is not None
-        assert self.img_shape is not None
         # update mu if img_shape doesnt match rfs.shape[-2:]
         if self.update_img_shape and self.rfs.shape[-2:] != self.img_shape:
             with torch.no_grad():
-                img_diff = torch.sub(torch.tensor(self.img_shape,
-                                                  dtype=self.mu.dtype),
-                                     torch.tensor(self.rfs.shape[-2:],
-                                                  dtype=self.mu.dtype))
-                self.mu.add_(img_diff / 2.)
+                img_diff = torch.sub(torch.tensor(self.img_shape, dtype=mu.dtype),
+                                     torch.tensor(self.rfs.shape[-2:], dtype=mu.dtype))
+                mu = torch.add(mu, img_diff / 2.)
         elif self.rfs.shape[-2:] != self.img_shape:
             raise Exception('rfs.shape[-2:] != self.img_shape')
-        # update mu and sigma
-        mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma)
-        # update rfs
+        # update mu, sigma with priority map
+        if priority_map is not None:
+            mu, sigma = lattice.update_mu_sigma(mu, sigma, priority_map)
+        return mu, sigma
+
+    def update_rfs(self, mu=None, sigma=None):
+        if mu is None:
+            mu = self.mu
+        if sigma is None:
+            sigma = self.sigma
+        if mu is None and sigma is None:
+            return None
+        assert self.lattice_fn is not None
+        assert self.img_shape is not None
+        # get rfs using lattice_fn
+        args = [mu, sigma, self.img_shape]
         if self.ratio is not None:
-            rfs = self.lattice_fn(mu, sigma, self.img_shape, self.ratio)
+            args.append(self.ratio)
         elif self.thr is not None:
-            rfs = self.lattice_fn(mu, sigma, self.img_shape, self.thr)
-        else:
-            rfs = self.lattice_fn(mu, sigma, self.img_shape)
-        return rfs
+            args.append(self.thr)
+        return self.lattice_fn(*args)
 
     def show_lattice(self, x=None, figsize=(5,5), cmap=None):
         assert self.rfs is not None
@@ -151,19 +160,16 @@ class RF_Pool(Layer):
         Display receptive field lattice from rfs kernel
     """
     def __init__(self, mu=None, sigma=None, img_shape=None,
-                 lattice_fn=lattice.gaussian_kernel_lattice, **kwargs):
+                 lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         super(RF_Pool, self).__init__(mu, sigma, img_shape, lattice_fn, **kwargs)
-        # init receptive fields
-        self.rfs = self.init_rfs()
 
-    def forward(self, u, delta_mu=None, delta_sigma=None, **kwargs):
+    def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
+                **kwargs):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
-        self.rfs = self.update_rfs(delta_mu, delta_sigma)
-        # update mu_mask if given
-        if hasattr(self, 'mu_mask'):
-            self.mu_mask = lattice.mu_mask(self.mu, self.img_shape)
+        mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+        self.rfs = self.update_rfs(mu, sigma)
         # return pooling outputs
         return self.apply(u, **kwargs)[1]
 
@@ -172,7 +178,7 @@ class RF_Uniform(Layer):
     #TODO:WRITEME
     """
     def __init__(self, n_kernels, img_shape, spacing, sigma_init=1.,
-                lattice_fn=lattice.gaussian_kernel_lattice, **kwargs):
+                lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         assert np.mod(np.sqrt(n_kernels), 1) == 0, (
             'sqrt of n_kernels must be integer'
         )
@@ -182,17 +188,13 @@ class RF_Uniform(Layer):
         mu, sigma = lattice.init_uniform_lattice(centers, n_kernel_side, spacing,
                                                  sigma_init)
         super(RF_Uniform, self).__init__(mu, sigma, img_shape, lattice_fn, **kwargs)
-        # initialize rfs
-        self.rfs = self.init_rfs()
 
     def forward(self, u, delta_mu=None, delta_sigma=None, **kwargs):
        # set img_shape
        self.img_shape = u.shape[-2:]
        # update rfs, mu, sigma
-       self.rfs = self.update_rfs(delta_mu, delta_sigma)
-       # update mu_mask if given
-       if hasattr(self, 'mu_mask'):
-           self.mu_mask = lattice.mu_mask(self.mu, self.img_shape)
+       mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, **kwargs)
+       self.rfs = self.update_rfs(mu, sigma)
        # return pooling outputs
        return self.apply(u, **kwargs)[1]
 
@@ -203,17 +205,13 @@ class RF_Window(Layer):
     def __init__(self, mu=None, sigma=None, img_shape=None,
                  lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         super(RF_Window, self).__init__(mu, sigma, img_shape, lattice_fn, **kwargs)
-        # initialize rfs
-        self.rfs = self.init_rfs()
 
-    def forward(self, u, delta_mu=None, **kwargs):
+    def forward(self, u, delta_mu=None, priority_map=None, **kwargs):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
-        self.rfs = self.update_rfs(delta_mu, None)
-        # update mu_mask if given
-        if hasattr(self, 'mu_mask'):
-            self.mu_mask = lattice.mu_mask(self.mu, self.img_shape)
+        mu, sigma = self.update_mu_sigma(delta_mu, None, priority_map)
+        self.rfs = self.update_rfs(mu, None)
         # return pooling outputs
         return self.apply(u, **kwargs)[1]
 
@@ -224,17 +222,14 @@ class RF_Same(Layer):
     def __init__(self, mu=None, sigma=None, img_shape=None,
                  lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         super(RF_Same, self).__init__(mu, sigma, img_shape, lattice_fn, **kwargs)
-        # initialize rfs
-        self.rfs = self.init_rfs()
 
-    def forward(self, u, delta_mu=None, delta_sigma=None, **kwargs):
+    def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
+                **kwargs):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
-        self.rfs = self.update_rfs(delta_mu, delta_sigma)
-        # update mu_mask if given
-        if hasattr(self, 'mu_mask'):
-            self.mu_mask = lattice.mu_mask(self.mu, self.img_shape)
+        mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+        self.rfs = self.update_rfs(mu, sigma)
         # return h_mean output and
         h_mean = self.apply(u, **kwargs)[0]
         # pool if kernel_size > 1
