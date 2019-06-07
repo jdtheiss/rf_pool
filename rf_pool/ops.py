@@ -348,7 +348,7 @@ def sum_pool(u, out_shape, mask=None):
     return h_mean, p_mean, h_sample
 
 def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
-            mu_mask=None, return_indices=False, retain_shape=False, **kwargs):
+            return_indices=False, retain_shape=False, **kwargs):
     """
     Receptive field pooling
 
@@ -374,11 +374,6 @@ def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
         threshold used to binarize rfs as mask input for pooling operations
         (overridden if 'mask' in kwargs)
         [default: 1e-6]
-    mu_mask : torch.Tensor or None
-        mask with center locations for receptive fields with shape
-        (n_kernels, h, w)
-        [default: None, outputs are indexed at position of maximum unit in each
-        receptive field]
     return_indices : bool
         boolean whether to return indices of max-pooling (for kernel_size > 1)
         [default: False]
@@ -490,23 +485,12 @@ def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
             # apply pooling operation
             h_mean, p_mean, h_sample = pool_fn(torch.flatten(rf_u, -2), rf_u.shape,
                                                mask=rfs_mask, **kwargs)
-        else:
+        else: # get max index in each RF
             h_mean = rf_u
-            p_mean = rf_u
             h_sample = max_index(torch.flatten(h_mean, -2))
             h_sample = torch.reshape(h_sample, h_mean.shape)
-
-        # apply mu_mask
-        if mu_mask is not None:
-            assert mu_mask.shape[-3] == p_mean.shape[-3]
-            p_mean = torch.max(torch.flatten(p_mean, -2), -1, keepdim=True)[0]
-            p_mean = torch.unsqueeze(p_mean, -1)
-            p_mean = torch.mul(mu_mask, p_mean)
-        # get max index in each RF
-        elif pool_fn is None:
-            # h_sample = max_index(torch.flatten(h_mean, -2))
-            # h_sample = torch.reshape(h_sample, h_mean.shape)
             p_mean = torch.mul(h_sample, h_mean)
+
         # max across RFs
         if not retain_shape:
             h_mean = torch.max(h_mean, -3)[0]
