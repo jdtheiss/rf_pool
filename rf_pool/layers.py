@@ -58,7 +58,7 @@ class Layer(torch.nn.Module):
 
     def update_mu_sigma(self, delta_mu=None, delta_sigma=None, priority_map=None):
         if self.mu is None and self.sigma is None:
-            return None
+            return (None, None)
         else:
             mu = self.mu
             sigma = self.sigma
