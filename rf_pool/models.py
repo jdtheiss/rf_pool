@@ -306,8 +306,6 @@ class Model(nn.Module):
                 # turn on label-based parameter gradients
                 if options.get('label_params'):
                     self.set_grad_by_label([label], label_params, True)
-                # zero gradients
-                optimizer.zero_grad()
                 # layerwise training
                 if options.get('layer_id') is not None:
                     # get inputs for layer_id
@@ -316,10 +314,13 @@ class Model(nn.Module):
                         layer_input = (layer_input,) + tuple(inputs[1:])
                     # train
                     loss = self.layers[layer_id].train(layer_input,
+                                                       optimizer=optimizer,
                                                        add_loss=options.get('add_loss'),
                                                        sparsity=options.get('sparsity'),
                                                        **kwargs)
                 else: # normal training
+                    # zero gradients
+                    optimizer.zero_grad()
                     # get outputs
                     output = self.forward(inputs[0])
                     # get loss
@@ -334,8 +335,8 @@ class Model(nn.Module):
                     # backprop
                     loss.backward()
                     loss = loss.item()
-                # update parameters
-                optimizer.step()
+                    # update parameters
+                    optimizer.step()
                 # update scheduler
                 if options.get('scheduler'):
                     options.get('scheduler').step()
@@ -523,7 +524,7 @@ class Model(nn.Module):
             w[w > 1.] = 1.
             w = self.apply_layers(w, pre_layer_ids, forward=False)
         # if channels > 3, reshape
-        if w.shape[1] > 3:
+        if w.ndimension() == 4 and w.shape[1] > 3:
             w = torch.flatten(w, 0, 1).unsqueeze(1)
         # get columns and rows
         n_cols = np.ceil(np.sqrt(w.shape[0])).astype('int')
