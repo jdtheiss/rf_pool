@@ -229,7 +229,7 @@ class Module(nn.Module):
         if not hasattr(self, field):
             raise Exception('attribute ' + field + ' not found')
         w = getattr(self, field).clone().detach()
-        if w.shape[1] > 3:
+        if w.ndimension() == 4 and w.shape[1] > 3:
             w = torch.flatten(w, 0, 1).unsqueeze(1)
         # get columns and rows
         n_cols = np.ceil(np.sqrt(w.shape[0])).astype('int')
@@ -493,6 +493,32 @@ class RBM(Module):
             pre_act_h, h_mean, h_sample = self.sample_h_given_v(v_sample)
         return pre_act_v, v_mean, v_sample, pre_act_h, h_mean, h_sample
 
+    def free_energy(self, v_sample):
+        wx_b = self.sample_h_given_v(v_sample)[0]
+        vbias_term = torch.flatten(v_sample * self.vis_bias.unsqueeze(0), 1)
+        vbias_term = torch.sum(vbias_term, 1)
+        hidden_term = torch.sum(torch.log(1. + torch.exp(wx_b)).flatten(1), 1)
+        return -hidden_term - vbias_term
+
+    def pseudo_likelihood(self, *args):
+        input = args[0]
+        input_shape = input.shape
+        input = torch.flatten(input, 1)
+        if hasattr(self, 'bit_idx') and self.bit_idx < input.shape[1] - 1:
+            self.bit_idx += 1
+        else:
+            self.bit_idx = 0
+        #
+        xi = torch.reshape(torch.round(input), input_shape)
+        fe_xi = self.free_energy(xi)
+        #
+        xi_flip = torch.flatten(xi, 1)
+        xi_flip[:,self.bit_idx] = 1. - xi_flip[:,self.bit_idx]
+        xi_flip = torch.reshape(xi_flip, input_shape)
+        fe_xi_flip = self.free_energy(xi_flip)
+        #
+        return torch.mean(input.shape[1] * torch.log(torch.sigmoid(fe_xi_flip - fe_xi)))
+
     def contrastive_divergence(self, pv, ph, nv, nh):
         # get sizes to normalize params
         batch_size = torch.as_tensor(pv.shape[0], dtype=pv.dtype)
@@ -513,7 +539,7 @@ class RBM(Module):
         else:
             posprods = torch.matmul(pv.t(), ph)
             negprods = torch.matmul(nv.t(), nh)
-            vishidprods = torch.div(posprods - negprods, batch_size)
+            vishidprods = torch.div(posprods - negprods, batch_size).t()
             hidact = torch.mean(ph - nh, dim=0)
             visact = torch.mean(pv - nv, dim=0)
         return vishidprods, hidact, visact
@@ -557,6 +583,8 @@ class RBM(Module):
         """
         #TODO:WRITEME
         """
+        if self.input_shape:
+            input = torch.reshape(input, self.input_shape)
         if optimizer:
             optimizer.zero_grad()
         with torch.no_grad():
@@ -572,7 +600,9 @@ class RBM(Module):
                 self.persistent_weights = torch.zeros_like(self.hidden_weight,
                                                            requires_grad=True)
                 self.persistent_weights = nn.Parameter(self.persistent_weights)
-                optimizer.add_param_group({'params': self.persistent_weights})
+                if optimizer:
+                    optimizer.add_param_group({'params': self.persistent_weights})
+                    optimizer.param_groups[-1].update({'momentum': 0.})
             # dropout
             ph_sample = self.apply_modules(ph_sample, 'forward_layer', ['dropout'])
             # negative phase
@@ -592,6 +622,7 @@ class RBM(Module):
             loss = torch.sum(torch.stack(sum_grads))
             # update persistent weights
             if self.persistent is not None:
+                self.persistent = nh_sample
                 self.persistent_weights.mul_(0.95)
                 self.persistent_weights.grad = self.hidden_weight.grad
         # compute additional loss from add_loss
@@ -736,7 +767,9 @@ class CRBM(RBM):
                 self.persistent_weights = torch.zeros_like(self.hidden_weight,
                                                            requires_grad=True)
                 self.persistent_weights = nn.Parameter(self.persistent_weights)
-                optimizer.add_param_group({'params': self.persistent_weights})
+                if optimizer:
+                    optimizer.add_param_group({'params': self.persistent_weights})
+                    optimizer.param_groups[-1].update({'momentum': 0.})
             # dropout
             ph_sample = self.apply_modules(ph_sample, 'forward_layer', ['dropout'])
             # negative phase
@@ -759,9 +792,9 @@ class CRBM(RBM):
             self.update_grads(grads)
             sum_grads = [torch.sum(torch.abs(g)) for g in grads.values()]
             loss = torch.sum(torch.stack(sum_grads))
-        # update persistent weights
-        if self.persistent is not None:
-            with torch.no_grad():
+            # update persistent weights
+            if self.persistent is not None:
+                self.persistent = nh_sample
                 self.persistent_weights.mul_(0.95)
                 self.persistent_weights.grad = self.hidden_weight.grad
         # compute additional loss from add_loss
