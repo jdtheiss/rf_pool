@@ -217,7 +217,7 @@ class Module(nn.Module):
         p = torch.as_tensor(target, dtype=activity.dtype)
         sparse_cost =  q - p
         sparse_cost.mul_(cost)
-        self.hidden_bias.grad += sparse_cost
+        self.h_bias.grad += sparse_cost
         self.hidden_weight.grad += (l2_reg * self.hidden_weight)
 
     def show_weights(self, field='hidden_weight', img_shape=None,
@@ -360,9 +360,9 @@ class RBM(Module):
         function used for sampling from visible unit mean field estimates
     hid_sample_fn : torch.distributions or None
         function used for sampling from hidden unit mean field estimates
-    vis_bias : torch.Tensor
+    v_bias : torch.Tensor
         bias for visible units
-    hidden_bias : torch.Tensor
+    h_bias : torch.Tensor
         bias for hidden units
     output_shape : tuple
         output shape for layer
@@ -433,9 +433,9 @@ class RBM(Module):
         # link parameters to self
         self.link_parameters(self.forward_layer)
         self.link_parameters(self.reconstruct_layer)
-        # set vis_bias and hidden_bias
-        self.vis_bias = self.hidden_transpose_bias
-        self.hidden_bias = self.hidden_bias
+        # set v_bias and h_bias
+        self.v_bias = self.hidden_transpose_bias
+        self.h_bias = self.hidden_bias
 
     def sample_h_given_v(self, v):
         # apply each non-pooling module (unless rf_pool)
@@ -493,11 +493,30 @@ class RBM(Module):
             pre_act_h, h_mean, h_sample = self.sample_h_given_v(v_sample)
         return pre_act_v, v_mean, v_sample, pre_act_h, h_mean, h_sample
 
-    def free_energy(self, v_sample):
-        wx_b = self.sample_h_given_v(v_sample)[0]
-        vbias_term = torch.flatten(v_sample * self.vis_bias.unsqueeze(0), 1)
+    def energy(self, v, h):
+        #E(v,y,h) = −hTWv−bTv−cTh
+        # reshape v_bias, hid_bias
+        v_dims = tuple([1 for _ in range(v.ndimension()-2)])
+        v_bias = torch.reshape(self.v_bias, (1,-1) + v_dims)
+        h_dims = tuple([1 for _ in range(h.ndimension()-2)])
+        h_bias = torch.reshape(self.h_bias, (1,-1) + h_dims)
+        # detach h from graph
+        h = h.detach()
+        # get Wv
+        Wv = self.apply_modules(v, 'forward_layer', ['hidden'])
+        with torch.no_grad():
+            Wv = Wv - h_bias
+        # get hWv, bv, ch
+        hWv = torch.sum(torch.mul(h, Wv).flatten(1), 1)
+        bv = torch.sum(torch.mul(v, v_bias).flatten(1), 1)
+        ch = torch.sum(torch.mul(h, h_bias).flatten(1), 1)
+        return -hWv - bv - ch
+
+    def free_energy(self, v):
+        Wv_b = self.sample_h_given_v(v)[0]
+        vbias_term = torch.flatten(v * self.v_bias.unsqueeze(0), 1)
         vbias_term = torch.sum(vbias_term, 1)
-        hidden_term = torch.sum(torch.log(1. + torch.exp(wx_b)).flatten(1), 1)
+        hidden_term = torch.sum(torch.log(1. + torch.exp(Wv_b)).flatten(1), 1)
         return -hidden_term - vbias_term
 
     def pseudo_likelihood(self, *args):
@@ -508,50 +527,16 @@ class RBM(Module):
             self.bit_idx += 1
         else:
             self.bit_idx = 0
-        #
+        # get free energy for input
         xi = torch.reshape(torch.round(input), input_shape)
         fe_xi = self.free_energy(xi)
-        #
+        # flip bit and get free energy
         xi_flip = torch.flatten(xi, 1)
         xi_flip[:,self.bit_idx] = 1. - xi_flip[:,self.bit_idx]
         xi_flip = torch.reshape(xi_flip, input_shape)
         fe_xi_flip = self.free_energy(xi_flip)
-        #
+        # return log(fe_xi_flip) - log(fe_xi)
         return torch.mean(input.shape[1] * torch.log(torch.sigmoid(fe_xi_flip - fe_xi)))
-
-    def contrastive_divergence(self, pv, ph, nv, nh):
-        # get sizes to normalize params
-        batch_size = torch.as_tensor(pv.shape[0], dtype=pv.dtype)
-        # compute contrastive_divergence for conv layer
-        if pv.ndimension() == 4:
-            v_shp = torch.as_tensor(pv.shape[-2:], dtype=pv.dtype)
-            W_shp = torch.as_tensor(self.hidden_weight.shape[-2:], dtype=pv.dtype)
-            hidsize = torch.prod(v_shp - W_shp + 1)
-            # compute vishidprods, hidact, visact
-            posprods = torch.conv2d(pv.transpose(1,0),
-                                    ph.transpose(1,0)).transpose(1,0)
-            negprods = torch.conv2d(nv.transpose(1,0),
-                                    nh.transpose(1,0)).transpose(1,0)
-            vishidprods = torch.div(posprods - negprods, (batch_size * hidsize))
-            hidact = torch.mean(ph - nh, dim=(0,2,3))
-            visact = torch.mean(pv - nv, dim=(0,2,3))
-        # compute contrastive_divergence for fc layer
-        else:
-            posprods = torch.matmul(pv.t(), ph)
-            negprods = torch.matmul(nv.t(), nh)
-            vishidprods = torch.div(posprods - negprods, batch_size).t()
-            hidact = torch.mean(ph - nh, dim=0)
-            visact = torch.mean(pv - nv, dim=0)
-        return vishidprods, hidact, visact
-
-    def update_grads(self, grad):
-        assert type(grad) is dict
-        with torch.no_grad():
-            for name, param in self.named_parameters():
-                if param.grad is None:
-                    param.grad = torch.zeros_like(param)
-                if name in grad.keys():
-                    param.grad.sub_(grad[name])
 
     def show_negative(self, v, k=1, img_shape=None, figsize=(5,5), cmap=None):
         """
@@ -612,15 +597,12 @@ class RBM(Module):
             # persistent
             if self.persistent is not None:
                 self.hidden_weight.sub_(self.persistent_weights)
-            # compute loss with contrastive_divergence
-            grads = {}
-            prods = self.contrastive_divergence(input, ph_mean, nv_mean, nh_mean)
-            grads.update({'hidden_weight': prods[0], 'hidden_bias': prods[1],
-                          'hidden_transpose_bias': prods[2]})
-            self.update_grads(grads)
-            sum_grads = [torch.sum(torch.abs(g)) for g in grads.values()]
-            loss = torch.sum(torch.stack(sum_grads))
-            # update persistent weights
+        # compute loss, pass backward through gradients
+        loss = torch.sub(torch.mean(self.energy(input, ph_mean)),
+                         torch.mean(self.energy(nv_sample, nh_mean)))
+        loss.backward()
+        # update persistent weights
+        with torch.no_grad():
             if self.persistent is not None:
                 self.persistent = nh_sample
                 self.persistent_weights.mul_(0.95)
@@ -673,8 +655,8 @@ class CRBM(RBM):
         # link parameters to self
         self.link_parameters(self.forward_layer)
         self.link_parameters(self.reconstruct_layer)
-        # set vis_bias, hidden_bias, y_bias
-        self.vis_bias = self.hidden_transpose_bias
+        # set v_bias, h_bias, y_bias
+        self.v_bias = self.hidden_transpose_bias
         self.y_bias = self.top_down_transpose_bias
 
     def sample_h_given_vy(self, v, y):
@@ -718,31 +700,28 @@ class CRBM(RBM):
             h_outputs = self.sample_h_given_vy(v_sample, y_sample)
         return v_outputs + y_outputs + h_outputs
 
-    def energy(self, v, y, h):
+    def energy(self, v, h, y):
         #E(v,y,h) = −hTWv−bTv−cTh−dTy−hTUy
-        # get dims for each input
-        v_dims = tuple([1 for _ in range(v.ndimension() - 2)])
-        h_dims = tuple([1 for _ in range(h.ndimension() - 2)])
+        # reshape v_bias, hid_bias
+        v_dims = tuple([1 for _ in range(v.ndimension()-2)])
+        v_bias = torch.reshape(self.v_bias, (1,-1) + v_dims)
+        h_dims = tuple([1 for _ in range(h.ndimension()-2)])
+        h_bias = torch.reshape(self.hidden_bias, (1,-1) + h_dims)
         y_dims = tuple([1 for _ in range(y.ndimension() - 2)])
+        y_bias = torch.reshape(self.y_bias, (1,-1) + y_dims)
         # detach h from graph
         h = h.detach()
         # get Wv, Uy
         Wv = self.apply_modules(v, 'forward_layer', ['hidden'])
-        with torch.no_grad():
-            Wv = Wv - self.hidden_bias.reshape((1,-1) + h_dims)
         Uy = self.apply_modules(y, 'reconstruct_layer', ['top_down'])
-        # flatten if ndim > 2
-        if len(h_dims) > 0:
-            h = torch.flatten(h, 1)
-            Wv = torch.flatten(Wv, 1)
-            Uy = torch.flatten(Uy, 1)
-        # get hWv, hUy
-        hWv = torch.sum(torch.mul(h, Wv), 1)
-        hUy = torch.sum(torch.mul(h, Uy), 1)
-        # get bv, ch, dy
-        bv = torch.sum(torch.mul(v, self.vis_bias.reshape((1,-1) + v_dims)).flatten(1))
-        ch = torch.sum(torch.mul(h, self.hidden_bias.reshape((1,-1) + h_dims)).flatten(1))
-        dy = torch.sum(torch.mul(y, self.y_bias.reshape((1,-1) + y_dims)).flatten(1))
+        with torch.no_grad():
+            Wv = Wv - h_bias
+        # get hWv, hUy, bv, ch, dy
+        hWv = torch.sum(torch.mul(h, Wv).flatten(1), 1)
+        hUy = torch.sum(torch.mul(h, Uy).flatten(1), 1)
+        bv = torch.sum(torch.mul(v, v_bias).flatten(1))
+        ch = torch.sum(torch.mul(h, h_bias).flatten(1), 1)
+        dy = torch.sum(torch.mul(y, y_bias).flatten(1), 1)
         return -hWv - bv - ch - dy - hUy
 
     def train(self, inputs, k=1, monitor_fn=nn.MSELoss(), optimizer=None,
@@ -781,18 +760,12 @@ class CRBM(RBM):
             # persistent
             if self.persistent is not None:
                 self.hidden_weight.sub_(self.persistent_weights)
-            # compute loss with contrastive_divergence
-            grads = {}
-            prods = self.contrastive_divergence(input, ph_mean, nv_mean, nh_mean)
-            grads.update({'hidden_weight': prods[0], 'hidden_bias': prods[1],
-                          'hidden_transpose_bias': prods[2]})
-            y_prods = self.contrastive_divergence(top_down, ph_mean, ny_mean, nh_mean)
-            grads.update({'top_down_transpose_weight': y_prods[0],
-                          'top_down_transpose_bias': y_prods[2]})
-            self.update_grads(grads)
-            sum_grads = [torch.sum(torch.abs(g)) for g in grads.values()]
-            loss = torch.sum(torch.stack(sum_grads))
-            # update persistent weights
+        # compute loss, pass backward through gradients
+        loss = torch.sub(torch.mean(self.energy(input, ph_mean)),
+                         torch.mean(self.energy(nv_sample, nh_mean)))
+        loss.backward()
+        # update persistent weights
+        with torch.no_grad():
             if self.persistent is not None:
                 self.persistent = nh_sample
                 self.persistent_weights.mul_(0.95)
