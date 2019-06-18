@@ -504,8 +504,7 @@ class RBM(Module):
         h = h.detach()
         # get Wv
         Wv = self.apply_modules(v, 'forward_layer', ['hidden'])
-        with torch.no_grad():
-            Wv = Wv - h_bias
+        Wv = Wv - h_bias
         # get hWv, bv, ch
         hWv = torch.sum(torch.mul(h, Wv).flatten(1), 1)
         bv = torch.sum(torch.mul(v, v_bias).flatten(1), 1)
@@ -714,8 +713,7 @@ class CRBM(RBM):
         # get Wv, Uy
         Wv = self.apply_modules(v, 'forward_layer', ['hidden'])
         Uy = self.apply_modules(y, 'reconstruct_layer', ['top_down'])
-        with torch.no_grad():
-            Wv = Wv - h_bias
+        Wv = Wv - h_bias
         # get hWv, hUy, bv, ch, dy
         hWv = torch.sum(torch.mul(h, Wv).flatten(1), 1)
         hUy = torch.sum(torch.mul(h, Uy).flatten(1), 1)
