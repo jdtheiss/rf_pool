@@ -4,9 +4,72 @@ from scipy.io import loadmat
 from skimage.transform import resize
 import torch
 
-#TODO: function to grid search parameters (e.g. learning rate, sparsity)
-def grid_search():
-    raise NotImplementedError
+def param_search(fn, args, kwargs, param_name, bounds, Ns, multi=None):
+    """
+    Search parameter space for given function
+
+    Parameters
+    ----------
+    fn : function
+        function to return values during parameter search
+    args : list
+        arguments passed to fn (i.e. fn(*args, **kwargs))
+    kwargs : dict
+        keyword arguments passed to fn, which includes parameter of interest
+    param_name : str or list
+        parameter name to update (or list of path to update within kwargs)
+        if list, set_deepattr will be used (see example)
+    bounds : list or tuple
+        bounds of parameter search space with len(bounds) == 2
+    Ns : int
+        number of points to test within search space
+    multi : float, optional
+        multiplyer to separate Ns points starting from bounds[0] (see example)
+
+    Returns
+    -------
+    costs : list
+        list of results from each fn call (len(costs) == Ns)
+
+    Examples
+    --------
+    # get MNIST test data
+    testset = torchvision.datasets.MNIST(root='../data', train=False,
+                                         transform=torchvision.transforms.ToTensor())
+    testloader = torch.utils.data.DataLoader(testset, batch_size=10,
+                                             shuffle=True, num_workers=2)
+    # create Deep Belief Network
+    model = rf_pool.models.DeepBeliefNetwork()
+    model.append('0', rf_pool.modules.RBM(hidden=torch.nn.Conv2d(1, 32, 5),
+                                          vis_activation_fn=torch.nn.Sigmoid()))
+    # initialize optimizer
+    optimizer = torch.optim.SGD(model.layers['0'].parameters(), lr=1e-8)
+    # create param_name path to update param 'lr' in optimizer.param_groups[0]
+    param_name = ['optimizer', 'param_groups', 0, 'lr']
+    # search 'lr' parameter space
+    costs = param_search(model.train_layer, ['0', 1, testloader],
+                         {'optimizer': optimizer, 'monitor': len(testloader)},
+                         param_name, (1e-8, 1e-1), 10, multi=5.)
+    """
+    assert type(bounds) is list or type(bounds) is tuple
+    assert len(bounds) == 2
+    assert Ns > 0
+    if type(param_name) is not list:
+        param_name = [param_name]
+    # set param_space
+    if multi is not None:
+        assert bounds[0] != 0.
+        param_space = [bounds[0] * pow(multi, i) for i in range(Ns)]
+    else:
+        param_space = np.linspace(bounds[0], bounds[1], Ns)
+    print('Parameter search space: ', param_space)
+    # for each value, update parameter and get cost
+    cost = []
+    for param in param_space:
+        print('Parameter value: ', param)
+        kwargs = set_deepattr(kwargs, param_name, param)
+        cost.append(fn(*args, **kwargs))
+    return cost
 
 def repeat(x, repeats):
     """
@@ -139,10 +202,27 @@ def kwarg_fn(modules=[list, dict, __builtins__, np, torch], x=None, **kwargs):
             x = output
     return x
 
+def get_deepattr(obj, path):
+    for key in path:
+        obj = get_attributes(obj, [key]).get(key)
+    return obj
+
+def set_deepattr(obj, path, value):
+    for i in range(len(path)):
+        obj_i = get_deepattr(obj, path[:-(i+1)])
+        key = path[-(i+1)]
+        if type(key) is int:
+            key = str(key)
+        set_attributes(obj_i, **{key: value})
+        value = obj_i
+    return value
+
 def get_attributes(obj, keys, default=None):
     output = {}
     for key in keys:
-        if hasattr(obj, key):
+        if type(obj) is list and type(key) is int:
+            output.update({key: obj[key]})
+        elif hasattr(obj, key):
             output.update({key: getattr(obj, key)})
         elif hasattr(obj, 'get') and key in obj:
             output.update({key: obj.get(key)})
@@ -164,7 +244,9 @@ def pop_attributes(obj, keys, default=None):
 
 def set_attributes(obj, **kwargs):
     for key, value in kwargs.items():
-        if hasattr(obj, 'update'):
+        if type(obj) is list:
+            obj[int(key)] = value
+        elif hasattr(obj, 'update'):
             obj.update({key: value})
         else:
             setattr(obj, key, value)
