@@ -512,8 +512,13 @@ class RBM(Module):
         return -hWv - bv - ch
 
     def free_energy(self, v):
+        # reshape v_bias, hid_bias
+        v_dims = tuple([1 for _ in range(v.ndimension()-2)])
+        v_bias = torch.reshape(self.v_bias, (1,-1) + v_dims)
+        # get Wv_b
         Wv_b = self.sample_h_given_v(v)[0]
-        vbias_term = torch.flatten(v * self.v_bias.unsqueeze(0), 1)
+        # get vbias, hidden terms
+        vbias_term = torch.flatten(v * v_bias, 1)
         vbias_term = torch.sum(vbias_term, 1)
         hidden_term = torch.sum(torch.log(1. + torch.exp(Wv_b)).flatten(1), 1)
         return -hidden_term - vbias_term
@@ -521,6 +526,7 @@ class RBM(Module):
     def pseudo_likelihood(self, *args):
         input = args[0]
         input_shape = input.shape
+        n_visible = np.prod(input_shape[1:])
         input = torch.flatten(input, 1)
         if hasattr(self, 'bit_idx') and self.bit_idx < input.shape[1] - 1:
             self.bit_idx += 1
@@ -535,15 +541,21 @@ class RBM(Module):
         xi_flip = torch.reshape(xi_flip, input_shape)
         fe_xi_flip = self.free_energy(xi_flip)
         # return log(fe_xi_flip) - log(fe_xi)
-        return torch.mean(input.shape[1] * torch.log(torch.sigmoid(fe_xi_flip - fe_xi)))
+        return torch.mean(n_visible * torch.log(torch.sigmoid(fe_xi_flip - fe_xi)))
 
     def show_negative(self, v, k=1, img_shape=None, figsize=(5,5), cmap=None):
         """
         #TODO:WRITEME
         """
-        # gibbs sample
+        # get persistent if hasattr
+        if hasattr(self, 'persistent'):
+            neg = self.persistent
+        else:
+            neg = None
+        # gibbs sample if neg is None
         with torch.no_grad():
-            neg = self.gibbs_vhv(v, k=k)[4]
+            if neg is None:
+                neg = self.gibbs_vhv(v, k=k)[4]
         # reshape, permute for plotting
         if img_shape:
             v = torch.reshape(v, (-1,1) + img_shape)
