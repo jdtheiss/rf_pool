@@ -557,18 +557,24 @@ class Model(nn.Module):
         """
         layer_id = str(layer_id)
         pre_layer_ids = self.pre_layer_ids(layer_id)
+        # get persistent if hasattr
+        if hasattr(self.layers[layer_id], 'persistent'):
+            neg = self.layers[layer_id].persistent
+        else:
+            neg = None
         # pass forward, then reconstruct down
         with torch.no_grad():
-            neg = self.apply_layers(input, pre_layer_ids)
-            neg = self.layers[layer_id].forward(neg)
+            if neg is None:
+                neg = self.apply_layers(input, pre_layer_ids)
+                neg = self.layers[layer_id].forward(neg)
             neg = self.layers[layer_id].reconstruct(neg)
             neg = self.apply_layers(neg, pre_layer_ids, forward=False)
-        # check that negative has <= 3 channels
-        assert neg.shape[1] <= 3, ('negative image must have less than 3 channels')
         # reshape, permute for plotting
         if img_shape:
             input = torch.reshape(input, (-1,1) + img_shape)
             neg = torch.reshape(neg, (-1,1) + img_shape)
+        # check that negative has <= 3 channels
+        assert neg.shape[1] <= 3, ('negative image must have less than 3 channels')
         input = torch.squeeze(input.permute(0,2,3,1), -1).numpy()
         neg = torch.squeeze(neg.permute(0,2,3,1), -1).numpy()
         input = functions.normalize_range(input, dims=(1,2))
