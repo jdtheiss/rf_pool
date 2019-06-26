@@ -4,6 +4,52 @@ from scipy.io import loadmat
 from skimage.transform import resize
 import torch
 
+def gabor_filter(theta, sigma, wavelength, filter_shape, gamma=0.3):
+    """
+    Parameters
+    ----------
+    theta : float
+        orientation (in degrees) of gabor filter
+    sigma : float
+        width of gabor filter
+    wavelength : float
+        wavelength of gabor filter
+    filter_shape : list or tuple
+        image shape of filter
+    gamma : float
+        aspect ratio [default: 0.3]
+
+    Returns
+    -------
+    weight : torch.tensor
+        gabor filter with shape filter_shape
+
+    Examples
+    --------
+    >>> # create 45 degree gabor filter
+    >>> weight = gabor_filter(45., 2.8, 3.5, [7,7])
+
+    Notes
+    -----
+    Default gamma value from Serre et al. (2007).
+    """
+    assert type(filter_shape) is list or type(filter_shape) is tuple
+    assert len(filter_shape) == 2
+    # convert orientation to radians
+    theta = torch.tensor((theta / 180.) * np.pi)
+    # get x, y coordinates for filter (centered)
+    x = torch.arange(filter_shape[0]) - filter_shape[0] // 2
+    y = torch.arange(filter_shape[1]) - filter_shape[1] // 2
+    x, y = torch.stack(torch.meshgrid(x, y), dim=0).float()
+    # update based on orientation
+    x_0 = x * torch.cos(theta) + y * torch.sin(theta)
+    y_0 = -x * torch.sin(theta) + y * torch.cos(theta)
+    # create weight for filter
+    weight = torch.mul(torch.exp(-(x_0**2 + gamma**2 * y**2)/(2. * sigma**2)),
+                       torch.cos((2. * np.pi / wavelength) * x_0))
+    return weight
+
+
 def param_search(fn, args, kwargs, param_name, bounds, Ns, multi=None):
     """
     Search parameter space for given function
