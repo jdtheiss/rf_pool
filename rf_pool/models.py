@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 from .modules import RBM
-from .utils import functions
+from .utils import functions, visualize
 
 class Model(nn.Module):
     """
@@ -523,32 +523,7 @@ class Model(nn.Module):
             w[w < 0.] = 0.
             w[w > 1.] = 1.
             w = self.apply_layers(w, pre_layer_ids, forward=False)
-        # if channels > 3, reshape
-        if w.ndimension() == 4 and w.shape[1] > 3:
-            w = torch.flatten(w, 0, 1).unsqueeze(1)
-        # get columns and rows
-        n_cols = np.ceil(np.sqrt(w.shape[0])).astype('int')
-        n_rows = np.ceil(w.shape[0] / n_cols).astype('int')
-        # init figure and axes
-        fig, ax = plt.subplots(n_rows, n_cols, figsize=figsize)
-        ax = np.reshape(ax, (n_rows, n_cols))
-        # plot weights
-        cnt = 0
-        for r in range(n_rows):
-            for c in range(n_cols):
-                if cnt >= w.shape[0]:
-                    w_n = torch.zeros_like(w[0])
-                else:
-                    w_n = w[cnt].detach()
-                if img_shape:
-                    w_n = torch.reshape(w_n, (-1,) + img_shape)
-                w_n = torch.squeeze(w_n.permute(1,2,0), -1).numpy()
-                w_n = functions.normalize_range(w_n, dims=(0,1))
-                ax[r,c].axis('off')
-                ax[r,c].imshow(w_n, cmap=cmap)
-                cnt += 1
-        plt.show()
-        return fig
+        return visualize.plot_images(w, img_shape, figsize, cmap)
 
     def show_negative(self, input, layer_id, img_shape=None, figsize=(5,5),
                       cmap=None):

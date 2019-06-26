@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 
-from .utils import functions
+from .utils import functions, visualize
 
 class Module(nn.Module):
     """
@@ -229,31 +229,8 @@ class Module(nn.Module):
         if not hasattr(self, field):
             raise Exception('attribute ' + field + ' not found')
         w = getattr(self, field).clone().detach()
-        if w.ndimension() == 4 and w.shape[1] > 3:
-            w = torch.flatten(w, 0, 1).unsqueeze(1)
-        # get columns and rows
-        n_cols = np.ceil(np.sqrt(w.shape[0])).astype('int')
-        n_rows = np.ceil(w.shape[0] / n_cols).astype('int')
-        # init figure and axes
-        fig, ax = plt.subplots(n_rows, n_cols, figsize=figsize)
-        ax = np.reshape(ax, (n_rows, n_cols))
         # plot weights
-        cnt = 0
-        for r in range(n_rows):
-            for c in range(n_cols):
-                if cnt >= w.shape[0]:
-                    w_n = torch.zeros_like(w[0])
-                else:
-                    w_n = w[cnt].detach()
-                if img_shape:
-                    w_n = torch.reshape(w_n, (-1,) + img_shape)
-                w_n = torch.squeeze(w_n.permute(1,2,0), -1).numpy()
-                w_n = functions.normalize_range(w_n, dims=(0,1))
-                ax[r,c].axis('off')
-                ax[r,c].imshow(w_n, cmap=cmap)
-                cnt += 1
-        plt.show()
-        return fig
+        return visualize.plot_images(w, img_shape, figsize, cmap)
 
 class FeedForward(Module):
     """
