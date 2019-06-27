@@ -348,7 +348,7 @@ class Model(nn.Module):
                 if (i+1) % monitor == 0:
                     # display loss
                     clear_output(wait=True)
-                    display('learning rate:', optimizer.param_groups[0]['lr'])
+                    display('learning rate: %g' % optimizer.param_groups[0]['lr'])
                     display('[%5d] loss: %.3f' % (i+1, running_loss / monitor))
                     # append loss and show history
                     loss_history.append(running_loss / monitor)
@@ -390,7 +390,7 @@ class Model(nn.Module):
             if (i+1) % monitor == 0:
                 # display loss
                 clear_output(wait=True)
-                display('learning rate:', optimizer.param_groups[0]['lr'])
+                display('learning rate: %g' % optimizer.param_groups[0]['lr'])
                 display('[%5d] loss: %.3f' % (i+1, running_loss / monitor))
                 # append loss and show history
                 loss_history.append(running_loss / monitor)
