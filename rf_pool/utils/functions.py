@@ -6,6 +6,8 @@ import torch
 
 def gabor_filter(theta, sigma, wavelength, filter_shape, gamma=0.3):
     """
+    Create gabor filter
+
     Parameters
     ----------
     theta : float
@@ -33,7 +35,6 @@ def gabor_filter(theta, sigma, wavelength, filter_shape, gamma=0.3):
     -----
     Default gamma value from Serre et al. (2007).
     """
-    assert type(filter_shape) is list or type(filter_shape) is tuple
     assert len(filter_shape) == 2
     # convert orientation to radians
     theta = torch.tensor((theta / 180.) * np.pi)
