@@ -500,22 +500,40 @@ class RBM(Module):
         hidden_term = torch.sum(torch.log(1. + torch.exp(Wv_b)).flatten(1), 1)
         return -hidden_term - vbias_term
 
-    def pseudo_likelihood(self, *args):
-        input = args[0]
-        input_shape = input.shape
-        n_visible = np.prod(input_shape[1:])
-        input = torch.flatten(input, 1)
-        if hasattr(self, 'bit_idx') and self.bit_idx < input.shape[1] - 1:
-            self.bit_idx += 1
-        else:
-            self.bit_idx = 0
+    def free_energy_comparison(self, v, valid_v):
+        if not torch.is_tensor(valid_v):
+            valid_v = iter(valid_v).next()[0]
+        return torch.div(torch.mean(self.free_energy(v)),
+                         torch.mean(self.free_energy(valid_v)))
+
+    def pseudo_likelihood(self, v):
+        """
+        Get pseudo-likelihood via randomly flipping bits and measuring free energy
+
+        Parameters
+        ----------
+        input : torch.tensor
+            binary input to obtain pseudo-likelihood
+
+        Returns
+        -------
+        pl : float
+            pseudo-likelihood given input
+
+        Notes
+        -----
+        A random index in the input image is flipped on each call. Averaging
+        over many different indices approximates the pseudo-likelihood.
+        """
+        n_visible = np.prod(v.shape[1:])
         # get free energy for input
-        xi = torch.reshape(torch.round(input), input_shape)
+        xi = torch.round(v)
         fe_xi = self.free_energy(xi)
         # flip bit and get free energy
         xi_flip = torch.flatten(xi, 1)
-        xi_flip[:,self.bit_idx] = 1. - xi_flip[:,self.bit_idx]
-        xi_flip = torch.reshape(xi_flip, input_shape)
+        bit_idx = torch.randint(xi_flip.shape[1], (1,))
+        xi_flip[:,bit_idx] = 1. - xi_flip[:,bit_idx]
+        xi_flip = torch.reshape(xi_flip, v.shape)
         fe_xi_flip = self.free_energy(xi_flip)
         # return log(fe_xi_flip) - log(fe_xi)
         return torch.mean(n_visible * torch.log(torch.sigmoid(fe_xi_flip - fe_xi)))
@@ -612,7 +630,13 @@ class RBM(Module):
         if optimizer:
             optimizer.step()
         # monitor loss
-        if monitor_fn:
+        if type(monitor_fn) is dict:
+            monitor_kwargs = monitor_fn.copy()
+            fn = monitor_kwargs.pop('fn')
+            if 'v' not in monitor_kwargs:
+                monitor_kwargs.update({'v': input})
+            out = torch.mean(fn(**monitor_kwargs))
+        elif monitor_fn is not None:
             out = monitor_fn(input, nv_mean)
         else:
             out = loss
@@ -774,7 +798,13 @@ class CRBM(RBM):
         if optimizer:
             optimizer.step()
         # monitor loss
-        if monitor_fn:
+        if type(monitor_fn) is dict:
+            monitor_kwargs = monitor_fn.copy()
+            fn = monitor_kwargs.pop('fn')
+            if 'v' not in monitor_kwargs:
+                monitor_kwargs.update({'v': input})
+            out = torch.mean(fn(**monitor_kwargs))
+        elif monitor_fn is not None:
             out = monitor_fn(input, nv_mean)
         else:
             out = loss
