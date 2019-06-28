@@ -250,11 +250,12 @@ class Branch(Module):
     #TODO:WRITEME
     """
     def __init__(self, branches, branch_shapes=None, cat_output=False,
-                 input_shape=None):
+                 output_names=None, input_shape=None):
         super(Branch, self).__init__(input_shape)
         self.branches = branches
         self.branch_shapes = branch_shapes
         self.cat_output = cat_output
+        self.output_names = output_names
         for i, branch in enumerate(self.branches):
             self.forward_layer.add_module('branch_'+str(i), branch)
 
@@ -274,6 +275,8 @@ class Branch(Module):
                     outputs[-1] = torch.reshape(outputs[-1], self.branch_shapes[i])
         if self.cat_output:
             outputs = torch.cat(outputs, 1)
+        if self.output_names is not None:
+            outputs = dict([(k,v) for k, v in zip(self.output_names, outputs)])
         return outputs
 
     def reconstruct(self, input, names=[]):
@@ -312,10 +315,13 @@ class Control(Module):
         for name, module in self.forward_layer.named_children():
             if name == 'control':
                 control_out = module(input)
-                if type(control_out) is not list:
-                    control_out = [control_out]
             elif control_out is not None:
-                input = module(input, *control_out)
+                if type(control_out) is list:
+                    input = module(input, *control_out)
+                elif type(control_out) is dict:
+                    input = module(input, **control_out)
+                else:
+                    input = module(input, control_out)
             else:
                 input = module(input)
         return input
