@@ -368,7 +368,7 @@ def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
         type of pooling ('prob','stochastic','div_norm','max','average','sum')
         [default: 'max']
     kernel_size : int or tuple
-        size of blocks in hidden layer connected to pooling units
+        size of subsampling blocks in hidden layer connected to pooling units
         [default: 2]
     mask_thr : float
         threshold used to binarize rfs as mask input for pooling operations
@@ -386,13 +386,15 @@ def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
 
     Returns
     -------
-    h_mean : torch.Tensor
-        hidden layer mean-field estimates with shape (batch_size, ch, h, w)
     p_mean : torch.Tensor or tuple
         pooling layer mean-field estimates with shape
         (batch_size, ch, h//kernel_size, w//kernel_size)
         if return_indices is True and kernel_size > 1, p_mean is tuple:
         (p_mean, p_mean_indices)
+    h_mean : torch.Tensor
+        hidden layer mean-field estimates with shape (batch_size, ch, h, w)
+    h_sample : torch.Tensor
+        hidden layer samples with shape (batch_size, ch, h, w)
 
     Examples
     --------
@@ -402,25 +404,25 @@ def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
     >>> u = torch.rand(1,10,8,8)
     >>> t = torch.rand(1,10,4,4)
     >>> mu, sigma = lattice.init_uniform_lattice((4,4), 2, 3, 2.)
-    >>> kernels = lattice.gaussian_kernel_lattice(mu, sigma, (8,8))
-    >>> h_mean, h_sample, p_mean, p_sample = rf_pool(u,t,kernels,'sum',(2,2))
+    >>> rfs = lattice.gaussian_kernel_lattice(mu, sigma, (8,8))
+    >>> p_mean, h_mean, h_sample = rf_pool(u, t, rfs, 'sum', (2,2))
 
     Notes
     -----
     pool_type 'prob' refers to probabilistic max-pooling (Lee et al., 2009),
     'stochastic' refers to stochastic max-pooling (Zeiler & Fergus, 2013),
-    'div_norm' performs divisive normalization with sigma=0.5 (Heeger, 1992),
-    'max_pool' performs max pooling over the units in the receptive field,
+    'div_norm' performs divisive normalization (Heeger, 1992),
+    'max' performs max pooling over the units in the receptive field,
     'average' divides units by total number of units in the receptive field,
-    'sum' returns sum over units in receptive field (especially for Gaussians).
+    'sum' returns sum over units in receptive field (useful for Gaussian RFs).
 
-    When kernel_size != 1, p_mean and p_sample result from a max operation
-    across (n,n) blocks according to either probabilistic max-pooling or
-    stochastic max-pooling.
+    When kernel_size != 1, p_mean results from a max operation across (n,n)
+    blocks using torch.nn.functional.max_pool2d. If kernel_size == 1, p_mean
+    results from the pointwise multiplication between h_mean and h_sample.
 
     See Also
     --------
-    layers.RF_Pool : layer implementation of rf_pool function
+    layers : layer implementations of rf_pool function
     """
 
     # get bottom-up shape
@@ -525,7 +527,7 @@ def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
             p_mean = F.max_pool2d(p_mean, kernel_size,
                                   return_indices=return_indices)
 
-    return h_mean, p_mean, h_sample
+    return p_mean, h_mean, h_sample
 
 if __name__ == '__main__':
     import doctest
