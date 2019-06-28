@@ -285,7 +285,8 @@ class Model(nn.Module):
         # get options from kwargs
         options.update(functions.pop_attributes(kwargs,
                                                 ['add_loss','sparsity','scheduler',
-                                                 'label_params','show_negative'],
+                                                 'label_params','show_negative',
+                                                 'show_lattice'],
                                                 default={}))
         # if layer-wise training, ensure layer_id str and get pre_layer_ids
         if options.get('layer_id') is not None:
@@ -358,6 +359,12 @@ class Model(nn.Module):
                     # show negative
                     if options.get('show_negative'):
                         self.show_negative(inputs[0], **options.get('show_negative'))
+                    # show lattice
+                    if options.get('show_lattice'):
+                        if 'x' not in options.get('show_lattice'):
+                            self.show_lattice(inputs[0], **options.get('show_lattice'))
+                        else:
+                            self.show_lattice(**options.get('show_lattice'))
                     # call other monitoring functions
                     functions.kwarg_fn([IPython.display, self], None, **kwargs)
         return loss_history
@@ -493,17 +500,16 @@ class Model(nn.Module):
         # get rf_layers
         rf_layers = []
         for layer_id, layer in self.layers.named_children():
-            pool = layer.get_modules(layer.forward_layer, ['pool'])
-            if len(pool) ==1 and torch.typename(pool[0]).find('layers') >=0:
+            pool = layer.get_modules('forward_layer', ['pool'])
+            if len(pool) == 1 and torch.typename(pool[0]).find('layers') >=0 and \
+               pool[0].rfs is not None:
                 rf_layers.append(pool[0])
         n_lattices =  len(rf_layers)
         if n_lattices == 0:
             raise Exception('No rf_pool layers found.')
 
-        # pass x through network, show lattices
+        # show lattices
         with torch.no_grad():
-            if type(x) is torch.Tensor:
-                self.forward(x)
             # get lattices
             lattices = []
             for pool in rf_layers:
