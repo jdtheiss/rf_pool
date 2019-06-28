@@ -66,9 +66,10 @@ class Layer(torch.nn.Module):
         if delta_mu is not None:
             mu = torch.add(self.mu, delta_mu)
             self.delta_mu = delta_mu
-        # multiply sigma by delta_sigma
+        # add delta_sigma to log(sigma**2) then exponentiate and sqrt
         if delta_sigma is not None:
-            sigma = torch.mul(self.sigma, (1. + delta_sigma) + 1e-6)
+            sigma = torch.sqrt(torch.exp(torch.add(torch.log(torch.pow(self.sigma, 2)),
+                                                   delta_sigma)))
             self.delta_sigma = delta_sigma
         # update mu if img_shape doesnt match rfs.shape[-2:]
         if self.update_img_shape and self.rfs.shape[-2:] != self.img_shape:
@@ -99,6 +100,19 @@ class Layer(torch.nn.Module):
         elif self.thr is not None:
             args.append(self.thr)
         return self.lattice_fn(*args)
+
+    def get_squeezed_coords(self, mu, sigma):
+        # find min, max mu
+        min_mu, min_idx = torch.min(mu, dim=0)
+        max_mu, max_idx = torch.max(mu, dim=0)
+        min_sigma = sigma[min_idx].t()
+        max_sigma = sigma[max_idx].t()
+        return torch.cat([min_mu - min_sigma, max_mu + max_sigma]).int()
+
+    def crop_img(self, input, coords):
+        output = torch.flatten(input, 0, -3)
+        output = output[:, coords[0,0]:coords[1,0], coords[0,1]:coords[1,1]]
+        return torch.reshape(output, input.shape[:-2] + output.shape[-2:])
 
     def show_lattice(self, x=None, figsize=(5,5), cmap=None):
         assert self.rfs is not None
@@ -171,7 +185,7 @@ class RF_Pool(Layer):
         mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
         self.rfs = self.update_rfs(mu, sigma)
         # return pooling outputs
-        return self.apply(u, **kwargs)[1]
+        return self.apply(u, **kwargs)[0]
 
 class RF_Uniform(Layer):
     """
@@ -189,14 +203,42 @@ class RF_Uniform(Layer):
                                                  sigma_init)
         super(RF_Uniform, self).__init__(mu, sigma, img_shape, lattice_fn, **kwargs)
 
-    def forward(self, u, delta_mu=None, delta_sigma=None, **kwargs):
+    def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
+                **kwargs):
        # set img_shape
        self.img_shape = u.shape[-2:]
        # update rfs, mu, sigma
-       mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, **kwargs)
+       mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
        self.rfs = self.update_rfs(mu, sigma)
        # return pooling outputs
-       return self.apply(u, **kwargs)[1]
+       return self.apply(u, **kwargs)[0]
+
+class RF_Random(Layer):
+    """
+    #TODO:WRITEME
+    """
+    def __init__(self, n_kernels, img_shape,
+                lattice_fn=lattice.mask_kernel_lattice, **kwargs):
+        # set mu, sigma
+        if 'mu' not in kwargs:
+            mu = torch.rand(n_kernels, 2) * torch.tensor(img_shape).float()
+        else:
+            mu = kwargs.pop('mu')
+        if 'sigma' not in kwargs:
+            sigma = torch.rand(n_kernels, 1) * np.minimum(*img_shape) / 2.
+        else:
+            sigma = kwargs.pop('sigma')
+        super(RF_Random, self).__init__(mu, sigma, img_shape, lattice_fn, **kwargs)
+
+    def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
+                **kwargs):
+       # set img_shape
+       self.img_shape = u.shape[-2:]
+       # update rfs, mu, sigma
+       mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+       self.rfs = self.update_rfs(mu, sigma)
+       # return pooling outputs
+       return self.apply(u, **kwargs)[0]
 
 class RF_Window(Layer):
     """
@@ -213,7 +255,7 @@ class RF_Window(Layer):
         mu, sigma = self.update_mu_sigma(delta_mu, None, priority_map)
         self.rfs = self.update_rfs(mu, None)
         # return pooling outputs
-        return self.apply(u, **kwargs)[1]
+        return self.apply(u, **kwargs)[0]
 
 class RF_Same(Layer):
     """
@@ -230,10 +272,76 @@ class RF_Same(Layer):
         # update rfs, mu, sigma
         mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
         self.rfs = self.update_rfs(mu, sigma)
-        # return h_mean output and
-        h_mean = self.apply(u, **kwargs)[0]
-        # pool if kernel_size > 1
-        if type(self.kernel_size) is int and self.kernel_size > 1:
-            pool_kwargs = functions.get_attributes(self, ['return_indices'])
-            h_mean = F.max_pool2d(h_mean, self.kernel_size, **pool_kwargs)
+        # return h_mean output
+        pool_kwargs = functions.pop_attributes(kwargs, ['kernel_size',
+                                                        'return_indices'])
+        h_mean = self.apply(u, **kwargs)[1]
+        # update pool_kwargs if None
+        if pool_kwargs.get('kernel_size') is None:
+            pool_kwargs.update({'kernel_size': self.kernel_size})
+        if pool_kwargs.get('return_indices') is None and hasattr(self,'return_indices'):
+            pool_kwargs.update({'return_indices': self.return_indices})
+        # pool if kernel_size in pool_kwargs
+        if pool_kwargs.get('kernel_size') is not None:
+            h_mean = F.max_pool2d(h_mean, **pool_kwargs)
         return h_mean
+
+class RF_Squeeze(Layer):
+    """
+    #TODO:WRITEME
+    """
+    def __init__(self, mu=None, sigma=None, img_shape=None,
+                 lattice_fn=lattice.mask_kernel_lattice, **kwargs):
+        super(RF_Squeeze, self).__init__(mu, sigma, img_shape, lattice_fn, **kwargs)
+
+    def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
+                **kwargs):
+        # set img_shape
+        self.img_shape = u.shape[-2:]
+        # update rfs, mu, sigma
+        mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+        self.rfs = self.update_rfs(mu, sigma)
+        # get p_mean without subsampling
+        pool_kwargs = functions.pop_attributes(kwargs, ['kernel_size',
+                                                        'return_indices'])
+        p_mean = self.apply(u, **kwargs)[0]
+        # get squeezed coordinates
+        coords = self.get_squeezed_coords(mu, sigma)
+        # crop
+        p_mean = self.crop_img(p_mean, coords)
+        # update pool_kwargs if None
+        if pool_kwargs.get('kernel_size') is None:
+            pool_kwargs.update({'kernel_size': self.kernel_size})
+        if pool_kwargs.get('return_indices') is None and hasattr(self,'return_indices'):
+            pool_kwargs.update({'return_indices': self.return_indices})
+        # pool if kernel_size in pool_kwargs
+        if pool_kwargs.get('kernel_size') is not None:
+            p_mean = F.max_pool2d(p_mean, **pool_kwargs)
+        return p_mean
+
+class RF_CenterCrop(Layer):
+    """
+    #TODO:WRITEME
+    """
+    def __init__(self, crop_size, mu=None, sigma=None, img_shape=None,
+                 lattice_fn=lattice.mask_kernel_lattice, **kwargs):
+        self.crop_size = torch.tensor(crop_size)
+        super(RF_CenterCrop, self).__init__(mu, sigma, img_shape, lattice_fn, **kwargs)
+
+    def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
+                **kwargs):
+        # set img_shape
+        self.img_shape = u.shape[-2:]
+        # update rfs, mu, sigma
+        mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+        self.rfs = self.update_rfs(mu, sigma)
+        # get pooled outputs
+        p_mean = self.apply(u, **kwargs)[0]
+        # get coordinates of center size
+        center = torch.max(torch.tensor(self.img_shape) // 2 - 1,
+                           torch.tensor([0,0]))
+        half_crop = self.crop_size // 2
+        coords = torch.stack([center - half_crop,
+                              center + half_crop + np.mod(self.crop_size, 2)])
+        # return center crop
+        return self.crop_img(p_mean, coords)
