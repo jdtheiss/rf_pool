@@ -24,8 +24,8 @@ class Module(nn.Module):
         return modules from forward_layer or reconstruct_layer with given names
     link_parameters(layer, layer_name)
         register parameters from layer in self with appended layer_name
-    init_weights(suffix='weight', fn=torch.randn_like)
-        initialze weights for parameter names that end with suffix using fn
+    init_weights(pattern='weight', fn=torch.randn_like)
+        initialze weights for parameter names that end with pattern using fn
     make_layer(**kwargs)
         initialize forward_layer from keyword arguments (e.g.,
         hidden=torch.nn.Conv2d(1, 24, 11), activation=torch.nn.ReLU)
@@ -74,10 +74,13 @@ class Module(nn.Module):
                 param_name = name.replace('.','_')
             self.register_parameter(param_name, param)
 
-    def init_weights(self, suffix='weight', fn=lambda x: 0.01 * torch.randn_like(x)):
-        for name, param in self.named_parameters():
+    def init_weights(self, named_parameters=None, pattern='weight',
+                     fn=lambda x: 0.01 * torch.randn_like(x)):
+        if named_parameters is None:
+            named_parameters = self.named_parameters()
+        for name, param in named_parameters:
             with torch.no_grad():
-                if name.endswith(suffix):
+                if name.find(pattern) >=0:
                     param.set_(fn(param))
 
     def make_layer(self, layer_name, transpose=False, **kwargs):
@@ -241,7 +244,7 @@ class FeedForward(Module):
         # build layer
         self.make_layer('forward_layer', **kwargs)
         # initialize biases to zeros
-        self.init_weights(suffix='bias', fn=torch.zeros_like)
+        self.init_weights(pattern='bias', fn=torch.zeros_like)
         # link parameters
         self.link_parameters(self.forward_layer)
 
@@ -302,7 +305,7 @@ class Control(Module):
         # build layer
         self.make_layer('forward_layer', **kwargs)
         # init biases
-        self.init_weights(suffix='bias', fn=torch.zeros_like)
+        self.init_weights(pattern='bias', fn=torch.zeros_like)
         # link parameters
         self.link_parameters(self.forward_layer)
 
@@ -406,13 +409,13 @@ class RBM(Module):
         self.make_layer('forward_layer', hidden=hidden, activation=activation,
                         pool=pool, dropout=dropout)
         # init weights
-        self.init_weights(suffix='weight', fn=lambda x: 0.01 * torch.randn_like(x))
+        self.init_weights(pattern='weight', fn=lambda x: 0.01 * torch.randn_like(x))
         # make reconstruct layer
         self.make_layer('reconstruct_layer', transpose=True, pool=pool,
                         hidden=hidden)
         self.update_layer('reconstruct_layer', activation=self.vis_activation_fn)
         # init biases
-        self.init_weights(suffix='bias', fn=torch.zeros_like)
+        self.init_weights(pattern='bias', fn=torch.zeros_like)
         # link parameters to self
         self.link_parameters(self.forward_layer)
         self.link_parameters(self.reconstruct_layer)
@@ -660,14 +663,14 @@ class CRBM(RBM):
         # update forward layer
         self.update_layer('forward_layer', transpose=True, top_down=top_down)
         # init weights
-        self.init_weights(suffix='weight', fn=lambda x: 0.01 * torch.randn_like(x))
+        self.init_weights(pattern='weight', fn=lambda x: 0.01 * torch.randn_like(x))
         # make reconstruct layer
         self.make_layer('reconstruct_layer', top_down=top_down)
         self.update_layer('reconstruct_layer', transpose=True,
                           pool=kwargs.get('pool'), hidden=kwargs.get('hidden'))
         self.update_layer('reconstruct_layer', activation=self.vis_activation_fn)
         # init biases
-        self.init_weights(suffix='bias', fn=torch.zeros_like)
+        self.init_weights(pattern='bias', fn=torch.zeros_like)
         # remove top_down_bias
         self.reconstruct_layer.top_down.bias = None
         # link parameters to self
