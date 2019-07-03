@@ -540,8 +540,9 @@ class RBM(Module):
         fe_xi = self.free_energy(xi)
         # flip bit and get free energy
         xi_flip = torch.flatten(xi, 1)
-        bit_idx = torch.randint(xi_flip.shape[1], (1,))
-        xi_flip[:,bit_idx] = 1. - xi_flip[:,bit_idx]
+        bit_idx = torch.randint(xi_flip.shape[1], (xi.shape[0],))
+        xi_idx = np.arange(xi.shape[0])
+        xi_flip[xi_idx, bit_idx] = 1. - xi_flip[xi_idx, bit_idx]
         xi_flip = torch.reshape(xi_flip, v.shape)
         fe_xi_flip = self.free_energy(xi_flip)
         # return log(fe_xi_flip) - log(fe_xi)
