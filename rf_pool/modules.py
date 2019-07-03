@@ -430,7 +430,7 @@ class RBM(Module):
         # apply pool module if rf_pool type
         pool_module = self.get_modules('forward_layer', ['pool'])[0]
         if torch.typename(pool_module).find('layers') >= 0:
-            h_mean, _, h_sample = pool_module.apply(h_mean)
+            _, h_mean, h_sample = pool_module.apply(h_mean)
         else:
             h_sample = h_mean
         # sample from h_mean
@@ -459,7 +459,7 @@ class RBM(Module):
         # apply pool module if rf_pool type
         pool_module = self.get_modules('forward_layer', ['pool'])[0]
         if torch.typename(pool_module).find('layers') >= 0:
-            h_mean, _, h_sample = pool_module.apply(h_mean)
+            _, h_mean, h_sample = pool_module.apply(h_mean)
         else:
             h_sample = h_mean
         # sample from h_mean

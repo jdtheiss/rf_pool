@@ -184,8 +184,7 @@ def div_norm_pool(u, out_shape, mask=None, n=2., s=0.5):
     each unit with a constant, s, added in the denominator:
         h_mean = torch.pow(u, n)/torch.add(torch.pow(s, n),
                  torch.sum(torch.pow(u, n), dim=[-2,-1], keepdim=True))
-        p_mean is set to the value of h_mean indexed at the stochastically
-        selected max unit
+        p_mean is set to the value of h_mean indexed at the maximum unit in h_mean
 
     References
     ----------
@@ -203,7 +202,7 @@ def div_norm_pool(u, out_shape, mask=None, n=2., s=0.5):
     else:
         u_n = u
         s_n = s
-    probs = torch.div(u_n, s_n + torch.sum(u_n, dim=[r-2,-1], keepdim=True))
+    probs = torch.div(u_n, s_n + torch.sum(u_n, dim=[-2,-1], keepdim=True))
     # set detection mean-field estimates and samples
     h_mean = torch.reshape(probs, out_shape)
     h_sample = torch.reshape(max_index(probs), out_shape)
@@ -239,7 +238,7 @@ def max_pool(u, out_shape, mask=None):
     Max pooling returns the following mean-field estimates and samples
     for the hidden and pooling layers:
         h_mean is set to the input, u
-        p_mean is set to the value of h_mean indexed at the maximum unit in h_mean
+        p_mean is set to the value of h_mean indexed at the maximum unit in u
     """
     # apply mask to u
     if type(mask) is torch.Tensor:
@@ -330,7 +329,7 @@ def sum_pool(u, out_shape, mask=None):
     the hidden and pooling layers:
         h_mean is set to the input, u
         p_mean is set to the sum across across units in the receptive field
-        indexed at the maximum unit
+        indexed at the maximum unit in u
     """
 
     # apply mask to u
