@@ -533,7 +533,7 @@ class Model(nn.Module):
             w = self.apply_layers(w, pre_layer_ids, forward=False)
         return visualize.plot_images(w, img_shape, figsize, cmap)
 
-    def show_negative(self, input, layer_id, img_shape=None, figsize=(5,5),
+    def show_negative(self, input, layer_id, n_images=-1, img_shape=None, figsize=(5,5),
                       cmap=None):
         """
         #TODO:WRITEME
@@ -563,9 +563,11 @@ class Model(nn.Module):
         input = functions.normalize_range(input, dims=(1,2))
         neg = functions.normalize_range(neg, dims=(1,2))
         # plot negatives
-        fig, ax = plt.subplots(input.shape[0], 2, figsize=figsize)
-        ax = np.reshape(ax, (input.shape[0], 2))
-        for r in range(input.shape[0]):
+        if n_images == -1:
+            n_images = input.shape[0]
+        fig, ax = plt.subplots(n_images, 2, figsize=figsize)
+        ax = np.reshape(ax, (n_images, 2))
+        for r in range(n_images):
             ax[r,0].axis('off')
             ax[r,1].axis('off')
             ax[r,0].imshow(input[r], cmap=cmap)
