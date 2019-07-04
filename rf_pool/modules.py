@@ -553,14 +553,11 @@ class RBM(Module):
         """
         #TODO:WRITEME
         """
-        # get persistent if hasattr
-        if hasattr(self, 'persistent'):
-            neg = self.persistent
-        else:
-            neg = None
-        # gibbs sample if neg is None
         with torch.no_grad():
-            if neg is None:
+            # if neg is None:
+            if hasattr(self, 'persistent'):
+                neg = self.persistent
+            else:
                 neg = self.gibbs_vhv(v, k=k)[4]
         # reshape, permute for plotting
         if img_shape:
@@ -572,13 +569,13 @@ class RBM(Module):
         neg = functions.normalize_range(neg, dims=(1,2))
         # plot negatives
         if n_images == -1:
-            n_images = v.shape[0]
+            n_images = neg.shape[0]
         fig, ax = plt.subplots(n_images, 2, figsize=figsize)
         ax = np.reshape(ax, (n_images, 2))
         for r in range(n_images):
             ax[r,0].axis('off')
             ax[r,1].axis('off')
-            ax[r,0].imshow(v[r], cmap=cmap)
+            ax[r,0].imshow(v[np.minimum(r, v.shape[0]-1)], cmap=cmap)
             ax[r,1].imshow(neg[r], cmap=cmap)
         plt.show()
         return fig
@@ -596,17 +593,20 @@ class RBM(Module):
             pre_act_ph, ph_mean, ph_sample = self.sample_h_given_v(input)
             # persistent
             if self.persistent is not None:
-                ph_sample = self.persistent
+                ph_sample = self.sample_h_given_v(self.persistent)[2]
                 self.hidden_weight.add_(self.persistent_weights)
             elif kwargs.get('persistent') is not None:
                 self.persistent = kwargs.get('persistent')
-                ph_sample = self.persistent
+                ph_sample = self.sample_h_given_v(self.persistent)[2]
                 self.persistent_weights = torch.zeros_like(self.hidden_weight,
                                                            requires_grad=True)
                 self.persistent_weights = nn.Parameter(self.persistent_weights)
                 if optimizer:
                     optimizer.add_param_group({'params': self.persistent_weights})
                     optimizer.param_groups[-1].update({'momentum': 0.})
+                    persistent_lr = kwargs.get('persistent_lr')
+                    if persistent_lr is not None:
+                        optimizer.param_groups[-1].update({'lr': persistent_lr})
             # dropout
             ph_sample = self.apply_modules(ph_sample, 'forward_layer', ['dropout'])
             # negative phase
@@ -623,7 +623,7 @@ class RBM(Module):
         # update persistent weights
         with torch.no_grad():
             if self.persistent is not None:
-                self.persistent = nh_sample
+                self.persistent = nv_sample
                 self.persistent_weights.mul_(0.95)
                 self.persistent_weights.grad = self.hidden_weight.grad
         # compute additional loss from add_loss

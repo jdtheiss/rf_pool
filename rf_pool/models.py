@@ -550,7 +550,7 @@ class Model(nn.Module):
             if neg is None:
                 neg = self.apply_layers(input, pre_layer_ids)
                 neg = self.layers[layer_id].forward(neg)
-            neg = self.layers[layer_id].reconstruct(neg)
+                neg = self.layers[layer_id].reconstruct(neg)
             neg = self.apply_layers(neg, pre_layer_ids, forward=False)
         # reshape, permute for plotting
         if img_shape:
@@ -564,13 +564,13 @@ class Model(nn.Module):
         neg = functions.normalize_range(neg, dims=(1,2))
         # plot negatives
         if n_images == -1:
-            n_images = input.shape[0]
+            n_images = neg.shape[0]
         fig, ax = plt.subplots(n_images, 2, figsize=figsize)
         ax = np.reshape(ax, (n_images, 2))
         for r in range(n_images):
             ax[r,0].axis('off')
             ax[r,1].axis('off')
-            ax[r,0].imshow(input[r], cmap=cmap)
+            ax[r,0].imshow(input[np.minimum(r, input.shape[0]-1)], cmap=cmap)
             ax[r,1].imshow(neg[r], cmap=cmap)
         plt.show()
         return fig
