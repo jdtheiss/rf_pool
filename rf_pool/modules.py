@@ -111,6 +111,32 @@ class Module(nn.Module):
         # set layer
         setattr(self, layer_name, layer)
 
+    def insert_layer(self, layer_name, idx, transpose=False, **kwargs):
+        # get layer
+        layer = nn.Sequential()
+        if hasattr(self, layer_name):
+            orig_layer = getattr(self, layer_name)
+            mods = dict([(k, v) for k, v in orig_layer.named_children()])
+        else:
+            mods = {}
+        # set pre-index modules
+        for i, (key, value) in enumerate(mods.items()):
+            if i < idx:
+                layer.add_module(key, value)
+        # set index modules
+        for key, value in kwargs.items():
+            if transpose:
+                key = key + '_transpose'
+                value = self.transposed_fn(value)
+            if value is not None:
+                layer.add_module(key, value)
+        # set post-index modules
+        for i, (key, value) in enumerate(mods.items()):
+            if i >= idx:
+                layer.add_module(key, value)
+        # set layer
+        setattr(self, layer_name, layer)
+
     def transposed_fn(self, fn):
         # transposed conv
         if hasattr(fn, 'weight') and torch.typename(fn).find('conv') >= 0:
@@ -129,7 +155,7 @@ class Module(nn.Module):
         elif hasattr(fn, 'return_indices') and fn.return_indices:
             pool_kwargs = functions.get_attributes(fn, ['stride', 'padding'])
             transposed_fn = nn.MaxUnpool2d(fn.kernel_size, **pool_kwargs)
-        elif hasattr(fn, 'kernel_size'): #TODO: how to determine if pool
+        elif hasattr(fn, 'kernel_size'):
             transposed_fn = nn.Upsample(scale_factor=fn.kernel_size)
         else:
             transposed_fn = fn
@@ -346,6 +372,9 @@ class RBM(Module):
         function used for sampling from visible unit mean field estimates
     hid_sample_fn : torch.distributions or None
         function used for sampling from hidden unit mean field estimates
+    log_part_fn : torch.nn.functional
+        log-partition function for the hidden unit exponential family
+        [default: torch.nn.functional.softplus, i.e. binary hidden units]
     v_bias : torch.Tensor
         bias for visible units
     h_bias : torch.Tensor
@@ -369,8 +398,10 @@ class RBM(Module):
         sample hidden units given visible units and top-down input
     contrastive_divergence(v, h)
         compute contrastive divergence for visible and hidden samples
-    energy(v)
-        compute energy for visible sample
+    energy(v, h)
+        compute energy for visible and hidden samples
+    free_energy(v)
+        compute free energy for visible sample
     train(input, optimizer, k=1, monitor_fn=nn.MSELoss(), **kwargs)
         train with contrastive divergence with k gibbs steps
 
@@ -396,13 +427,15 @@ class RBM(Module):
     of hidden, and vis_activation_fn is an input parameter at initialization.
     """
     def __init__(self, hidden=None, activation=None, pool=None, dropout=None,
-                 vis_activation_fn=None, vis_sample_fn=None, hid_sample_fn=None,
+                 vis_activation_fn=None, vis_sample_fn=None,
+                 hid_sample_fn=None, log_part_fn=nn.functional.softplus,
                  input_shape=None):
         super(RBM, self).__init__(input_shape)
         self.vis_activation_fn = vis_activation_fn
         self.vis_sample_fn = vis_sample_fn
         self.hid_activation_fn = activation
         self.hid_sample_fn = hid_sample_fn
+        self.log_part_fn = log_part_fn
         # initialize persistent
         self.persistent = None
         # make forward layer
@@ -435,7 +468,7 @@ class RBM(Module):
             h_sample = h_mean
         # sample from h_mean
         if self.hid_sample_fn:
-            h_sample = self.hid_sample_fn(probs=h_mean).sample()
+            h_sample = self.hid_sample_fn(h_mean).sample()
         return pre_act_h, h_mean, h_sample
 
     def sample_v_given_h(self, h):
@@ -444,7 +477,7 @@ class RBM(Module):
         v_mean = self.apply_modules(pre_act_v, 'reconstruct_layer', ['activation'])
         # sample from v_mean
         if self.vis_sample_fn:
-            v_sample = self.vis_sample_fn(probs=v_mean).sample()
+            v_sample = self.vis_sample_fn(v_mean).sample()
         else:
             v_sample = v_mean
         return pre_act_v, v_mean, v_sample
@@ -464,7 +497,7 @@ class RBM(Module):
             h_sample = h_mean
         # sample from h_mean
         if self.hid_sample_fn:
-            h_sample = self.hid_sample_fn(probs=h_mean).sample()
+            h_sample = self.hid_sample_fn(h_mean).sample()
         return pre_act_h, h_mean, h_sample
 
     def gibbs_vhv(self, v_sample, k=1):
@@ -506,7 +539,7 @@ class RBM(Module):
         # get vbias, hidden terms
         vbias_term = torch.flatten(v * v_bias, 1)
         vbias_term = torch.sum(vbias_term, 1)
-        hidden_term = torch.sum(torch.log(1. + torch.exp(Wv_b)).flatten(1), 1)
+        hidden_term = torch.sum(self.log_part_fn(Wv_b).flatten(1), 1)
         return -hidden_term - vbias_term
 
     def free_energy_comparison(self, v, valid_v):
@@ -617,8 +650,8 @@ class RBM(Module):
             if self.persistent is not None:
                 self.hidden_weight.sub_(self.persistent_weights)
         # compute loss, pass backward through gradients
-        loss = torch.sub(torch.mean(self.energy(input, ph_mean)),
-                         torch.mean(self.energy(nv_sample, nh_mean)))
+        loss = torch.sub(torch.mean(self.free_energy(input)),
+                         torch.mean(self.free_energy(nv_sample)))
         loss.backward()
         # update persistent weights
         with torch.no_grad():
@@ -696,7 +729,7 @@ class CRBM(RBM):
         else:
             y_mean = pre_act_y
         if self.y_sample_fn:
-            y_sample = self.hid_sample_fn(probs=y_mean).sample()
+            y_sample = self.hid_sample_fn(y_mean).sample()
         else:
             y_sample = y_mean
         return pre_act_y, y_mean, y_sample
@@ -748,6 +781,18 @@ class CRBM(RBM):
         dy = torch.sum(torch.mul(y, y_bias).flatten(1), 1)
         return -hWv - bv - ch - dy - hUy
 
+    def free_energy(self, v, y):
+        # reshape v_bias, hid_bias
+        v_dims = tuple([1 for _ in range(v.ndimension()-2)])
+        v_bias = torch.reshape(self.v_bias, (1,-1) + v_dims)
+        # get Wv_Uy_b
+        Wv_Uy_b = self.sample_h_given_vy(v, y)[0]
+        # get vbias, hidden terms
+        vbias_term = torch.flatten(v * v_bias, 1)
+        vbias_term = torch.sum(vbias_term, 1)
+        hidden_term = torch.sum(self.log_part_fn(Wv_Uy_b).flatten(1), 1)
+        return -hidden_term - vbias_term
+
     def train(self, inputs, k=1, monitor_fn=nn.MSELoss(), optimizer=None,
               **kwargs):
         """
@@ -785,8 +830,8 @@ class CRBM(RBM):
             if self.persistent is not None:
                 self.hidden_weight.sub_(self.persistent_weights)
         # compute loss, pass backward through gradients
-        loss = torch.sub(torch.mean(self.energy(input, ph_mean)),
-                         torch.mean(self.energy(nv_sample, nh_mean)))
+        loss = torch.sub(torch.mean(self.free_energy(input, top_down)),
+                         torch.mean(self.free_energy(nv_sample, ny_sample)))
         loss.backward()
         # update persistent weights
         with torch.no_grad():
@@ -822,6 +867,14 @@ class CRBM(RBM):
         else:
             out = loss
         return out.item()
+
+class ssRBM(RBM):
+    """
+    #TODO:WRITEME
+    """
+    def __init__(self, **kwargs):
+        super(ssRBM, self).__init__(**kwargs)
+        raise NotImplementedError
 
 if __name__ == '__main__':
     import doctest
