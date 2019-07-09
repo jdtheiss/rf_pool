@@ -533,8 +533,8 @@ class Model(nn.Module):
             w = self.apply_layers(w, pre_layer_ids, forward=False)
         return visualize.plot_images(w, img_shape, figsize, cmap)
 
-    def show_negative(self, input, layer_id, n_images=-1, img_shape=None, figsize=(5,5),
-                      cmap=None):
+    def show_negative(self, input, layer_id, n_images=-1, k=1, img_shape=None,
+                      figsize=(5,5), cmap=None):
         """
         #TODO:WRITEME
         """
@@ -549,8 +549,11 @@ class Model(nn.Module):
         with torch.no_grad():
             if neg is None:
                 neg = self.apply_layers(input, pre_layer_ids)
-                neg = self.layers[layer_id].forward(neg)
-                neg = self.layers[layer_id].reconstruct(neg)
+                if hasattr(self.layers[layer_id], 'gibbs_vhv'):
+                    neg = self.layers[layer_id].gibbs_vhv(neg, k=k)[4]
+                else:
+                    neg = self.layers[layer_id].forward(neg)
+                    neg = self.layers[layer_id].reconstruct(neg)
             neg = self.apply_layers(neg, pre_layer_ids, forward=False)
         # reshape, permute for plotting
         if img_shape:
