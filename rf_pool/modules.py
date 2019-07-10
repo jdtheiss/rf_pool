@@ -476,12 +476,12 @@ class RBM(Module):
     def sample(self, x, layer_name):
         # get activation
         x_mean = self.apply_modules(x, layer_name, ['activation'])
+        # sample from h_mean
+        x_sample = self.apply_modules(x_mean, layer_name, ['sample'])
         # get pooling h_mean, h_sample if rf_pool
         pool_output = self.apply_module(x_mean, layer_name, 'pool')
         if len(pool_output) == 3:
             x_mean, x_sample = pool_output[1:]
-        # sample from h_mean
-        x_sample = self.apply_modules(x_mean, layer_name, ['sample'])
         return x_mean, x_sample
 
     def sample_h_given_v(self, v):
