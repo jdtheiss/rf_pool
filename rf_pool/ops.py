@@ -412,9 +412,15 @@ def poisson_mult_pool(u, kernel_size, **kwargs):
     return p_mean, h_mean, h_sample
 
 def poisson_pool(u, kernel_size, **kwargs):
+    h_mean = torch.exp(u)
+    h_sample = torch.distributions.Poisson(h_mean).sample()
+    p_mean = F.lp_pool2d(h_mean, 1, kernel_size, **kwargs)
+    return p_mean, h_mean, h_sample
+
+def bernoulli_pool(u, kernel_size, **kwargs):
     h_mean = torch.sigmoid(u)
     h_sample = torch.distributions.Bernoulli(h_mean).sample()
-    p_mean = torch.log(F.lp_pool2d(h_mean, 1, kernel_size, **kwargs))
+    p_mean = torch.exp(F.lp_pool2d(torch.log(h_mean), 1, kernel_size, **kwargs))
     return p_mean, h_mean, h_sample
 
 def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
