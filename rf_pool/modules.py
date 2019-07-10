@@ -2,7 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
+from . import ops
 from .utils import functions, visualize
 
 class Module(nn.Module):
@@ -190,6 +192,15 @@ class Module(nn.Module):
                     if self.reconstuct_shape:
                         input = torch.reshape(input, self.reconstruct_shape)
         return input
+
+    def apply_module(self, input, layer_name, module_name, **kwargs):
+        # use apply function of module with kwargs
+        module = self.get_modules(layer_name, [module_name])
+        if len(module) > 0:
+            output = module[0].apply(input, **kwargs)
+        else:
+            output = input
+        return output
 
     def forward(self, input):
         if self.input_shape:
@@ -428,7 +439,7 @@ class RBM(Module):
     """
     def __init__(self, hidden=None, activation=None, pool=None, dropout=None,
                  vis_activation_fn=None, vis_sample_fn=None,
-                 hid_sample_fn=None, log_part_fn=nn.functional.softplus,
+                 hid_sample_fn=None, log_part_fn=F.softplus,
                  input_shape=None):
         super(RBM, self).__init__(input_shape)
         self.vis_activation_fn = vis_activation_fn
@@ -436,17 +447,23 @@ class RBM(Module):
         self.hid_activation_fn = activation
         self.hid_sample_fn = hid_sample_fn
         self.log_part_fn = log_part_fn
+        # wrap sample functions in ops.Op
+        if torch.typename(self.vis_sample_fn).startswith('torch.distributions'):
+            self.vis_sample_fn = ops.Op(ops.sample_fn, distr=self.vis_sample_fn)
+        if torch.typename(self.hid_sample_fn).startswith('torch.distributions'):
+            self.hid_sample_fn = ops.Op(ops.sample_fn, distr=self.hid_sample_fn)
         # initialize persistent
         self.persistent = None
         # make forward layer
         self.make_layer('forward_layer', hidden=hidden, activation=activation,
-                        pool=pool, dropout=dropout)
+                        pool=pool, sample=self.hid_sample_fn, dropout=dropout)
         # init weights
         self.init_weights(pattern='weight', fn=lambda x: 0.01 * torch.randn_like(x))
         # make reconstruct layer
         self.make_layer('reconstruct_layer', transpose=True, pool=pool,
                         hidden=hidden)
-        self.update_layer('reconstruct_layer', activation=self.vis_activation_fn)
+        self.update_layer('reconstruct_layer', activation=self.vis_activation_fn,
+                          sample=self.vis_sample_fn)
         # init biases
         self.init_weights(pattern='bias', fn=torch.zeros_like)
         # link parameters to self
@@ -456,49 +473,34 @@ class RBM(Module):
         self.v_bias = self.hidden_transpose_bias
         self.h_bias = self.hidden_bias
 
-    def sample_h_given_v(self, v):
-        # apply each non-pooling module (unless rf_pool)
-        pre_act_h = self.apply_modules(v, 'forward_layer', ['hidden'])
-        h_mean = self.apply_modules(pre_act_h, 'forward_layer', ['activation'])
-        # apply pool module if rf_pool type
-        pool_module = self.get_modules('forward_layer', ['pool'])[0]
-        if torch.typename(pool_module).find('layers') >= 0:
-            _, h_mean, h_sample = pool_module.apply(h_mean)
-        else:
-            h_sample = h_mean
+    def sample(self, x, layer_name):
+        # get activation
+        x_mean = self.apply_modules(x, layer_name, ['activation'])
+        # get pooling h_mean, h_sample if rf_pool
+        pool_output = self.apply_module(x_mean, layer_name, 'pool')
+        if len(pool_output) == 3:
+            x_mean, x_sample = pool_output[1:]
         # sample from h_mean
-        if self.hid_sample_fn:
-            h_sample = self.hid_sample_fn(h_mean).sample()
-        return pre_act_h, h_mean, h_sample
+        x_sample = self.apply_modules(x_mean, layer_name, ['sample'])
+        return x_mean, x_sample
+
+    def sample_h_given_v(self, v):
+        # get hidden output
+        pre_act_h = self.apply_modules(v, 'forward_layer', ['hidden'])
+        return (pre_act_h,) + self.sample(pre_act_h, 'forward_layer')
 
     def sample_v_given_h(self, h):
-        # apply each non-pooling module
+        # get hidden_transpose output
         pre_act_v = self.apply_modules(h, 'reconstruct_layer', ['hidden_transpose'])
-        v_mean = self.apply_modules(pre_act_v, 'reconstruct_layer', ['activation'])
-        # sample from v_mean
-        if self.vis_sample_fn:
-            v_sample = self.vis_sample_fn(v_mean).sample()
-        else:
-            v_sample = v_mean
-        return pre_act_v, v_mean, v_sample
+        return (pre_act_v,) + self.sample(pre_act_v, 'reconstruct_layer')
 
     def sample_h_given_vt(self, v, t):
-        # apply each module, add t instead of pooling (unless rf_pool)
+        # get hidden output
         pre_act_h = self.apply_modules(v, 'forward_layer', ['hidden'])
+        # repeat t to add to pre_act_h
         shape = [v_shp//t_shp for (v_shp,t_shp) in zip(pre_act_h.shape,t.shape)]
         t = functions.repeat(t, shape)
-        h_mean = self.apply_modules(torch.add(pre_act_h, t), 'forward_layer',
-                                   ['activation'])
-        # apply pool module if rf_pool type
-        pool_module = self.get_modules('forward_layer', ['pool'])[0]
-        if torch.typename(pool_module).find('layers') >= 0:
-            _, h_mean, h_sample = pool_module.apply(h_mean)
-        else:
-            h_sample = h_mean
-        # sample from h_mean
-        if self.hid_sample_fn:
-            h_sample = self.hid_sample_fn(h_mean).sample()
-        return pre_act_h, h_mean, h_sample
+        return (pre_act_h,) + self.sample(torch.add(pre_act_h, t), 'forward_layer')
 
     def gibbs_vhv(self, v_sample, k=1):
         for _ in range(k):
@@ -531,7 +533,7 @@ class RBM(Module):
         return -hWv - bv - ch
 
     def free_energy(self, v):
-        # reshape v_bias, hid_bias
+        # reshape v_bias
         v_dims = tuple([1 for _ in range(v.ndimension()-2)])
         v_bias = torch.reshape(self.v_bias, (1,-1) + v_dims)
         # get Wv_b
@@ -547,6 +549,143 @@ class RBM(Module):
             valid_v = iter(valid_v).next()[0]
         return torch.div(torch.mean(self.free_energy(v)),
                          torch.mean(self.free_energy(valid_v)))
+
+    def log_prob(self, v, log_Z=None, **kwargs):
+        """
+        Log probability of data
+
+        Parameters
+        ----------
+        v : torch.Tensor or torch.utils.data.dataloader.DataLoader
+            data to compute log probability
+        log_Z : float or None
+            log of the partition function over model (calculated used ais)
+            [default: None, log_Z computed by passing kwargs to ais]
+
+        Returns
+        -------
+        log_p_v : float
+            log probability of data
+
+        See also
+        --------
+        ais : compute log_Z of the model
+
+        References
+        ----------
+        (Salakhutdinov & Murray 2008)
+        """
+        # compute log_Z
+        if log_Z is None:
+            log_Z = self.ais(**kwargs)
+        # compute free energy data
+        if type(v) is torch.utils.data.dataloader.DataLoader:
+            n_batches = len(v)
+            # get mean free energy for each batch
+            fe = 0.
+            for data, _ in v:
+                fe += torch.mean(self.free_energy(data))
+        else: # get free energy for tensor input
+            n_batches = 1.
+            fe = torch.mean(self.free_energy(v))
+        # return log prob of data
+        return torch.div(fe, n_batches) - log_Z
+
+    def ais(self, m, beta, base_rate, base_log_part_fn=F.softplus):
+        """
+        Annealed Importance Sampling (AIS) for estimating log(Z) of model
+
+        Parameters
+        ----------
+        m : int
+            number of AIS runs to compute
+        beta : list or array-like
+            beta values in [0,1] for weighting distributions (see notes)
+        base_rate : torch.Tensor
+            visible biases for base model (zeros for uniform distribution)
+            with base_rate.shape == data[0,None].shape
+        base_log_part_fn : torch.nn.functional
+            log-partition function for visible units
+            [default: torch.nn.functional.softplus, i.e. binary units]
+
+        Returns
+        -------
+        log_Z_model : float
+            estimate of the log of the partition function for the model
+            (used in computing log probability of data)
+
+
+        See also
+        --------
+        log_prob : estimate log probability of data
+        base_rate : estimate base_rate for some binary data
+
+        References
+        ----------
+        (Salakhutdinov & Murray 2008)
+        """
+        # repeat base_rate m times
+        base_rate_m = functions.repeat(base_rate, (m,))
+        # reshape v_bias
+        v_dims = tuple([1 for _ in range(base_rate.ndimension()-2)])
+        v_bias = torch.reshape(self.v_bias, (1,-1) + v_dims)
+        # init log_pk (estimated log(Z_model/Z_base))
+        log_pk = torch.zeros(m)
+        # get v_0 from base_rate_m
+        v_k = self.sample(base_rate_m,'reconstruct_layer')[1]
+        # get log(p_0(v_1))
+        log_pk -= self._ais_free_energy(v_k, beta[0], base_rate)
+        # get log(p_k(v_k) and log(p_k(v_k+1)) for each beta in (0, 1)
+        for b in beta[1:-1]:
+            # get log(p_k(v_k))
+            log_pk += self._ais_free_energy(v_k, b, base_rate)
+            # sample h
+            Wv_b = self.apply_modules(v_k,'forward_layer',['hidden'])
+            h = self.sample(Wv_b * b, 'forward_layer')[1]
+            # sample v_k+1
+            pre_act_v = self.apply_modules(h,'reconstruct_layer',['hidden_transpose'])
+            v_k = self.sample((1. - b) * base_rate_m + b * pre_act_v,
+                              'reconstruct_layer')[1]
+            # get log(p_k(v_k+1))
+            log_pk -= self._ais_free_energy(v_k, b, base_rate)
+        # get log(p_k(v_k))
+        log_pk += self._ais_free_energy(v_k, beta[-1], base_rate)
+        # get mean across m cases for log AIS ratio of Z_model/Z_base
+        r_AIS = torch.logsumexp(log_pk, 0) - np.log(m)
+        # get log_Z_base
+        base_h = torch.zeros_like(h[0,None])
+        log_Z_base = torch.add(torch.sum(base_log_part_fn(base_rate)),
+                               torch.sum(self.log_part_fn(base_h)))
+        # return estimated log_Z_model
+        log_Z_model = r_AIS + log_Z_base
+        return log_Z_model
+
+    def _ais_free_energy(self, v, beta, base_rate):
+        # reshape v_bias
+        v_dims = tuple([1 for _ in range(v.ndimension()-2)])
+        v_bias = torch.reshape(self.v_bias, (1,-1) + v_dims)
+        # get Wv_b
+        Wv_b = self.sample_h_given_v(v)[0]
+        # get vbias, hidden terms
+        base_term = (1. - beta) * torch.sum(torch.flatten(v * base_rate, 1), 1)
+        vbias_term = beta * torch.sum(torch.flatten(v * v_bias, 1), 1)
+        hidden_term = torch.sum(self.log_part_fn(beta * Wv_b).flatten(1), 1)
+        return base_term + vbias_term + hidden_term
+
+    def base_rate(self, dataloader, lp=5.):
+        """
+        Base-rate model (for RBMs)
+
+        (Salakhutdinov & Murray 2008)
+
+        NOTE: Currently only for binary data
+        """
+        b = torch.zeros_like(iter(dataloader).next()[0][0,None])
+        n_batches = len(dataloader)
+        for data, _ in dataloader:
+            b += torch.mean(data, 0)
+        p_b = (b + lp * n_batches) / (n_batches + lp * n_batches)
+        return torch.log(p_b) - torch.log(1. - p_b)
 
     def pseudo_likelihood(self, v):
         """
@@ -676,22 +815,23 @@ class RBM(Module):
         if optimizer:
             optimizer.step()
         # monitor loss
-        if type(monitor_fn) is dict:
-            monitor_kwargs = monitor_fn.copy()
-            fn = monitor_kwargs.pop('fn')
-            if 'v' not in monitor_kwargs:
-                monitor_kwargs.update({'v': input})
-            out = torch.mean(fn(**monitor_kwargs))
-        elif monitor_fn is not None:
-            out = monitor_fn(input, nv_mean)
-        else:
-            out = loss
+        with torch.no_grad():
+            if type(monitor_fn) is dict:
+                monitor_kwargs = monitor_fn.copy()
+                fn = monitor_kwargs.pop('fn')
+                if 'v' not in monitor_kwargs:
+                    monitor_kwargs.update({'v': input})
+                out = torch.mean(fn(**monitor_kwargs))
+            elif monitor_fn is not None:
+                out = monitor_fn(input, nv_mean)
+            else:
+                out = loss
         return out.item()
 
 class CRBM(RBM):
     """
     #TODO:WRITEME
-    """
+    """#TODO: Update to use apply_modules for activation and sample functions
     def __init__(self, top_down=None, y_activation_fn=None, y_sample_fn=None,
                  **kwargs):
         super(CRBM, self).__init__(**kwargs)
@@ -856,16 +996,17 @@ class CRBM(RBM):
         if optimizer:
             optimizer.step()
         # monitor loss
-        if type(monitor_fn) is dict:
-            monitor_kwargs = monitor_fn.copy()
-            fn = monitor_kwargs.pop('fn')
-            if 'v' not in monitor_kwargs:
-                monitor_kwargs.update({'v': input})
-            out = torch.mean(fn(**monitor_kwargs))
-        elif monitor_fn is not None:
-            out = monitor_fn(input, nv_mean)
-        else:
-            out = loss
+        with torch.no_grad():
+            if type(monitor_fn) is dict:
+                monitor_kwargs = monitor_fn.copy()
+                fn = monitor_kwargs.pop('fn')
+                if 'v' not in monitor_kwargs:
+                    monitor_kwargs.update({'v': input})
+                out = torch.mean(fn(**monitor_kwargs))
+            elif monitor_fn is not None:
+                out = monitor_fn(input, nv_mean)
+            else:
+                out = loss
         return out.item()
 
 class ssRBM(RBM):
