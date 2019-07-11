@@ -1,3 +1,6 @@
+import IPython.display
+from IPython.display import clear_output, display
+import matplotlib.pyplot as plt
 import numpy as np
 import scipy
 from scipy.io import loadmat
@@ -107,15 +110,29 @@ def param_search(fn, args, kwargs, param_name, bounds, Ns, multi=None):
     if multi is not None:
         assert bounds[0] != 0.
         param_space = [bounds[0] * pow(multi, i) for i in range(Ns)]
+        xscale = 'log'
     else:
         param_space = np.linspace(bounds[0], bounds[1], Ns)
-    print('Parameter search space: ', param_space)
+        xscale = 'linear'
+    print
     # for each value, update parameter and get cost
     cost = []
-    for param in param_space:
-        print('Parameter value: ', param)
+    for i, param in enumerate(param_space):
+        # display progress
+        clear_output(wait=True)
+        display('Parameter search space: %s' % str(param_space))
+        display('Parameter value: %g' % param)
+        plt.plot(param_space[:i], cost)
+        plt.xscale(xscale)
+        plt.show()
+        # get cost
         kwargs = set_deepattr(kwargs, param_name, param)
         cost.append(fn(*args, **kwargs))
+    # plot final cost
+    clear_output(wait=True)
+    plt.plot(param_space, cost)
+    plt.xscale(xscale)
+    plt.show()
     return cost
 
 def repeat(x, repeats):
