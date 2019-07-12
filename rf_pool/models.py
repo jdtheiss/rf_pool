@@ -2,8 +2,8 @@ import pickle
 
 import IPython.display
 from IPython.display import clear_output, display
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -528,8 +528,8 @@ class Model(nn.Module):
         # get weights reconstructed down if not first layer
         pre_layer_ids = self.pre_layer_ids(layer_id)
         if len(pre_layer_ids) > 0:
-            w[w < 0.] = 0.
-            w[w > 1.] = 1.
+            w = self.layers[layer_id].apply_modules(w,'reconstruct_layer',
+                                                    ['activation'])
             w = self.apply_layers(w, pre_layer_ids, forward=False)
         return visualize.plot_images(w, img_shape, figsize, cmap)
 
