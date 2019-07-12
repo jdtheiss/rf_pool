@@ -35,7 +35,7 @@ class Op(torch.nn.Module):
         return self.fn(*args, **input_kwargs)
 
 def sample_fn(u, distr, **kwargs):
-    return distr(probs=u, **kwargs).sample()
+    return distr(u, **kwargs).sample()
 
 def max_index(u):
     u_s = int(np.prod(u.shape[:-1]))
@@ -416,6 +416,28 @@ def poisson_pool(u, kernel_size, **kwargs):
     h_sample = torch.distributions.Poisson(h_mean).sample()
     p_mean = F.lp_pool2d(h_mean, 1, kernel_size, **kwargs)
     return p_mean, h_mean, h_sample
+
+def poisson_binomial_pool(u, kernel_size, **kwargs):
+    h_mean = torch.sigmoid(u)
+    h_sample = torch.distributions.Bernoulli(h_mean).sample()
+    # get probability of p(k=0) + ... + p(k=prod(kernel_size)//2-1)
+    p_k = torch.exp(F.lp_pool2d(torch.log(1. - h_mean), 1, kernel_size, **kwargs))
+    for k in range(1, np.prod(kernel_size)//2-1):
+        p_k += poisson_binomial_pmf(k, u, h_mean, kernel_size, **kwargs)
+    # return probability that at least half units are on
+    p_mean = 1. - p_k
+    return p_mean, h_mean, h_sample
+
+def poisson_binomial_pmf(k, u, h_mean, kernel_size, **kwargs):
+    # get p/(1-p)
+    exp_u = torch.exp(u)
+    # get p(k=0)
+    p_k = torch.exp(F.lp_pool2d(torch.log(1. - h_mean), 1, kernel_size, **kwargs))
+    # calculate p(k=k)
+    for i in range(k, 0, -1):
+        T_i = F.lp_pool2d(exp_u, i, kernel_size, **kwargs)
+        p_k += torch.pow(-1., i-1) * p_k * T_i
+    return torch.div(p_k, k)
 
 def bernoulli_pool(u, kernel_size, **kwargs):
     h_mean = torch.sigmoid(u)
