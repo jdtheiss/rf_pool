@@ -284,7 +284,7 @@ def set_deepattr(obj, path, value):
 def get_attributes(obj, keys, default=None):
     output = {}
     for key in keys:
-        if type(obj) is list and type(key) is int:
+        if type(key) is int:
             output.update({key: obj[key]})
         elif hasattr(obj, key):
             output.update({key: getattr(obj, key)})

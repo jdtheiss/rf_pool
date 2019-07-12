@@ -81,7 +81,7 @@ class Dataset(torch.utils.data.Dataset):
             return data
         output = []
         for i, d in enumerate(data):
-            d = functions.kwarg_fn([self, list, dict, __builtins__, np, torch],
+            d = functions.kwarg_fn([self,functions,list,dict,__builtins__,np,torch],
                                    d, **kwargs)
             # convert to numpy, Image
             d = self.to_numpy(d)
@@ -137,7 +137,7 @@ class FilesDataset(Dataset):
         data = []
         for file_name in self.data_info.keys():
             d = load_fn(file_name)
-            d = functions.kwarg_fn([self, list, dict, __builtins__, np, torch],
+            d = functions.kwarg_fn([self,functions,list,dict,__builtins__,np,torch],
                                    d, **kwargs)
             if load_transform:
                 d = load_transform(d)
@@ -426,16 +426,16 @@ class CrowdedDataset(Dataset):
             # sample target/flanker data
             target, target_record = self.sample_data(dataset, [target_label_n])
             flankers, flanker_record = self.sample_data(dataset, flanker_labels_n)
-            
+
             # create crowded stimuli
             if self.no_target:
                 target_input = np.zeros_like(target[0])
-            else: 
+            else:
                 target_input=target[0]
-                
+
             crowded_stimuli = stimuli.make_crowded_stimuli(target_input, flankers, **kwargs)
             self.data.append(crowded_stimuli)
-            
+
             if self.load_previous:
                 self.labels.append(self.label_map[int(dataset[target_label_n][1])])
             else:
