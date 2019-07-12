@@ -139,6 +139,21 @@ class Module(nn.Module):
         # set layer
         setattr(self, layer_name, layer)
 
+    def remove_layer(self, layer_name, module_name):
+        # get layer
+        layer = nn.Sequential()
+        if hasattr(self, layer_name):
+            orig_layer = getattr(self, layer_name)
+            mods = dict([(k, v) for k, v in orig_layer.named_children()
+                         if k != module_name])
+        else:
+            mods = {}
+        # set modules other than module_name
+        for key, value in mods.items():
+            layer.add_module(key, value)
+        # set layer
+        setattr(self, layer_name, layer)
+
     def transposed_fn(self, fn):
         # transposed conv
         if hasattr(fn, 'weight') and torch.typename(fn).find('conv') >= 0:
