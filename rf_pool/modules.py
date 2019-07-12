@@ -1,5 +1,5 @@
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -479,9 +479,9 @@ class RBM(Module):
         # sample from h_mean
         x_sample = self.apply_modules(x_mean, layer_name, ['sample'])
         # get pooling h_mean, h_sample if rf_pool
-        pool_output = self.apply_module(x_mean, layer_name, 'pool')
-        if len(pool_output) == 3:
-            x_mean, x_sample = pool_output[1:]
+        pool_module = self.get_modules(layer_name, ['pool'])
+        if len(pool_module) > 0 and torch.typename(pool_module[0]).find('layers') > 0:
+            x_mean, x_sample = pool_module[0].apply(x_mean)[1:]
         return x_mean, x_sample
 
     def sample_h_given_v(self, v):
@@ -589,7 +589,7 @@ class RBM(Module):
             n_batches = 1.
             fe = torch.mean(self.free_energy(v))
         # return log prob of data
-        return torch.div(fe, n_batches) - log_Z
+        return -torch.div(fe, n_batches) - log_Z
 
     def ais(self, m, beta, base_rate, base_log_part_fn=F.softplus):
         """
@@ -602,7 +602,7 @@ class RBM(Module):
         beta : list or array-like
             beta values in [0,1] for weighting distributions (see notes)
         base_rate : torch.Tensor
-            visible biases for base model (zeros for uniform distribution)
+            visible biases for base model (natural parameter of exponential family)
             with base_rate.shape == data[0,None].shape
         base_log_part_fn : torch.nn.functional
             log-partition function for visible units
@@ -683,7 +683,7 @@ class RBM(Module):
         b = torch.zeros_like(iter(dataloader).next()[0][0,None])
         n_batches = len(dataloader)
         for data, _ in dataloader:
-            b += torch.mean(data, 0)
+            b += torch.mean(data, 0, keepdim=True)
         p_b = (b + lp * n_batches) / (n_batches + lp * n_batches)
         return torch.log(p_b) - torch.log(1. - p_b)
 
