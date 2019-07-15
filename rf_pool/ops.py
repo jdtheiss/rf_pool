@@ -445,7 +445,7 @@ def bernoulli_pool(u, kernel_size, **kwargs):
     p_mean = torch.exp(F.lp_pool2d(torch.log(h_mean), 1, kernel_size, **kwargs))
     return p_mean, h_mean, h_sample
 
-def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
+def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=None, mask_thr=1e-6,
             return_indices=False, retain_shape=False, **kwargs):
     """
     Receptive field pooling
@@ -462,12 +462,12 @@ def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
         (n_kernels, h, w) (see lattice_utils)
         kernels are element-wise multiplied with (u+t) prior to pooling
         [default: None, applies pooling over blocks]
-    pool_type : string
+    pool_type : string or function
         type of pooling ('prob','stochastic','div_norm','max','average','sum')
-        [default: 'max']
-    kernel_size : int or tuple
+        [default: None]
+    kernel_size : int or tuple or None
         size of subsampling blocks in hidden layer connected to pooling units
-        [default: 2]
+        [default: None]
     mask_thr : float
         threshold used to binarize rfs as mask input for pooling operations
         (overridden if 'mask' in kwargs)
@@ -543,7 +543,7 @@ def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
     if top_down:
         u = torch.add(u, functions.repeat(t, (1,1,b_w,b_h)))
     # get blocks
-    if not receptive_fields:
+    if not receptive_fields and type(pool_type) is str:
         # add bottom-up and top-down
         b = []
         for r in xrange(b_w):
@@ -599,13 +599,8 @@ def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
             h_mean = torch.max(h_mean, -3)[0]
             h_sample = torch.max(h_sample, -3)[0]
 
-    # custom pool_type
-    elif type(pool_type) is not str:
-        p_mean, h_mean, h_sample = pool_fn(u, kernel_size, **kwargs)
-        return p_mean, h_mean, h_sample
-
     # pooling across blocks
-    elif rfs is None:
+    elif type(pool_type) is str:
         # init h_mean, p_mean
         p_mean = torch.zeros_like(u)
         h_mean = torch.zeros_like(u)
@@ -619,11 +614,17 @@ def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=2, mask_thr=1e-6,
                 h_mean[:, :, r::b_h, c::b_w] = h_mean_b[:,:,:,:,(r*b_h) + c]
                 h_sample[:, :, r::b_h, c::b_w] = h_sample_b[:,:,:,:,(r*b_h) + c]
 
+    # function pool_type
+    elif type(pool_type) is not str:
+        p_mean, h_mean, h_sample = pool_fn(u, kernel_size, **kwargs)
+
+    # throw exception
     else:
         raise Exception('rfs type not understood')
 
-    # max pool across blocks
-    if (b_h > 1 or b_w > 1):
+    # kernel_size and receptive fields or blocks
+    if kernel_size is not None and (receptive_fields or type(pool_type) is str):
+        # max pool across blocks
         if retain_shape:
             kernel_size = (1, b_h, b_w)
             p_mean = F.max_pool3d(p_mean, kernel_size,
