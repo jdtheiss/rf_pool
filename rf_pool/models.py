@@ -114,15 +114,16 @@ class Model(nn.Module):
             layers.append(self.layers[layer_id])
         return layers
 
-    def apply_layers(self, input, layer_ids, forward=True):
-        if not forward:
-            layer_ids.reverse()
+    def apply_layers(self, input, layer_ids=[], output_layer=None, forward=True,
+                     **kwargs):
+        if len(layer_ids) == 0 and output_layer is not None:
+            layer_ids = self.get_layer_ids(output_layer, forward=forward)
         layers = self.get_layers(layer_ids)
         for layer in layers:
             if forward:
-                input = layer.forward(input)
+                input = layer.apply_modules(input, 'forward_layer', **kwargs)
             else:
-                input = layer.reconstruct(input)
+                input = layer.apply_modules(input, 'reconstruct_layer', **kwargs)
         return input
 
     def forward(self, input):
@@ -137,31 +138,15 @@ class Model(nn.Module):
             input = self.layers[layer_id].reconstruct(input)
         return input
 
-    def pre_layer_ids(self, layer_id):
-        # get layer_ids prior to layer_id
-        layer_id = str(layer_id)
-        pre_layer_ids = []
-        for pre_layer_id, _ in self.layers.named_children():
-            if pre_layer_id != layer_id:
-                pre_layer_ids.append(pre_layer_id)
-            else:
-                break
-        return pre_layer_ids
-
-    def post_layer_ids(self, layer_id):
-        # get layer_ids after layer_id
-        layer_id = str(layer_id)
-        # append layer ids starting at end, then reverse post_layer_ids
-        layer_ids = [name for name, _ in self.layers.named_children()]
-        layer_ids.reverse()
-        post_layer_ids = []
-        for post_layer_id in layer_ids:
-            if post_layer_id != layer_id:
-                post_layer_ids.append(post_layer_id)
-            else:
-                break
-        post_layer_ids.reverse()
-        return post_layer_ids
+    def get_layer_ids(self, layer_id=None, forward=True):
+        layer_ids = [id for id, _ in self.layers.named_children()]
+        if not forward:
+            layer_ids.reverse()
+        if layer_id is not None:
+            layer_id = str(layer_id)
+            cnt = [n+1 for n, id in enumerate(layer_ids) if id == layer_id][0]
+            layer_ids = layer_ids[:cnt]
+        return layer_ids
 
     def save_model(self, filename, extras={}):
         if type(extras) is not dict:
@@ -291,7 +276,7 @@ class Model(nn.Module):
         # if layer-wise training, ensure layer_id str and get pre_layer_ids
         if options.get('layer_id') is not None:
             layer_id = str(options.get('layer_id'))
-            pre_layer_ids = self.pre_layer_ids(layer_id)
+            pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
         # set label parameter gradients to false
         if options.get('label_params'):
             label_params = options.get('label_params')
@@ -526,7 +511,8 @@ class Model(nn.Module):
             raise Exception('attribute ' + field + ' not found')
         w = getattr(self.layers[layer_id], field).clone().detach()
         # get weights reconstructed down if not first layer
-        pre_layer_ids = self.pre_layer_ids(layer_id)
+        pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
+        pre_layer_ids.reverse()
         if len(pre_layer_ids) > 0:
             w = self.layers[layer_id].apply_modules(w,'reconstruct_layer',
                                                     ['activation'])
@@ -539,7 +525,7 @@ class Model(nn.Module):
         #TODO:WRITEME
         """
         layer_id = str(layer_id)
-        pre_layer_ids = self.pre_layer_ids(layer_id)
+        pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
         # get persistent if hasattr
         if hasattr(self.layers[layer_id], 'persistent'):
             neg = self.layers[layer_id].persistent
@@ -554,6 +540,7 @@ class Model(nn.Module):
                 else:
                     neg = self.layers[layer_id].forward(neg)
                     neg = self.layers[layer_id].reconstruct(neg)
+            pre_layer_ids.reverse()
             neg = self.apply_layers(neg, pre_layer_ids, forward=False)
         # reshape, permute for plotting
         if img_shape:
@@ -584,7 +571,7 @@ class Model(nn.Module):
             'No rf_pool layer found.'
         )
         # get layers before layer id
-        pre_layer_ids = self.pre_layer_ids(layer_id)
+        pre_layer_ids = self.get_layer_ids(layer_id)[-1]
         # apply forward up to layer id
         layer_input = self.apply_layers(input.detach(), pre_layer_ids)
         # get modules before pool
@@ -611,8 +598,7 @@ class Model(nn.Module):
             'No rf_pool layer found.'
         )
         # get layers before layer id
-        pre_layer_ids = self.pre_layer_ids(layer_id)
-        # layer_ids = pre_layer_ids + [layer_id]
+        pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
         pre_layer_ids.reverse()
         # for each layer apply transpose convolution of ones and unpooling
         rfs = torch.unsqueeze(rf_layer.rfs, 1).detach()
@@ -637,7 +623,7 @@ class Model(nn.Module):
         return heatmap.squeeze(1)
 
     def image_space_mu_sigma(self, layer_id):
-        layers = self.get_layers(self.pre_layer_ids(layer_id))
+        layers = self.get_layers(self.get_layer_ids(layer_id)[:-1])
         layers.reverse()
         mu, sigma = self.layers[layer_id].forward_layer.pool.get(['mu','sigma'])
         mu = mu + self.layers[layer_id].forward_layer.hidden.kernel_size[0] // 2
@@ -682,7 +668,7 @@ class DeepBeliefNetwork(Model):
 
     def posterior(self, layer_id, input, top_down_input=None, k=1):
         # get layer_ids
-        layer_ids = list(self.layers.keys())
+        layer_ids = self.get_layer_ids()
         # get output of n_layers-1
         top_layer_input = self.apply_layers(input, layer_ids[:-1])
         # gibbs sample top layer
@@ -692,11 +678,10 @@ class DeepBeliefNetwork(Model):
         else:
             top_down = self.layers[layer_ids[-1]].gibbs_vhv(top_layer_input, k=k)[3]
         # reconstruct down to layer_id
-        post_layer_ids = self.post_layer_ids(layer_id)
-        layer_top_down = self.apply_layers(top_down, post_layer_ids[:-1],
-                                           forward=False)
+        post_layer_ids = self.get_layer_ids(layer_id, forward=False)[1:]
+        layer_top_down = self.apply_layers(top_down, post_layer_ids, forward=False)
         # get layer_id input
-        pre_layer_ids = self.pre_layer_ids(layer_id)
+        pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
         layer_input = self.apply_layers(input, pre_layer_ids)
         # sample h given input, top_down
         return self.layers[layer_id].sample_h_given_vt(layer_input, layer_top_down)
