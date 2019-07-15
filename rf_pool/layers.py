@@ -33,11 +33,22 @@ class Layer(torch.nn.Module):
         return self.forward(*args, **kwargs)
 
     def apply(self, *args, **kwargs):
+        # get output type from kwargs
+        output_type = functions.pop_attributes(kwargs, ['output']).get('output')
         # get inputs for rf_pool
         input_kwargs = functions.get_attributes(self, self.input_keys)
         input_kwargs.update(kwargs)
         # apply rf_pool
-        return ops.rf_pool(*args, **input_kwargs)
+        output = ops.rf_pool(*args, **input_kwargs)
+        # return output by type
+        if output_type == 'all':
+            return output
+        elif output_type == 'h_mean':
+            return output[1]
+        elif output_type == 'h_sample':
+            return output[2]
+        else: # default p_mean
+            return output[0]
 
     def set(self, **kwargs):
         functions.set_attributes(self, **kwargs)
@@ -185,7 +196,7 @@ class RF_Pool(Layer):
         mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
         self.rfs = self.update_rfs(mu, sigma)
         # return pooling outputs
-        return self.apply(u, **kwargs)[0]
+        return self.apply(u, **kwargs)
 
 class RF_Uniform(Layer):
     """
@@ -211,7 +222,7 @@ class RF_Uniform(Layer):
        mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
        self.rfs = self.update_rfs(mu, sigma)
        # return pooling outputs
-       return self.apply(u, **kwargs)[0]
+       return self.apply(u, **kwargs)
 
 class RF_Random(Layer):
     """
@@ -238,7 +249,7 @@ class RF_Random(Layer):
        mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
        self.rfs = self.update_rfs(mu, sigma)
        # return pooling outputs
-       return self.apply(u, **kwargs)[0]
+       return self.apply(u, **kwargs)
 
 class RF_Window(Layer):
     """
@@ -255,7 +266,7 @@ class RF_Window(Layer):
         mu, sigma = self.update_mu_sigma(delta_mu, None, priority_map)
         self.rfs = self.update_rfs(mu, None)
         # return pooling outputs
-        return self.apply(u, **kwargs)[0]
+        return self.apply(u, **kwargs)
 
 class RF_Same(Layer):
     """
@@ -266,7 +277,7 @@ class RF_Same(Layer):
         super(RF_Same, self).__init__(mu, sigma, img_shape, lattice_fn, **kwargs)
 
     def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
-                **kwargs):
+                output='h_mean', **kwargs):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
@@ -275,7 +286,7 @@ class RF_Same(Layer):
         # return h_mean output
         pool_kwargs = functions.pop_attributes(kwargs, ['kernel_size',
                                                         'return_indices'])
-        h_mean = self.apply(u, **kwargs)[1]
+        h_mean = self.apply(u, output=output, **kwargs)
         # update pool_kwargs if None
         if pool_kwargs.get('kernel_size') is None:
             pool_kwargs.update({'kernel_size': self.kernel_size})
@@ -304,7 +315,7 @@ class RF_Squeeze(Layer):
         # get p_mean without subsampling
         pool_kwargs = functions.pop_attributes(kwargs, ['kernel_size',
                                                         'return_indices'])
-        p_mean = self.apply(u, **kwargs)[0]
+        p_mean = self.apply(u, **kwargs)
         # get squeezed coordinates
         coords = self.get_squeezed_coords(mu, sigma)
         # crop
@@ -335,8 +346,8 @@ class RF_CenterCrop(Layer):
         # update rfs, mu, sigma
         mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
         self.rfs = self.update_rfs(mu, sigma)
-        # get pooled outputs
-        p_mean = self.apply(u, **kwargs)[0]
+        # get outputs
+        p_mean = self.apply(u, **kwargs)
         # get coordinates of center size
         center = torch.max(torch.tensor(self.img_shape) // 2 - 1,
                            torch.tensor([0,0]))
