@@ -195,33 +195,31 @@ class Module(nn.Module):
                 modules.append(module)
         return modules
 
-    def apply_modules(self, input, layer_name, module_names):
+    def apply_modules(self, input, layer_name, module_names=[], output_module=None,
+                      **kwargs):
         layer = getattr(self, layer_name)
+        if len(module_names) == 0 and output_module is not None:
+            module_names = self.get_module_names(layer_name, output_module)
         for i, (name, module) in enumerate(layer.named_children()):
             if name in module_names:
                 if i==0 and layer == self.forward_layer:
                     if self.input_shape:
                         input = torch.reshape(input, self.input_shape)
-                input = module(input)
-                if i==len(layer) and layer == self.reconstruct_layer:
-                    if self.reconstuct_shape:
+                if i == len(module_names)-1:
+                    input = module(input, **kwargs)
+                else:
+                    input = module(input)
+                if i==len(layer)-1 and layer == self.reconstruct_layer:
+                    if self.reconstruct_shape:
                         input = torch.reshape(input, self.reconstruct_shape)
         return input
-
-    def apply_module(self, input, layer_name, module_name, **kwargs):
-        # use apply function of module with kwargs
-        module = self.get_modules(layer_name, [module_name])
-        if len(module) > 0:
-            output = module[0].apply(input, **kwargs)
-        else:
-            output = input
-        return output
 
     def forward(self, input):
         if self.input_shape:
             self.reconstruct_shape = input.shape
             input = torch.reshape(input, self.input_shape)
-        return self.forward_layer(input)
+        output = self.forward_layer(input)
+        return output
 
     def reconstruct(self, input):
         output = self.reconstruct_layer(input)
@@ -261,19 +259,99 @@ class Module(nn.Module):
             outputs.append(output)
         return torch.mul(loss_fn(*outputs, **kwargs), cost)
 
-    def sparsity(self, input, target, cost=1., module_name=None, l2_reg=0.):
-        # (SparseRBM; Lee et al., 2008)
+    def sparsity(self, input, module_name=None, type='cross_entropy', cost=1.,
+                 decay=0., target=None, epsilon=None, kernel_size=None, **kwargs):
+        """
+        Encourage sparsity by taking gradient of constraint function
+
+        Parameters
+        ----------
+        input : torch.Tensor
+            input tensor to apply sparsity constraint
+        module_name : string or None
+            output module for passing input through forward layer
+            [default: None, no modules are applied to the input]
+        type : string
+            type of sparsity constraint: 'cross_entropy' (Lee et al., 2008),
+            'log_sum' (Ji et al., 2014), 'lasso', 'group_lasso' (Yuan & Lin, 2006)
+            [default: 'cross_entropy']
+        cost : float
+            sparsity-cost determining how much the constraint is applied to weights
+            [default: 1.]
+        decay : float
+            decay of running average [default: 0., only current input is used]
+        target : float or None, optional
+            sparsity target for type='cross_entropy'
+        epsilon : float or None, optional
+            sparsity value for type='log_sum'
+        kernel_size : tuple or None, optional
+            kernel size for type='group_lasso'
+        **kwargs
+            keyword arguments for apply_modules method if module_name is not None
+
+        Returns
+        -------
+        sparse_cost : float
+            scalar value of sparsity constraint function
+
+        Notes
+        -----
+        The sparsity constraint function is applied to input (after optionally
+        applying modules) and multiplied by the sparsity-cost. This value is then
+        used to obtain the gradients with respect to all applicable parameters.
+
+        Functions used for different types (q is mean of input across batch dim):
+        'cross_entropy': sum(-target * log(q) - (1. - target) * log(1. - q))
+        'log_sum': sum(log(1. + abs(q) / epsilon))
+        'lasso': sum(abs(q))
+        'group_lasso': sum(sqrt(prod(kernel_size)) * sqrt(sum_kernel(q**2)))
+        """
+        # get activity
         if module_name:
-            module_names = self.get_module_names('forward_layer', module_name)
-            activity = self.apply_modules(input, 'forward_layer', module_names)
+            activity = self.apply_modules(input, 'forward_layer',
+                                          output_module=module_name, **kwargs)
         else:
             activity = input
-        q = torch.mean(activity.transpose(1,0).flatten(1), -1)
-        p = torch.as_tensor(target, dtype=activity.dtype)
-        sparse_cost =  q - p
+        # get mean activity
+        q = torch.mean(activity, 0, keepdim=True)
+        # decay running average
+        if not hasattr(self, 'q'):
+            self.q = q
+        else:
+            self.q = decay * self.q.detach() + (1. - decay) * q
+        # switch based on type
+        if type == 'cross_entropy':
+            target = torch.tensor(target, dtype=self.q.dtype)
+            sparse_cost = torch.sum(torch.sub(-target * torch.log(self.q),
+                                              (1.-target) * torch.log(1.-self.q)))
+        elif type == 'log_sum':
+            epsilon = torch.tensor(epsilon, dtype=self.q.dtype)
+            sparse_cost = torch.sum(torch.log(1. + torch.abs(self.q) / epsilon))
+        elif type == 'lasso':
+            sparse_cost = torch.sum(torch.abs(self.q))
+        elif type == 'group_lasso':
+            p = torch.prod(torch.tensor(kernel_size, dtype=self.q.dtype))
+            g = torch.sqrt(F.lp_pool2d(torch.pow(self.q, 2.), 1, kernel_size))
+            sparse_cost = torch.sum(torch.mul(torch.sqrt(p), g))
+        else:
+            raise Exception('Unknown sparsity constraint type.')
         sparse_cost.mul_(cost)
-        self.h_bias.grad += sparse_cost
-        self.hidden_weight.grad += (l2_reg * self.hidden_weight)
+        sparse_cost.backward()
+        return sparse_cost.item()
+
+    def sparseness(self, input, module_name=None, **kwargs):
+        # equation from Hoyer (2004) used in Ji et al. (2014)
+        with torch.no_grad():
+            if module_name:
+                activity = self.apply_modules(input, 'forward_layer',
+                                              output_module=module_name, **kwargs)
+            else:
+                activity = input
+            n = torch.tensor(torch.numel(activity), dtype=activity.dtype)
+            l1_l2 = torch.div(torch.sum(torch.abs(activity)),
+                              torch.sqrt(torch.sum(torch.pow(activity, 2))))
+            sqrt_n = torch.sqrt(n)
+        return (sqrt_n - l1_l2) / (sqrt_n - 1)
 
     def show_weights(self, field='hidden_weight', img_shape=None,
                      figsize=(5, 5), cmap=None):
@@ -391,10 +469,10 @@ class RBM(Module):
         functions to apply in forward pass (see Notes)
     reconstruct_layer : torch.nn.Sequential
         functions to apply in reconstruct pass (see Notes)
-    vis_activation_fn : torch.nn.modules.activation
+    vis_activation : torch.nn.modules.activation
         activation function to apply in reconstruct pass to obtain visible unit
         mean field estimates
-    vis_sample_fn : torch.distributions or None
+    vis_sample : torch.distributions or None
         function used for sampling from visible unit mean field estimates
     hid_sample_fn : torch.distributions or None
         function used for sampling from hidden unit mean field estimates
@@ -445,40 +523,35 @@ class RBM(Module):
     reconstruct_layer = torch.nn.Sequential(
         (unpool): unpool,
         (hidden_transpose): hidden_transpose,
-        (activation): vis_activation_fn
+        (activation): vis_activation
     )
     where unpool is nn.MaxUnpool2d if pool.return_indices = True or
     nn.UpSample(scale_factor=pool.kernel_size) if hasattr(pool, 'kernel_size')
     and nn.Sequential otherwise, hidden_transpose is the transposed operation
-    of hidden, and vis_activation_fn is an input parameter at initialization.
+    of hidden, and vis_activation is an input parameter at initialization.
     """
-    def __init__(self, hidden=None, activation=None, pool=None, dropout=None,
-                 vis_activation_fn=None, vis_sample_fn=None,
-                 hid_sample_fn=None, log_part_fn=F.softplus,
-                 input_shape=None):
+    def __init__(self, hidden=None, activation=None, pool=None, sample=None,
+                 dropout=None, vis_activation=None, vis_sample=None,
+                 log_part_fn=F.softplus, input_shape=None):
         super(RBM, self).__init__(input_shape)
-        self.vis_activation_fn = vis_activation_fn
-        self.vis_sample_fn = vis_sample_fn
-        self.hid_activation_fn = activation
-        self.hid_sample_fn = hid_sample_fn
         self.log_part_fn = log_part_fn
         # wrap sample functions in ops.Op
-        if torch.typename(self.vis_sample_fn).startswith('torch.distributions'):
-            self.vis_sample_fn = ops.Op(ops.sample_fn, distr=self.vis_sample_fn)
-        if torch.typename(self.hid_sample_fn).startswith('torch.distributions'):
-            self.hid_sample_fn = ops.Op(ops.sample_fn, distr=self.hid_sample_fn)
+        if torch.typename(vis_sample).startswith('torch.distributions'):
+            vis_sample = ops.Op(ops.sample_fn, distr=vis_sample)
+        if torch.typename(sample).startswith('torch.distributions'):
+            sample = ops.Op(ops.sample_fn, distr=sample)
         # initialize persistent
         self.persistent = None
         # make forward layer
         self.make_layer('forward_layer', hidden=hidden, activation=activation,
-                        pool=pool, sample=self.hid_sample_fn, dropout=dropout)
+                        pool=pool, sample=sample, dropout=dropout)
         # init weights
         self.init_weights(pattern='weight', fn=lambda x: 0.01 * torch.randn_like(x))
         # make reconstruct layer
         self.make_layer('reconstruct_layer', transpose=True, pool=pool,
                         hidden=hidden)
-        self.update_layer('reconstruct_layer', activation=self.vis_activation_fn,
-                          sample=self.vis_sample_fn)
+        self.update_layer('reconstruct_layer', activation=vis_activation,
+                          sample=vis_sample)
         # init biases
         self.init_weights(pattern='bias', fn=torch.zeros_like)
         # link parameters to self
@@ -488,20 +561,30 @@ class RBM(Module):
         self.v_bias = self.hidden_transpose_bias
         self.h_bias = self.hidden_bias
 
+    def hidden_shape(self, input_shape):
+        if len(input_shape) == 4:
+            v_shp = torch.tensor(input_shape[-2:]).numpy()
+            W_shp = torch.tensor(self.hidden_weight.shape[-2:]).numpy()
+            img_shape = tuple(v_shp - W_shp + 1)
+            hidden_shape = (input_shape[0], self.hidden_weight.shape[0]) + img_shape
+        else:
+            hidden_shape = (input_shape[0], self.hidden_weight.shape[1])
+        return hidden_shape
+
     def sample(self, x, layer_name):
         # get activation
         x_mean = self.apply_modules(x, layer_name, ['activation'])
-        # sample from h_mean
+        # sample from x_mean
         x_sample = self.apply_modules(x_mean, layer_name, ['sample'])
-        # get pooling h_mean, h_sample if rf_pool
+        # get pooling x_mean, x_sample if rf_pool
         pool_module = self.get_modules(layer_name, ['pool'])
         if len(pool_module) > 0 and torch.typename(pool_module[0]).find('layers') > 0:
-            x_mean, x_sample = pool_module[0].apply(x_mean)[1:]
+            x_mean, x_sample = pool_module[0].apply(x_mean, output='all')[1:]
         return x_mean, x_sample
 
     def sample_h_given_v(self, v):
         # get hidden output
-        pre_act_h = self.apply_modules(v, 'forward_layer', ['hidden'])
+        pre_act_h = self.apply_modules(v, 'forward_layer', output_module='hidden')
         return (pre_act_h,) + self.sample(pre_act_h, 'forward_layer')
 
     def sample_v_given_h(self, h):
@@ -511,7 +594,7 @@ class RBM(Module):
 
     def sample_h_given_vt(self, v, t):
         # get hidden output
-        pre_act_h = self.apply_modules(v, 'forward_layer', ['hidden'])
+        pre_act_h = self.apply_modules(v, 'forward_layer', output_module='hidden')
         # repeat t to add to pre_act_h
         shape = [v_shp//t_shp for (v_shp,t_shp) in zip(pre_act_h.shape,t.shape)]
         t = functions.repeat(t, shape)
@@ -539,7 +622,7 @@ class RBM(Module):
         # detach h from graph
         h = h.detach()
         # get Wv
-        Wv = self.apply_modules(v, 'forward_layer', ['hidden'])
+        Wv = self.apply_modules(v, 'forward_layer', output_module='hidden')
         Wv = Wv - h_bias
         # get hWv, bv, ch
         hWv = torch.sum(torch.mul(h, Wv).flatten(1), 1)
@@ -552,7 +635,7 @@ class RBM(Module):
         v_dims = tuple([1 for _ in range(v.ndimension()-2)])
         v_bias = torch.reshape(self.v_bias, (1,-1) + v_dims)
         # get Wv_b
-        Wv_b = self.sample_h_given_v(v)[0]
+        Wv_b = self.apply_modules(v, 'forward_layer', output_module='hidden')
         # get vbias, hidden terms
         vbias_term = torch.flatten(v * v_bias, 1)
         vbias_term = torch.sum(vbias_term, 1)
@@ -655,7 +738,7 @@ class RBM(Module):
             # get log(p_k(v_k))
             log_pk += self._ais_free_energy(v_k, b, base_rate)
             # sample h
-            Wv_b = self.apply_modules(v_k,'forward_layer',['hidden'])
+            Wv_b = self.apply_modules(v_k,'forward_layer',output_module='hidden')
             h = self.sample(Wv_b * b, 'forward_layer')[1]
             # sample v_k+1
             pre_act_v = self.apply_modules(h,'reconstruct_layer',['hidden_transpose'])
@@ -795,7 +878,7 @@ class RBM(Module):
                     if persistent_lr is not None:
                         optimizer.param_groups[-1].update({'lr': persistent_lr})
             # dropout
-            ph_sample = self.apply_modules(ph_sample, 'forward_layer', ['dropout'])
+            ph_sample = self.apply_modules(ph_sample,'forward_layer',['dropout'])
             # negative phase
             [
                 pre_act_nv, nv_mean, nv_sample, pre_act_nh, nh_mean, nh_sample
@@ -825,6 +908,7 @@ class RBM(Module):
             if kwargs.get('sparsity').get('module_name'):
                 self.sparsity(input, **kwargs.get('sparsity'))
             else:
+                ph_mean = self.sample_h_given_v(input)[1]
                 self.sparsity(ph_mean, **kwargs.get('sparsity'))
         # update parameters
         if optimizer:
@@ -832,11 +916,12 @@ class RBM(Module):
         # monitor loss
         with torch.no_grad():
             if type(monitor_fn) is dict:
+                monitor_args = []
                 monitor_kwargs = monitor_fn.copy()
                 fn = monitor_kwargs.pop('fn')
-                if 'v' not in monitor_kwargs:
-                    monitor_kwargs.update({'v': input})
-                out = torch.mean(fn(**monitor_kwargs))
+                if 'input' not in monitor_kwargs:
+                    monitor_args = [input]
+                out = torch.mean(fn(*monitor_args, **monitor_kwargs))
             elif monitor_fn is not None:
                 out = monitor_fn(input, nv_mean)
             else:
@@ -860,7 +945,7 @@ class CRBM(RBM):
         self.make_layer('reconstruct_layer', top_down=top_down)
         self.update_layer('reconstruct_layer', transpose=True,
                           pool=kwargs.get('pool'), hidden=kwargs.get('hidden'))
-        self.update_layer('reconstruct_layer', activation=self.vis_activation_fn)
+        self.update_layer('reconstruct_layer', activation=vis_activation)
         # init biases
         self.init_weights(pattern='bias', fn=torch.zeros_like)
         # remove top_down_bias
@@ -925,7 +1010,7 @@ class CRBM(RBM):
         # detach h from graph
         h = h.detach()
         # get Wv, Uy
-        Wv = self.apply_modules(v, 'forward_layer', ['hidden'])
+        Wv = self.apply_modules(v, 'forward_layer', output_module='hidden')
         Uy = self.apply_modules(y, 'reconstruct_layer', ['top_down'])
         Wv = Wv - h_bias
         # get hWv, hUy, bv, ch, dy
@@ -985,8 +1070,8 @@ class CRBM(RBM):
             if self.persistent is not None:
                 self.hidden_weight.sub_(self.persistent_weights)
         # compute loss, pass backward through gradients
-        loss = torch.sub(torch.mean(self.free_energy(input, top_down)),
-                         torch.mean(self.free_energy(nv_sample, ny_sample)))
+        loss = torch.sub(torch.mean(self.free_energy(input)),
+                         torch.mean(self.free_energy(nv_sample)))
         loss.backward()
         # update persistent weights
         with torch.no_grad():
@@ -1006,6 +1091,7 @@ class CRBM(RBM):
             if kwargs.get('sparsity').get('module_name'):
                 self.sparsity(input, **kwargs.get('sparsity'))
             else:
+                ph_mean = self.sample_h_given_v(input)[1]
                 self.sparsity(ph_mean, **kwargs.get('sparsity'))
         # update parameters
         if optimizer:
@@ -1013,11 +1099,12 @@ class CRBM(RBM):
         # monitor loss
         with torch.no_grad():
             if type(monitor_fn) is dict:
+                monitor_args = []
                 monitor_kwargs = monitor_fn.copy()
                 fn = monitor_kwargs.pop('fn')
-                if 'v' not in monitor_kwargs:
-                    monitor_kwargs.update({'v': input})
-                out = torch.mean(fn(**monitor_kwargs))
+                if 'input' not in monitor_kwargs:
+                    monitor_args = [input]
+                out = torch.mean(fn(*monitor_args, **monitor_kwargs))
             elif monitor_fn is not None:
                 out = monitor_fn(input, nv_mean)
             else:
