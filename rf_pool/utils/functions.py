@@ -127,7 +127,7 @@ def param_search(fn, args, kwargs, param_name, bounds, Ns, multi=None):
         plt.show()
         # get cost
         kwargs = set_deepattr(kwargs, param_name, param)
-        cost.append(fn(*args, **kwargs))
+        cost.append(np.mean(fn(*args, **kwargs)))
     # plot final cost
     clear_output(wait=True)
     plt.plot(param_space, cost)
