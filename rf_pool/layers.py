@@ -23,7 +23,7 @@ class Layer(torch.nn.Module):
         # set inputs for rf_pool
         self.rfs = self.update_rfs()
         self.pool_type = None
-        self.kernel_size = 2
+        self.kernel_size = None
         self.input_keys = ['rfs', 'pool_type', 'kernel_size']
         self.input_keys.extend(kwargs.keys())
         self.input_keys = np.unique(self.input_keys).tolist()
