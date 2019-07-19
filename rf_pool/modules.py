@@ -313,7 +313,7 @@ class Module(nn.Module):
         else:
             activity = input
         # get mean activity
-        q = torch.mean(activity.transpose(1,0).flatten(1), -1)
+        q = torch.mean(activity, 0, keepdim=True)
         # decay running average
         if not hasattr(self, 'q'):
             self.q = q
@@ -322,20 +322,24 @@ class Module(nn.Module):
         # switch based on type
         if type == 'cross_entropy':
             target = torch.tensor(target, dtype=self.q.dtype)
-            sparse_cost = torch.sum(torch.sub(-target * torch.log(self.q),
-                                              (1.-target) * torch.log(1.-self.q)))
+            sparse_cost = torch.sub(-target * torch.log(self.q),
+                                    (1. - target) * torch.log(1. - self.q))
         elif type == 'log_sum':
             epsilon = torch.tensor(epsilon, dtype=self.q.dtype)
-            sparse_cost = torch.sum(torch.log(1. + torch.abs(self.q) / epsilon))
+            sparse_cost = torch.log(1. + torch.abs(self.q) / epsilon)
         elif type == 'lasso':
-            sparse_cost = torch.sum(torch.abs(self.q))
+            sparse_cost = torch.abs(self.q)
         elif type == 'group_lasso':
+            if q.ndimension() != 4:
+                raise Exception('Type ''group_lasso'' requires ndimension == 4')
             p = torch.prod(torch.tensor(kernel_size, dtype=self.q.dtype))
             g = torch.sqrt(F.lp_pool2d(torch.pow(self.q, 2.), 1, kernel_size))
-            sparse_cost = torch.sum(torch.mul(torch.sqrt(p), g))
+            sparse_cost = torch.mul(torch.sqrt(p), g)
         else:
             raise Exception('Unknown sparsity constraint type.')
-        sparse_cost.mul_(cost)
+        if sparse_cost.ndimension() > 2:
+            sparse_cost = torch.mean(torch.flatten(sparse_cost, 2), -1)
+        sparse_cost = torch.mul(cost, torch.sum(sparse_cost))
         sparse_cost.backward()
         return sparse_cost.item()
 
