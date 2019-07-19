@@ -313,7 +313,7 @@ class Module(nn.Module):
         else:
             activity = input
         # get mean activity
-        q = torch.mean(activity, 0, keepdim=True)
+        q = torch.mean(activity.transpose(1,0).flatten(1), -1)
         # decay running average
         if not hasattr(self, 'q'):
             self.q = q
@@ -889,6 +889,9 @@ class RBM(Module):
         # compute loss, pass backward through gradients
         loss = torch.sub(torch.mean(self.free_energy(input)),
                          torch.mean(self.free_energy(nv_sample)))
+        hidsize = torch.tensor(self.hidden_shape(input.shape)).unsqueeze(-1)
+        hidsize = torch.prod(hidsize[2:])
+        loss = torch.div(loss, hidsize)
         loss.backward()
         # update persistent weights
         with torch.no_grad():
@@ -1072,6 +1075,9 @@ class CRBM(RBM):
         # compute loss, pass backward through gradients
         loss = torch.sub(torch.mean(self.free_energy(input)),
                          torch.mean(self.free_energy(nv_sample)))
+        hidsize = torch.tensor(self.hidden_shape(input.shape)).unsqueeze(-1)
+        hidsize = torch.prod(hidsize[2:])
+        loss = torch.div(loss, hidsize)
         loss.backward()
         # update persistent weights
         with torch.no_grad():
