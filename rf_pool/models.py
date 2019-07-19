@@ -285,6 +285,7 @@ class Model(nn.Module):
         loss_history = []
         running_loss = 0.
         i = 0
+        n_batches = len(trainloader)
         for epoch in range(n_epochs):
             for data in trainloader:
                 # get inputs, labels
@@ -337,7 +338,8 @@ class Model(nn.Module):
                     # display loss
                     clear_output(wait=True)
                     display('learning rate: %g' % optimizer.param_groups[0]['lr'])
-                    display('[%5d] loss: %.3f' % (i, running_loss / monitor))
+                    display('[%g%%] loss: %.3f' % (i % n_batches / n_batches * 100.,
+                            running_loss / monitor))
                     # append loss and show history
                     loss_history.append(running_loss / monitor)
                     plt.plot(loss_history)
