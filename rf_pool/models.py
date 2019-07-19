@@ -284,8 +284,9 @@ class Model(nn.Module):
         # train for n_epochs
         loss_history = []
         running_loss = 0.
+        i = 0
         for epoch in range(n_epochs):
-            for i, data in enumerate(trainloader):
+            for data in trainloader:
                 # get inputs, labels
                 inputs = data[:-1]
                 label = data[-1]
@@ -331,11 +332,12 @@ class Model(nn.Module):
                     self.set_grad_by_label([label], label_params, False)
                 # monitor
                 running_loss += loss
-                if (i+1) % monitor == 0:
+                i += 1
+                if i % monitor == 0:
                     # display loss
                     clear_output(wait=True)
                     display('learning rate: %g' % optimizer.param_groups[0]['lr'])
-                    display('[%5d] loss: %.3f' % (i+1, running_loss / monitor))
+                    display('[%5d] loss: %.3f' % (i, running_loss / monitor))
                     # append loss and show history
                     loss_history.append(running_loss / monitor)
                     plt.plot(loss_history)
