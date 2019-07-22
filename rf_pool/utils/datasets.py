@@ -71,7 +71,7 @@ class Dataset(torch.utils.data.Dataset):
 
     def to_Image(self, x):
         # convert to PIL Image
-        if type(x) is not Image.Image:
+        if type(x) is not Image.Image and np.array(x).ndim >= 2:
             x = Image.fromarray(x)
         return x
 
