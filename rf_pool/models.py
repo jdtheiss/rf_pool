@@ -575,7 +575,7 @@ class Model(nn.Module):
             'No rf_pool layer found.'
         )
         # get layers before layer id
-        pre_layer_ids = self.get_layer_ids(layer_id)[-1]
+        pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
         # apply forward up to layer id
         layer_input = self.apply_layers(input.detach(), pre_layer_ids)
         # get modules before pool
