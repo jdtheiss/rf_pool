@@ -198,7 +198,7 @@ class Module(nn.Module):
     def apply_modules(self, input, layer_name, module_names=[], output_module=None,
                       **kwargs):
         layer = getattr(self, layer_name)
-        if len(module_names) == 0 and output_module is not None:
+        if len(module_names) == 0:
             module_names = self.get_module_names(layer_name, output_module)
         for i, (name, module) in enumerate(layer.named_children()):
             if name in module_names:
