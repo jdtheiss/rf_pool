@@ -578,18 +578,12 @@ class Model(nn.Module):
         pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
         # apply forward up to layer id
         layer_input = self.apply_layers(input.detach(), pre_layer_ids)
-        # get modules before pool
-        module_names = self.layers[layer_id].get_module_names('forward_layer')
-        pool_idx = [i for i, m in enumerate(module_names) if m == 'pool']
-        module_names = module_names[:pool_idx[0]]
-        # apply modules before pool
-        pool_input = self.layers[layer_id].apply_modules(layer_input, 'forward_layer',
-                                                         module_names)
-        # apply pooling with kwargs
-        return rf_layer.apply(pool_input, **kwargs)
+        # apply modules including pool
+        return self.layers[layer_id].apply_modules(layer_input, 'forward_layer',
+                                                   output_module='pool', **kwargs)
 
     def rf_index(self, input, layer_id, thr=0.):
-        pool_output = self.rf_output(input, layer_id, retain_shape=True)[1]
+        pool_output = self.rf_output(input, layer_id, retain_shape=True)
         # sum across channels
         rf_outputs = torch.sum(pool_output, 1)
         # find rf_outputs with var > thr
