@@ -474,6 +474,42 @@ class CrowdedDataset(Dataset):
         if self.load_previous:
             copy_labels = labels.pop(0)[:n]
         return copy_labels
+    
+class FeatureDataset(torch.utils.data.Dataset):
+    """
+    class for creating a dataset of features output from a model (i.e. for training a classifier on top)
+    
+    Attributes
+    ----------
+    root : str
+        the root directory with the saved features and labels
+    train : bool
+        if True, uses the train set, else uses the test set
+    transform: torch.transform
+        sets a transform on the image
+    
+    """
+    def __init__(self, root, train=True, transform=None):
+        self.root = root
+        self.train = train
+        self.transform = transform
+        
+        if train:
+            self.data, self.labels = torch.load(self.root+ '_train')
+        else:
+            self.data, self.labels = torch.load(self.root+ '_test')
+            
+    def __getitem__(self, index):
+        img = self.data[None, index]
+        label = self.labels[index]
+        img = Image.fromarray(img.numpy(), mode='L')
+        if self.transform:
+            img = self.transform(img)
+        return (img, label)
+
+    def __len__(self):
+        return len(self.labels)
+            
 
 class CrowdedCircles(torch.utils.data.Dataset):
     """
