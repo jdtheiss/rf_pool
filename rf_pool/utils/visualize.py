@@ -76,8 +76,26 @@ def show_confusion_matrix(data, labels, cmap=plt.cm.afmhot):
     ax.set_yticklabels(labels.numpy(), minor=False)
     fig.colorbar(heatmap)
 
-def heatmap(model, layer_id, scores, vmin=-0.5, vmax=0.5, filename=None,
-            outline_rfs=False, input=None, figsize=(5,5)):
+def plot_RFs(model, layer_id, filename=None, input=None, figsize=(5,5),
+             facecolor='none', edgecolor='black', alpha=0.25, **kwargs):
+    """
+    #TODO:WRITEME
+    """
+    # init figure, get RFs in image space
+    fig = plt.figure(figsize=figsize)
+    mu, sigma = model.image_space_mu_sigma(layer_id)
+    # plot RFs
+    plt.scatter(mu[:,1], mu[:,0], s=np.prod(figsize)*sigma**2,
+                facecolor='none', edgecolor='black', alpha=alpha, **kwargs)
+    plt.axis("off")
+    plt.show()
+    # save file if given
+    if filename:
+        fig.savefig(filename, dpi=600)
+
+def heatmap(model, layer_id, scores, filename=None,
+            outline_rfs=False, input=None, figsize=(5,5), colorbar=True,
+            vmin=None, vmax=None, cmap='RdYlGn'):
     """
     #TODO:WRITEME
     """
@@ -97,8 +115,9 @@ def heatmap(model, layer_id, scores, vmin=-0.5, vmax=0.5, filename=None,
                           torch.sum(mask * heatmap, 0))
     score_map[torch.isnan(score_map)] = 0.
     # show score_map, update colorbar
-    plt.imshow(score_map, cmap='RdYlGn', vmin=vmin, vmax=vmax)
-    plt.colorbar()
+    plt.imshow(score_map, cmap=cmap, vmin=vmin, vmax=vmax)
+    if colorbar:
+        plt.colorbar()
     # add input to image using masked array
     if input is not None:
         if type(input) is np.ma.core.MaskedArray:
@@ -111,6 +130,7 @@ def heatmap(model, layer_id, scores, vmin=-0.5, vmax=0.5, filename=None,
     # save file if given
     if filename:
         fig.savefig(filename, dpi=600)
+    return fig
 
 def visualize_embedding(embeddings, images, labels=None, cmap='tab10', figsize=(15,15)):
     """
