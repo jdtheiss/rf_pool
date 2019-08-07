@@ -191,7 +191,7 @@ def mu_mask(mu, kernel_shape):
     >>> mu = torch.rand(10, 2)*200
     >>> kernel_shape = (200,200)
     >>> kernels = mu_mask(mu, kernel_shape)
-    """
+    """#TODO: use mask_kernel_lattice instead
 
     # create the coordinates input to kernel function
     x = torch.arange(kernel_shape[0])
@@ -413,10 +413,8 @@ def init_foveated_lattice(img_shape, scale, spacing, n_rf=None, n_rings=None,
     # get base sigma
     base_sigma = torch.as_tensor((1. - spacing) * scale, dtype=torch.float32)
 
-    # calculate distance between rings
-    cf = np.cos((angles[0] - angles[1])/2.)
-    cfPlusR2 = cf + np.square(scale)
-    eFactor = (cfPlusR2 - np.sqrt(np.square(cfPlusR2) + np.square(cf) * (np.square(scale) - 1.)))/np.square(cf)
+    # eccentricity factor
+    eFactor = (1. + scale) / (1. - scale)
 
     # get rotation angle between each ring
     if rotate_rings:
@@ -425,7 +423,7 @@ def init_foveated_lattice(img_shape, scale, spacing, n_rf=None, n_rings=None,
         y_mu_rot = -torch.sin(rot_angle)*x_mu + torch.cos(rot_angle)*y_mu
 
     # append mu, sigma for each eccentricity
-    ecc = min_ecc / ((1 + scale) * eFactor)
+    ecc = min_ecc * eFactor
     mu = []
     sigma = []
     for n in range(n_rings):
@@ -434,7 +432,7 @@ def init_foveated_lattice(img_shape, scale, spacing, n_rf=None, n_rings=None,
         else:
             mu.append(torch.stack([ecc*x_mu, ecc*y_mu], dim=-1))
         sigma.append(torch.mul(ecc, base_sigma).repeat(mu[-1].shape[0]))
-        ecc /= eFactor
+        ecc *= eFactor
     # set mu, sigma
     mu = torch.as_tensor(torch.cat(mu, dim=0), dtype=torch.float32)
     sigma = torch.cat(sigma, 0).unsqueeze(1)
@@ -459,8 +457,8 @@ def init_uniform_lattice(center, n_kernel_side, spacing, sigma_init=1.):
     ----------
     center : tuple
         x-y coordinate for center of lattice
-    n_kernel_side : int
-        height/width of the lattice. n_kernels = n_kernel_side**2
+    n_kernel_side : tuple or int
+        height/width of the lattice. n_kernels = np.prod(n_kernel_side)
     spacing : float
         spacing between receptive field centers
     sigma_init : float
@@ -488,19 +486,23 @@ def init_uniform_lattice(center, n_kernel_side, spacing, sigma_init=1.):
     if sigma_init < 1.:
         warnings.warn('sigma < 1 will result in sum(pdf) > 1.')
     cx, cy = center
-    if n_kernel_side % 2 == 0:
-        cx += np.floor(spacing/2)
-        cy += np.floor(spacing/2)
-    lattice_coord = torch.arange(n_kernel_side) - np.floor(n_kernel_side/2)
+    if type(n_kernel_side) is int:
+        n_kernel_side = (n_kernel_side,)*2
+    if n_kernel_side[1] % 2 == 0:
+        cx = cx + np.floor(spacing/2)
+    if n_kernel_side[0] % 2 == 0:
+        cy = cy + np.floor(spacing/2)
+    lattice_coord_x = torch.arange(n_kernel_side[0]) - np.floor(n_kernel_side[0]/2)
+    lattice_coord_y = torch.arange(n_kernel_side[1]) - np.floor(n_kernel_side[1]/2)
     # x-coodinates
-    x = cx + spacing * lattice_coord
-    x = x.repeat(n_kernel_side).reshape(n_kernel_side, n_kernel_side)
+    x = cx + spacing * lattice_coord_x
+    x = x.repeat(n_kernel_side[1]).reshape(n_kernel_side)
     # y-coordinates
-    y = cy + spacing * lattice_coord
-    y = y.repeat(n_kernel_side).reshape(n_kernel_side, n_kernel_side).t()
+    y = cy + spacing * lattice_coord_y
+    y = y.repeat(n_kernel_side[0]).reshape(n_kernel_side).t()
     # mu and sigma
-    mu = torch.stack([x,y], dim=-1)
-    mu = torch.as_tensor(mu.reshape(-1, 2), dtype=torch.float32)
+    mu = torch.stack([x.flatten(),y.flatten()], dim=-1)
+    mu = torch.as_tensor(mu, dtype=torch.float32)
     sigma = torch.ones((mu.shape[0],1), dtype=torch.float32) * sigma_init
 
     return mu, sigma
