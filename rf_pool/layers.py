@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
+from scipy.ndimage import shift
 
 from . import ops
 from .utils import lattice, functions
@@ -278,6 +279,9 @@ class RF_Same(Layer):
 
     def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
                 output='h_mean', **kwargs):
+        assert kwargs.get('output') != 'all', (
+            'keyword "output" cannot be "all" for RF_Same.'
+        )
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
@@ -307,6 +311,9 @@ class RF_Squeeze(Layer):
 
     def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
                 **kwargs):
+        assert kwargs.get('output') != 'all', (
+            'keyword "output" cannot be "all" for RF_Squeeze.'
+        )
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
@@ -341,6 +348,9 @@ class RF_CenterCrop(Layer):
 
     def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
                 **kwargs):
+        assert kwargs.get('output') != 'all', (
+            'keyword "output" cannot be "all" for RF_CenterCrop.'
+        )
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
@@ -354,5 +364,60 @@ class RF_CenterCrop(Layer):
         half_crop = self.crop_size // 2
         coords = torch.stack([center - half_crop,
                               center + half_crop + np.mod(self.crop_size, 2)])
+        # return center crop
+        return self.crop_img(p_mean, coords)
+
+class RF_Compress(Layer):
+    """
+    #TODO:WRITEME
+    """
+    def __init__(self, center, scale, crop_size, mu, sigma, img_shape=None,
+                 lattice_fn=lattice.mask_kernel_lattice, **kwargs):
+        self.center = torch.tensor(center, dtype=torch.float)
+        self.scale = torch.tensor(scale, dtype=torch.float)
+        self.crop_size = torch.tensor(crop_size, dtype=torch.float)
+        super(RF_Compress, self).__init__(mu, sigma, img_shape, lattice_fn, **kwargs)
+
+    def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
+                **kwargs):
+        assert kwargs.get('output') != 'all', (
+            'keyword "output" cannot be "all" for RF_Compress.'
+        )
+        # set img_shape
+        self.img_shape = u.shape[-2:]
+        # update rfs, mu, sigma
+        mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+        self.rfs = self.update_rfs(mu, sigma)
+        # get shifts for output
+        mu_diff = torch.sub(self.center, mu)
+        shifts = torch.mul(torch.relu(self.scale), mu_diff)
+        # create new mu
+        new_mu = shifts + mu
+        mu_mask = lattice.mask_kernel_lattice(new_mu, torch.tensor(0.5), self.img_shape)
+        # get outputs
+        retain_shape = functions.pop_attributes(kwargs, ['retain_shape']).get('retain_shape')
+        _, h_mean, h_sample = self.apply(u, retain_shape=True, output='all', **kwargs)
+        h_mean = torch.max(h_mean.flatten(-2), -1)[0].unsqueeze(-1)
+        mu_mean = torch.mul(h_mean.unsqueeze(-1), mu_mask)
+        mu_mean = torch.max(mu_mean, -3)[0]
+        # get p_mean without subsampling
+        pool_kwargs = functions.pop_attributes(kwargs, ['kernel_size',
+                                                        'return_indices'])
+        # update pool_kwargs if None
+        if pool_kwargs.get('kernel_size') is None:
+            pool_kwargs.update({'kernel_size': self.kernel_size})
+        if pool_kwargs.get('return_indices') is None and hasattr(self,'return_indices'):
+            pool_kwargs.update({'return_indices': self.return_indices})
+        # pool if kernel_size in pool_kwargs
+        if pool_kwargs.get('kernel_size') is not None:
+            p_mean = F.max_pool2d(mu_mean, **pool_kwargs)
+
+        # get coordinates for cropping image
+        half_crop = self.crop_size // 2
+        start_crop = torch.max(self.center - half_crop, torch.zeros(2))
+        end_crop = torch.min(start_crop + self.crop_size,
+                             torch.tensor(self.img_shape, dtype=torch.float))
+        start_crop = end_crop - self.crop_size
+        coords = torch.stack([start_crop, end_crop]).int()
         # return center crop
         return self.crop_img(p_mean, coords)
