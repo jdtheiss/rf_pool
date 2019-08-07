@@ -5,7 +5,50 @@ from matplotlib import offsetbox
 
 from . import functions
 
-def plot_images(w, img_shape=None, figsize=(5, 5), cmap=None):
+def plot_with_kwargs(fn, args, fn_prefix=None, **kwargs):
+    # .Collection kwargs
+    coll_keys = ['edgecolors','facecolors','linewidths','linestyles','capstyle',
+                'joinstyle','antialiaseds','offsets','transOffset','offset_position',
+                'norm','cmap','hatch','zorder']
+    # .Line2D kwargs
+    line_keys = ['alpha','animated','aa','clip_box','clip_on','clip_path','color','c',
+                 'contains','dash_capstyle','dash_joinstyle','dashes','drawstyle',
+                 'figure','fillstyle','gid','label','ls','lw','marker','mec','mew',
+                 'mfc','mfcalt','ms','markevery','path_effects','picker','pickradius',
+                 'rasterized','sketch_params','length','randomness','snap',
+                 'solid_capstyle','solid_joinstyle','transform','a','url','visible',
+                 'zorder']
+    # get keys for fn
+    if fn == plt.colorbar:
+        keys = ['mappable','pyplot','cax','ax','use_gridspec']
+    elif fn == plt.imshow:
+        keys = ['X','cmap','aspect','interpolation','norm','vmax','vmin','alpha',
+                'origin','extent','shape','filternorm','filterrad']
+    elif fn == plt.plot:
+        keys = ['x','y','fmt','data','scalex','scaley']
+        keys += line_keys
+    elif fn == plt.savefig:
+        keys = ['fname','dpi','facecolor','edgecolor','orientation','papertype',
+                'format','transparent','frameon','bbox_inches','pad_inches',
+                'bbox_extra_artists']
+    elif fn == plt.scatter:
+        keys = ['x','y','s','c','marker','cmap','norm','vmax','vmin','alpha',
+                'linewidths','verts','edgecolors']
+        keys += coll_keys
+    else:
+        raise Exception('Unsupported fn: %a' % fn)
+    # get kwargs
+    if type(fn_prefix) is str:
+        fn_prefix += '_'
+        d = functions.get_attributes(kwargs, [fn_prefix + k for k in keys],
+                                     ignore_keys=True)
+        fn_kwargs = dict([(k.replace(fn_prefix, ''), v) for k, v in d.items()])
+    else:
+        fn_kwargs = functions.get_attributes(kwargs, keys, ignore_keys=True)
+    # call function
+    return fn(*args, **fn_kwargs)
+
+def plot_images(w, img_shape=None, figsize=(5, 5), cmap=None, **kwargs):
     """
     Plot images contained in tensor
 
@@ -55,7 +98,7 @@ def plot_images(w, img_shape=None, figsize=(5, 5), cmap=None):
             w_n = torch.squeeze(w_n.permute(1,2,0), -1).numpy()
             w_n = functions.normalize_range(w_n, dims=(0,1))
             ax[r,c].axis('off')
-            ax[r,c].imshow(w_n, cmap=cmap)
+            ax[r,c].imshow(w_n, cmap=cmap, **kwargs)
             cnt += 1
     plt.show()
     return fig
@@ -93,9 +136,8 @@ def plot_RFs(model, layer_id, filename=None, input=None, figsize=(5,5),
     if filename:
         fig.savefig(filename, dpi=600)
 
-def heatmap(model, layer_id, scores, filename=None,
-            outline_rfs=False, input=None, figsize=(5,5), colorbar=True,
-            vmin=None, vmax=None, cmap='RdYlGn'):
+def heatmap(model, layer_id, scores, filename=None, outline_rfs=False, input=None,
+            figsize=(5,5), colorbar=True, **kwargs):
     """
     #TODO:WRITEME
     """
@@ -103,8 +145,11 @@ def heatmap(model, layer_id, scores, filename=None,
     fig = plt.figure(figsize=figsize)
     if outline_rfs:
         mu, sigma = model.image_space_mu_sigma(layer_id)
-        plt.scatter(mu[:,1], mu[:,0], s=np.prod(figsize)*sigma**2,
-                    facecolor='none', edgecolor='black', alpha=0.25)
+        scatter_kwargs = {'s': np.prod(figsize)*sigma**2, 'alpha': 0.25,
+                          'edgecolors': 'black', 'facecolors': 'none'}
+        [kwargs.setdefault('RF_' + k, v) for k, v in scatter_kwargs.items()]
+        plot_with_kwargs(plt.scatter, [mu[:,1], mu[:,0]], fn_prefix='RF',
+                         **kwargs)
     # get heatmap
     heatmap = model.rf_heatmap(layer_id)
     scores = scores.reshape(scores.shape[0],1,1)
@@ -115,21 +160,29 @@ def heatmap(model, layer_id, scores, filename=None,
                           torch.sum(mask * heatmap, 0))
     score_map[torch.isnan(score_map)] = 0.
     # show score_map, update colorbar
-    plt.imshow(score_map, cmap=cmap, vmin=vmin, vmax=vmax)
+    plot_with_kwargs(plt.imshow, [score_map], **kwargs)
     if colorbar:
-        plt.colorbar()
+        plot_with_kwargs(plt.colorbar, [], **kwargs)
     # add input to image using masked array
     if input is not None:
         if type(input) is np.ma.core.MaskedArray:
             ma_input = input
         else: # binary image masking out zeros
             ma_input = np.ma.masked_array(1. - torch.gt(input, 0.), input==0.)
-        plt.imshow(ma_input, cmap='gray', alpha=1.)
-    plt.axis("off")
-    plt.show()
+        kwargs.setdefault('input_cmap', 'gray')
+        kwargs.setdefault('input_alpha', 1.)
+        plot_with_kwargs(plt.imshow, [ma_input], fn_prefix='input', **kwargs)
+    # remove xticks, yticks
+    [kwargs.setdefault(k, v) for k, v in
+    {'axis':'on', 'xticks':[], 'yticks':[]}.items()]
+    plt.axis(kwargs.get('axis'))
+    plt.xticks(kwargs.get('xticks'))
+    plt.yticks(kwargs.get('yticks'))
     # save file if given
     if filename:
-        fig.savefig(filename, dpi=600)
+        kwargs.setdefault('dpi', 600.)
+        plot_with_kwargs(plt.savefig, [filename], **kwargs)
+    plt.show()
     return fig
 
 def visualize_embedding(embeddings, images, labels=None, cmap='tab10', figsize=(15,15)):
