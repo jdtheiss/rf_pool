@@ -54,7 +54,8 @@ def gabor_filter(theta, sigma, wavelength, filter_shape, gamma=0.3):
     return weight
 
 
-def param_search(fn, args, kwargs, param_name, bounds, Ns, multi=None):
+def param_search(fn, args, kwargs, param_name, bounds, Ns=None, verbose=True,
+                 xscale='linear'):
     """
     Search parameter space for given function
 
@@ -101,28 +102,29 @@ def param_search(fn, args, kwargs, param_name, bounds, Ns, multi=None):
                          {'optimizer': optimizer, 'monitor': len(testloader)},
                          param_name, (1e-8, 1e-1), 10, multi=5.)
     """
-    assert type(bounds) is list or type(bounds) is tuple
-    assert len(bounds) == 2
-    assert Ns > 0
     if type(param_name) is not list:
         param_name = [param_name]
     # set param_space
-    if multi is not None:
-        assert bounds[0] != 0.
-        param_space = [bounds[0] * pow(multi, i) for i in range(Ns)]
-        xscale = 'log'
+    if len(bounds) > 2:
+        param_space = bounds
     else:
         param_space = np.linspace(bounds[0], bounds[1], Ns)
-        xscale = 'linear'
-    print
+    try:
+        is_iter = len(param_space[0]) > 1
+    except:
+        is_iter = False
     # for each value, update parameter and get cost
     cost = []
     for i, param in enumerate(param_space):
         # display progress
         clear_output(wait=True)
-        display('Parameter search space: %s' % str(param_space))
-        display('Parameter value: %g' % param)
-        plt.plot(param_space[:i], cost)
+        if verbose:
+            display('Parameter search space: %a' % param_space)
+            display('Parameter value: %a' % param)
+        if is_iter:
+            plt.plot(np.arange(i), cost)
+        else:
+            plt.plot(param_space[:i], cost)
         plt.xscale(xscale)
         plt.show()
         # get cost
@@ -130,7 +132,10 @@ def param_search(fn, args, kwargs, param_name, bounds, Ns, multi=None):
         cost.append(np.mean(fn(*args, **kwargs)))
     # plot final cost
     clear_output(wait=True)
-    plt.plot(param_space, cost)
+    if is_iter:
+        plt.plot(np.arange(len(param_space)), cost)
+    else:
+        plt.plot(param_space, cost)
     plt.xscale(xscale)
     plt.show()
     return cost
@@ -281,7 +286,7 @@ def set_deepattr(obj, path, value):
         value = obj_i
     return value
 
-def get_attributes(obj, keys, default=None):
+def get_attributes(obj, keys, default=None, ignore_keys=False):
     output = {}
     for key in keys:
         if type(key) is int:
@@ -290,11 +295,11 @@ def get_attributes(obj, keys, default=None):
             output.update({key: getattr(obj, key)})
         elif hasattr(obj, 'get') and key in obj:
             output.update({key: obj.get(key)})
-        else:
+        elif not ignore_keys:
             output.setdefault(key, default)
     return output
 
-def pop_attributes(obj, keys, default=None):
+def pop_attributes(obj, keys, default=None, ignore_keys=False):
     output = {}
     for key in keys:
         if hasattr(obj, 'pop') and key in obj:
@@ -302,7 +307,7 @@ def pop_attributes(obj, keys, default=None):
         elif hasattr(obj, key):
             output.update({key: getattr(obj, key)})
             delattr(obj, key)
-        else:
+        elif not ignore_keys:
             output.setdefault(key, default)
     return output
 
