@@ -135,6 +135,7 @@ def param_search(fn, args, kwargs, param_name, bounds, Ns=None, verbose=True,
         cost.append(cost_i)
     # plot final cost
     clear_output(wait=True)
+    display('Cost: %a' % cost)
     if verbose:
         if is_iter:
             plt.plot(np.arange(len(param_space)), cost)
