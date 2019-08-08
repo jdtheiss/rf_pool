@@ -627,13 +627,15 @@ class Model(nn.Module):
             mu = self.layers[layer_id].forward_layer.pool.get(['mu'])[0]
         if sigma is None:
             sigma = self.layers[layer_id].forward_layer.pool.get(['sigma'])[0]
-        mu = mu + (self.layers[layer_id].forward_layer.hidden.kernel_size[0] - 1) // 2
-        sigma = sigma + self.layers[layer_id].forward_layer.hidden.kernel_size[0] - 1
+        half_k = (self.layers[layer_id].forward_layer.hidden.kernel_size[0] - 1) // 2
+        mu = mu + half_k
+        sigma = sigma + half_k
         for layer in layers:
             mu = mu * layer.forward_layer.pool.kernel_size
             sigma = sigma * layer.forward_layer.pool.kernel_size
-            mu = mu + (layer.forward_layer.hidden.kernel_size[0] - 1) // 2
-            sigma = sigma + layer.forward_layer.hidden.kernel_size[0] - 1
+            half_k = (layer.forward_layer.hidden.kernel_size[0] - 1) // 2
+            mu = mu + half_k
+            sigma = sigma + half_k
         return mu, sigma
 
 class FeedForwardNetwork(Model):
