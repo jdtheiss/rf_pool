@@ -118,26 +118,30 @@ def param_search(fn, args, kwargs, param_name, bounds, Ns=None, verbose=True,
     for i, param in enumerate(param_space):
         # display progress
         clear_output(wait=True)
+        display('Progress: %a%%' % (100. * i / len(param_space)))
+        display('Cost: %a' % cost)
         if verbose:
             display('Parameter search space: %a' % param_space)
             display('Parameter value: %a' % param)
-        if is_iter:
-            plt.plot(np.arange(i), cost)
-        else:
-            plt.plot(param_space[:i], cost)
-        plt.xscale(xscale)
-        plt.show()
+            if is_iter:
+                plt.plot(np.arange(i), cost)
+            else:
+                plt.plot(param_space[:i], cost)
+            plt.xscale(xscale)
+            plt.show()
         # get cost
         kwargs = set_deepattr(kwargs, param_name, param)
-        cost.append(np.mean(fn(*args, **kwargs)))
+        cost_i = fn(*args, **kwargs)
+        cost.append(cost_i)
     # plot final cost
     clear_output(wait=True)
-    if is_iter:
-        plt.plot(np.arange(len(param_space)), cost)
-    else:
-        plt.plot(param_space, cost)
-    plt.xscale(xscale)
-    plt.show()
+    if verbose:
+        if is_iter:
+            plt.plot(np.arange(len(param_space)), cost)
+        else:
+            plt.plot(param_space, cost)
+        plt.xscale(xscale)
+        plt.show()
     return cost
 
 def repeat(x, repeats):
