@@ -18,7 +18,7 @@ class Layer(torch.nn.Module):
         self.img_shape = img_shape
         self.lattice_fn = lattice_fn
         # check for optional kwargs
-        options = functions.pop_attributes(kwargs, ['ratio','thr','delta_mu',
+        options = functions.pop_attributes(kwargs, ['ratio','delta_mu',
                                            'delta_sigma','update_img_shape'])
         functions.set_attributes(self, **options)
         # set inputs for rf_pool
@@ -109,8 +109,6 @@ class Layer(torch.nn.Module):
         args = [mu, sigma, self.img_shape]
         if self.ratio is not None:
             args.append(self.ratio)
-        elif self.thr is not None:
-            args.append(self.thr)
         return self.lattice_fn(*args)
 
     def get_squeezed_coords(self, mu, sigma):

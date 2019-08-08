@@ -82,10 +82,10 @@ def dog_kernel_2d(mu, sigma, ratio, xy):
     kernel_1 = gaussian_kernel_2d(mu, ratio * sigma, xy)
     return kernel_0 - kernel_1
 
-def mask_kernel_2d(mu, sigma, xy, thr=np.exp(-0.5)):
+def mask_kernel_2d(mu, sigma, xy):
     kernels = exp_kernel_2d(mu, sigma, xy)
-    thr = torch.tensor(thr, dtype=kernels.dtype)
-    mask = torch.as_tensor(torch.ge(kernels, thr), dtype=kernels.dtype)
+    # threshold at 1 std
+    mask = torch.as_tensor(torch.ge(kernels, np.exp(-0.5)), dtype=kernels.dtype)
     with torch.no_grad():
         kernels_no_grad = torch.add(kernels, 1e-6)
     return torch.div(torch.mul(kernels, mask), kernels_no_grad)
@@ -313,7 +313,7 @@ def dog_kernel_lattice(mu, sigma, kernel_shape, ratio=4.):
 
     return dog_kernel_2d(mu, sigma, ratio, xy)
 
-def mask_kernel_lattice(mu, sigma, kernel_shape, thr=np.exp(-0.5)):
+def mask_kernel_lattice(mu, sigma, kernel_shape):
     """
     Returns a tensor of masked kernels
 
@@ -325,9 +325,6 @@ def mask_kernel_lattice(mu, sigma, kernel_shape, thr=np.exp(-0.5)):
         kernel standard deviations with shape (n_kernels, 1)
     kernel_shape : tuple
         shape of input feature map
-    thr : float, optional
-        threshold for masking pixels based on exp_kernel_2d values
-        [default: np.exp(-0.5) i.e. 1 sigma]
 
     Returns
     -------
@@ -350,10 +347,10 @@ def mask_kernel_lattice(mu, sigma, kernel_shape, thr=np.exp(-0.5)):
     y = torch.arange(kernel_shape[1])
     xy = torch.stack(torch.meshgrid(x, y), dim=0).unsqueeze(0).float()
 
-    return mask_kernel_2d(mu, sigma, xy, thr=thr)
+    return mask_kernel_2d(mu, sigma, xy)
 
-def init_foveated_lattice(img_shape, scale, spacing, n_rf=None, n_rings=None,
-                          min_ecc=1., offset=[0.,0.], rotate_rings=False):
+def init_foveated_lattice(img_shape, scale, spacing, std=1., n_rf=None, n_rings=None,
+                          min_ecc=1., offset=[0.,0.], rotate_rings=True):
     """
     Creates a foveated lattice of kernel centers (mu) and
     stantard deviations (sigma)
@@ -366,6 +363,8 @@ def init_foveated_lattice(img_shape, scale, spacing, n_rf=None, n_rings=None,
         rate at which receptive field radius scales with eccentricity
     spacing : float
         spacing between receptive field centers (as fraction of radius)
+    std : float
+        standard deviation multiplier [default: 1.]
     min_ecc : float
         minimum eccentricity for gaussian rings [default: 1.]
     rotate_rings : bool
@@ -438,9 +437,11 @@ def init_foveated_lattice(img_shape, scale, spacing, n_rf=None, n_rings=None,
     sigma = torch.cat(sigma, 0).unsqueeze(1)
     # set offset of mu
     mu = mu + torch.as_tensor(offset, dtype=mu.dtype)
-    # add img_shape//2 to mu, set sigma to max(sigma, 1.)
+    # add img_shape//2 to mu
     half_img_shape = torch.as_tensor(img_shape, dtype=mu.dtype).unsqueeze(0)/2
     mu = torch.add(mu, half_img_shape)
+    # multiply by std and set sigma to max(sigma, 1.)
+    sigma = torch.mul(sigma, std)
     sigma = torch.max(sigma, 0.5 * torch.ones_like(sigma))
     # remove mu, sigma outside image frame
     remove_idx = np.where(torch.sum(torch.lt(mu + 2 * sigma, 0.), -1))[0]
