@@ -119,8 +119,8 @@ def show_confusion_matrix(data, labels, cmap=plt.cm.afmhot):
     ax.set_yticklabels(labels.numpy(), minor=False)
     fig.colorbar(heatmap)
 
-def heatmap(model, layer_id, scores=None, input=None, outline_rfs=False,
-            filename=None, figsize=(5,5), colorbar=True, **kwargs):
+def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
+            filename=None, figsize=(5,5), colorbar=False, **kwargs):
     """
     #TODO:WRITEME
     """
@@ -135,19 +135,21 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=False,
         plot_with_kwargs(plt.scatter, [mu[:,1], mu[:,0]], fn_prefix='RF',
                          **kwargs)
     # get heatmap
-    if scores is not None:
-        heatmap = model.rf_heatmap(layer_id)
-        scores = scores.reshape(scores.shape[0],1,1)
-        mask = (1 - torch.isnan(scores)).float()
-        scores[torch.isnan(scores)] = 0.
-        score_map = scores * heatmap
-        score_map = torch.div(torch.sum(score_map, 0),
-                              torch.sum(mask * heatmap, 0))
-        score_map[torch.isnan(score_map)] = 0.
-        # show score_map, update colorbar
-        plot_with_kwargs(plt.imshow, [score_map], **kwargs)
-        if colorbar:
-            plot_with_kwargs(plt.colorbar, [], **kwargs)
+    heatmap = model.rf_heatmap(layer_id)
+    if scores is None:
+        scores = torch.zeros(heatmap.shape[0])
+    scores = scores.reshape(scores.shape[0],1,1)
+    mask = (1 - torch.isnan(scores)).float()
+    scores[torch.isnan(scores)] = 0.
+    score_map = scores * heatmap
+    score_map = torch.div(torch.sum(score_map, 0),
+                          torch.sum(mask * heatmap, 0))
+    score_map[torch.isnan(score_map)] = 0.
+    # show score_map, update colorbar
+    kwargs.setdefault('cmap', 'Greys')
+    plot_with_kwargs(plt.imshow, [score_map], **kwargs)
+    if colorbar:
+        plot_with_kwargs(plt.colorbar, [], **kwargs)
     # add input to image using masked array
     if input is not None:
         if type(input) is np.ma.core.MaskedArray:
