@@ -620,18 +620,20 @@ class Model(nn.Module):
             heatmap = torch.gt(heatmap, 0.).float()
         return heatmap.squeeze(1)
 
-    def image_space_mu_sigma(self, layer_id):
+    def image_space_mu_sigma(self, layer_id, mu=None, sigma=None):
         layers = self.get_layers(self.get_layer_ids(layer_id)[:-1])
         layers.reverse()
-        mu, sigma = self.layers[layer_id].forward_layer.pool.get(['mu','sigma'])
-        mu = mu + self.layers[layer_id].forward_layer.hidden.kernel_size[0] // 2
-        sigma = sigma + self.layers[layer_id].forward_layer.hidden.kernel_size[0] // 2
+        if mu is None:
+            mu = self.layers[layer_id].forward_layer.pool.get(['mu'])[0]
+        if sigma is None:
+            sigma = self.layers[layer_id].forward_layer.pool.get(['sigma'])[0]
+        mu = mu + (self.layers[layer_id].forward_layer.hidden.kernel_size[0] - 1) // 2
+        sigma = sigma + self.layers[layer_id].forward_layer.hidden.kernel_size[0] - 1
         for layer in layers:
             mu = mu * layer.forward_layer.pool.kernel_size
             sigma = sigma * layer.forward_layer.pool.kernel_size
-            mu = mu + layer.forward_layer.hidden.kernel_size[0] // 2
-            sigma = sigma + layer.forward_layer.hidden.kernel_size[0] // 2
-        mu = mu + 0.5
+            mu = mu + (layer.forward_layer.hidden.kernel_size[0] - 1) // 2
+            sigma = sigma + layer.forward_layer.hidden.kernel_size[0] - 1
         return mu, sigma
 
 class FeedForwardNetwork(Model):
