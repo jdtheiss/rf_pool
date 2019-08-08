@@ -119,25 +119,8 @@ def show_confusion_matrix(data, labels, cmap=plt.cm.afmhot):
     ax.set_yticklabels(labels.numpy(), minor=False)
     fig.colorbar(heatmap)
 
-def plot_RFs(model, layer_id, filename=None, input=None, figsize=(5,5),
-             facecolor='none', edgecolor='black', alpha=0.25, **kwargs):
-    """
-    #TODO:WRITEME
-    """
-    # init figure, get RFs in image space
-    fig = plt.figure(figsize=figsize)
-    mu, sigma = model.image_space_mu_sigma(layer_id)
-    # plot RFs
-    plt.scatter(mu[:,1], mu[:,0], s=np.prod(figsize)*sigma**2,
-                facecolor='none', edgecolor='black', alpha=alpha, **kwargs)
-    plt.axis("off")
-    plt.show()
-    # save file if given
-    if filename:
-        fig.savefig(filename, dpi=600)
-
-def heatmap(model, layer_id, scores, filename=None, outline_rfs=False, input=None,
-            figsize=(5,5), colorbar=True, **kwargs):
+def heatmap(model, layer_id, scores=None, input=None, outline_rfs=False,
+            filename=None, figsize=(5,5), colorbar=True, **kwargs):
     """
     #TODO:WRITEME
     """
@@ -145,24 +128,26 @@ def heatmap(model, layer_id, scores, filename=None, outline_rfs=False, input=Non
     fig = plt.figure(figsize=figsize)
     if outline_rfs:
         mu, sigma = model.image_space_mu_sigma(layer_id)
+        mu = mu + 0.5
         scatter_kwargs = {'s': np.prod(figsize)*sigma**2, 'alpha': 0.25,
                           'edgecolors': 'black', 'facecolors': 'none'}
         [kwargs.setdefault('RF_' + k, v) for k, v in scatter_kwargs.items()]
         plot_with_kwargs(plt.scatter, [mu[:,1], mu[:,0]], fn_prefix='RF',
                          **kwargs)
     # get heatmap
-    heatmap = model.rf_heatmap(layer_id)
-    scores = scores.reshape(scores.shape[0],1,1)
-    mask = (1 - torch.isnan(scores)).float()
-    scores[torch.isnan(scores)] = 0.
-    score_map = scores * heatmap
-    score_map = torch.div(torch.sum(score_map, 0),
-                          torch.sum(mask * heatmap, 0))
-    score_map[torch.isnan(score_map)] = 0.
-    # show score_map, update colorbar
-    plot_with_kwargs(plt.imshow, [score_map], **kwargs)
-    if colorbar:
-        plot_with_kwargs(plt.colorbar, [], **kwargs)
+    if scores is not None:
+        heatmap = model.rf_heatmap(layer_id)
+        scores = scores.reshape(scores.shape[0],1,1)
+        mask = (1 - torch.isnan(scores)).float()
+        scores[torch.isnan(scores)] = 0.
+        score_map = scores * heatmap
+        score_map = torch.div(torch.sum(score_map, 0),
+                              torch.sum(mask * heatmap, 0))
+        score_map[torch.isnan(score_map)] = 0.
+        # show score_map, update colorbar
+        plot_with_kwargs(plt.imshow, [score_map], **kwargs)
+        if colorbar:
+            plot_with_kwargs(plt.colorbar, [], **kwargs)
     # add input to image using masked array
     if input is not None:
         if type(input) is np.ma.core.MaskedArray:
@@ -182,7 +167,10 @@ def heatmap(model, layer_id, scores, filename=None, outline_rfs=False, input=Non
     if filename:
         kwargs.setdefault('dpi', 600.)
         plot_with_kwargs(plt.savefig, [filename], **kwargs)
-    plt.show()
+    # show plot
+    kwargs.setdefault('show', True)
+    if kwargs.get('show'):
+        plt.show()
     return fig
 
 def visualize_embedding(embeddings, images, labels=None, cmap='tab10', figsize=(15,15)):
