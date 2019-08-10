@@ -620,23 +620,25 @@ class Model(nn.Module):
             heatmap = torch.gt(heatmap, 0.).float()
         return heatmap.squeeze(1)
 
-    def image_space_mu_sigma(self, layer_id, mu=None, sigma=None):
+    def rf_to_image_space(self, layer_id, coords=None):
+        # get mu, sigma
+        if coords is None:
+            coords = self.layers[layer_id].forward_layer.pool.get(['mu','sigma'])
+        elif type(coords) is not torch.Tensor:
+            coords = torch.tensor(coords)
+        if type(coords) is not list and type(coords) is not tuple:
+            coords = [coords]
+        # reversed layers
         layers = self.get_layers(self.get_layer_ids(layer_id)[:-1])
         layers.reverse()
-        if mu is None:
-            mu = self.layers[layer_id].forward_layer.pool.get(['mu'])[0]
-        if sigma is None:
-            sigma = self.layers[layer_id].forward_layer.pool.get(['sigma'])[0]
+        # for each layer, add half weight kernel and multiply by pool kernel
         half_k = (self.layers[layer_id].forward_layer.hidden.kernel_size[0] - 1) // 2
-        mu = mu + half_k
-        sigma = sigma + half_k
+        coords = [c + half_k for c in coords]
         for layer in layers:
-            mu = mu * layer.forward_layer.pool.kernel_size
-            sigma = sigma * layer.forward_layer.pool.kernel_size
+            coords = [c * layer.forward_layer.pool.kernel_size for c in coords]
             half_k = (layer.forward_layer.hidden.kernel_size[0] - 1) // 2
-            mu = mu + half_k
-            sigma = sigma + half_k
-        return mu, sigma
+            coords = [c + half_k for c in coords]
+        return coords
 
 class FeedForwardNetwork(Model):
     """
