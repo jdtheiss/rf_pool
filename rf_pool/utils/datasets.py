@@ -1,5 +1,7 @@
 import glob
 import os.path
+import re
+import urllib.request
 
 import imageio
 import numpy as np
@@ -16,6 +18,8 @@ class Dataset(torch.utils.data.Dataset):
     """
     def __init__(self, **kwargs):
         self.root = None
+        self.download = False
+        self.load_fn = imageio.imread
         self.data_info = {}
         self.data = None
         self.extras = None
@@ -60,6 +64,15 @@ class Dataset(torch.utils.data.Dataset):
             elif key == pattern:
                 self.data_info.update({key: label})
 
+    def download_image(self, url, id, remove=True):
+        # download image
+        fname = self.root + '/' + id
+        urllib.request.urlretrieve(url, filename=fname)
+        img = self.load_fn(fname)
+        if remove:
+            os.remove(fname)
+        return img
+
     def to_numpy(self, x):
         # convert to numpy
         if hasattr(x, 'numpy'):
@@ -94,12 +107,15 @@ class Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         img = self.data[index]
-        if self.labels is not None and len(self.labels) > index:
+        if self.labels is not None and type(index) is int: #len(self.labels) > index:
             label = self.labels[index]
             if self.label_map.get(label) is not None:
                 label = self.label_map.get(label)
         else:
             label = -1
+        # download if necessary
+        if not self.download and type(img) is str:
+            img = self.download_image(img, index)
         # convert to numpy, Image
         img = self.to_numpy(img)
         img = self.to_Image(img)
@@ -114,6 +130,65 @@ class Dataset(torch.utils.data.Dataset):
 
     def __len__(self):
         return len(self.data)
+
+class URLDataset(Dataset):
+    def __init__(self, root, base_url, ids=[''], labels=None, download=False,
+                 **kwargs):
+        super(URLDataset, self).__init__(root=root, labels=None, download=download,
+                                         **kwargs)
+        # set data_info, data, labels using patterns and pattern_labels
+        self.set_data_info(ids, labels)
+        self.set_data(ids, base_url, download=download, **kwargs)
+        self.set_labels(download=download, **kwargs)
+
+    def url_mapping(self, id, base_url, key_pattern='n\d+_\d+',
+                    value_pattern='http.+\.jpg'):
+        with urllib.request.urlopen(base_url + id) as response:
+            html = response.readlines()
+        mapping = {}
+        for line in html:
+            key = re.findall(key_pattern, line.decode('utf-8'))
+            value = re.findall(value_pattern, line.decode('utf-8'))
+            if len(key) > 0 and len(value) > 0:
+                mapping.update({key[0]: value[0]})
+        return mapping
+
+    def set_data(self, ids, base_url, download=False, remove=True, load_transform=None,
+                 key_pattern='n\d+_\d+', value_pattern='http.+\.jpg', **kwargs):
+        # if download=False, data is dict with {id: url} mapping
+        # if download=True, data is tensor with actual downloaded data
+        data_dict = {}
+        for id in ids:
+            data_dict.update(self.url_mapping(id, base_url, key_pattern, value_pattern))
+        if download:
+            data = []
+            for id, fname in data_dict.items():
+                d = self.download_image(fname, id, remove)
+                d = functions.kwarg_fn([self,functions,list,dict,__builtins__,np,torch],
+                                       d, **kwargs)
+                if load_transform:
+                    d = load_transform(d)
+                data.append(d)
+            if np.all([type(d) is torch.Tensor and d.ndimension()==4 for d in data]):
+                self.data = torch.cat(data)
+            else:
+                self.data = data
+        else:
+            self.data = data_dict
+
+    def set_labels(self, download=False, label_dtype=torch.uint8, **kwargs):
+        #TODO: figure out how to update labels for each id
+        # if download=False, labels is dict with {id: label} mapping
+        # if download=True, labels is tensor with label values
+        # convert data_info to labels
+        if download:
+            self.labels = list(self.data_info.values())
+            if np.all([label is not None for label in self.labels]):
+                self.labels = torch.as_tensor(self.labels, dtype=label_dtype)
+            else:
+                self.labels = None
+        else:
+            self.labels = self.data_info.copy()
 
 class FilesDataset(Dataset):
     def __init__(self, root, files=[], labels=None, transform=None, **kwargs):
@@ -474,11 +549,11 @@ class CrowdedDataset(Dataset):
         if self.load_previous:
             copy_labels = labels.pop(0)[:n]
         return copy_labels
-    
+
 class FeatureDataset(torch.utils.data.Dataset):
     """
     class for creating a dataset of features output from a model (i.e. for training a classifier on top)
-    
+
     Attributes
     ----------
     root : str
@@ -487,18 +562,18 @@ class FeatureDataset(torch.utils.data.Dataset):
         if True, uses the train set, else uses the test set
     transform: torch.transform
         sets a transform on the image
-    
+
     """
     def __init__(self, root, train=True, transform=None):
         self.root = root
         self.train = train
         self.transform = transform
-        
+
         if train:
             self.data, self.labels = torch.load(self.root+ '_train')
         else:
             self.data, self.labels = torch.load(self.root+ '_test')
-            
+
     def __getitem__(self, index):
         img = self.data[None, index]
         label = self.labels[index]
@@ -509,7 +584,7 @@ class FeatureDataset(torch.utils.data.Dataset):
 
     def __len__(self):
         return len(self.labels)
-            
+
 
 class CrowdedCircles(torch.utils.data.Dataset):
     """
