@@ -4,6 +4,8 @@ import re
 import urllib.request
 
 import imageio
+import IPython.display
+from IPython.display import clear_output, display
 import numpy as np
 from PIL import Image
 import torch
@@ -67,10 +69,14 @@ class Dataset(torch.utils.data.Dataset):
     def download_image(self, url, id, remove=True):
         # download image
         fname = self.root + '/' + id
-        urllib.request.urlretrieve(url, filename=fname)
-        img = self.load_fn(fname)
-        if remove:
-            os.remove(fname)
+        try:
+            urllib.request.urlretrieve(url, filename=fname)
+            img = self.load_fn(fname)
+            if remove:
+                os.remove(fname)
+        except Exception as detail:
+            print('Error: %s' % detail)
+            img = None
         return img
 
     def to_numpy(self, x):
@@ -158,12 +164,20 @@ class URLDataset(Dataset):
         # if download=False, data is dict with {id: url} mapping
         # if download=True, data is tensor with actual downloaded data
         data_dict = {}
-        for id in ids:
+        for i, id in enumerate(ids):
+            clear_output(wait=True)
+            display('getting urls')
+            display('progress: %g%%' % (100. * (i + 1) / len(ids)))
             data_dict.update(self.url_mapping(id, base_url, key_pattern, value_pattern))
         if download:
             data = []
-            for id, fname in data_dict.items():
+            for i, (id, fname) in enumerate(data_dict.items()):
+                clear_output(wait=True)
+                display('downloading data')
+                display('progress: %g%%' % (100. * (i + 1) / len(data_dict)))
                 d = self.download_image(fname, id, remove)
+                if d is None:
+                    continue
                 d = functions.kwarg_fn([self,functions,list,dict,__builtins__,np,torch],
                                        d, **kwargs)
                 if load_transform:
