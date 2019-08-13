@@ -1,4 +1,5 @@
 import glob
+import io
 import os.path
 import re
 import urllib.request
@@ -66,14 +67,17 @@ class Dataset(torch.utils.data.Dataset):
             elif key == pattern:
                 self.data_info.update({key: label})
 
-    def download_image(self, url, id, remove=True):
-        # download image
-        fname = self.root + '/' + id
+    def download_image(self, url, id, download=False):
         try:
-            urllib.request.urlretrieve(url, filename=fname)
-            img = self.load_fn(fname)
-            if remove:
-                os.remove(fname)
+            if download:
+                fname = os.path.join(self.root, str(id))
+                if not os.path.isfile(fname):
+                    urllib.request.urlretrieve(url, filename=fname)
+                img = self.load_fn(fname)
+            else:
+                with urllib.request.urlopen(url, timeout=0.5) as response:
+                    html = response.read()
+                    img = Image.open(io.BytesIO(html))
         except Exception as detail:
             print('Error: %s' % detail)
             img = None
@@ -111,17 +115,33 @@ class Dataset(torch.utils.data.Dataset):
             output.append(d)
         return output
 
+    def collate_fn(self, batch):
+        batch = list(filter(lambda x : x is not None, batch))
+        if len(batch) == 0:
+            index = np.random.randint(self.__len__()-1)
+            return self.collate_fn([self.__getitem__(index)])
+        return torch.utils.data.dataloader.default_collate(batch)
+
     def __getitem__(self, index):
-        img = self.data[index]
-        if self.labels is not None and type(index) is int: #len(self.labels) > index:
+        if type(self.data) is dict and type(index) is int:
+            img = list(self.data.values())[index]
+        else:
+            img = self.data[index]
+        if type(self.labels) is dict and type(index) is int:
+            label = list(self.labels.values())[index]
+        elif self.labels is not None:
             label = self.labels[index]
             if self.label_map.get(label) is not None:
                 label = self.label_map.get(label)
         else:
             label = -1
+        if label is None:
+            label = -1
         # download if necessary
         if not self.download and type(img) is str:
             img = self.download_image(img, index)
+            if img is None:
+                return None
         # convert to numpy, Image
         img = self.to_numpy(img)
         img = self.to_Image(img)
@@ -138,13 +158,33 @@ class Dataset(torch.utils.data.Dataset):
         return len(self.data)
 
 class URLDataset(Dataset):
-    def __init__(self, root, base_url, ids=[''], labels=None, download=False,
-                 **kwargs):
+    def __init__(self, root, urls=[], base_url=None, ids=[''], labels=None,
+                 download=False, **kwargs):
         super(URLDataset, self).__init__(root=root, labels=None, download=download,
                                          **kwargs)
-        # set data_info, data, labels using patterns and pattern_labels
-        self.set_data_info(ids, labels)
-        self.set_data(ids, base_url, download=download, **kwargs)
+        # set data_info using urls
+        if len(urls) > 0:
+            self.set_data_info(urls, labels)
+            data_dict = dict([(k,v) for k, v in zip(np.arange(len(urls)), urls)])
+        # set data_info using url_mapping
+        elif base_url is not None:
+            data_dict = {}
+            map_kwargs = {}
+            if 'key_pattern' in kwargs:
+                map_kwargs.update({'key_pattern': kwargs.pop('key_pattern')})
+            if 'value_pattern' in kwargs:
+                map_kwargs.update({'value_pattern': kwargs.pop('value_pattern')})
+            for i, id in enumerate(ids):
+                clear_output(wait=True)
+                display('getting urls')
+                display('progress: %g%%' % (100. * (i + 1) / len(ids)))
+                mapping = self.url_mapping(id, base_url, **map_kwargs)
+                data_dict.update(mapping)
+                if type(labels) is list:
+                    self.set_data_info(mapping.keys(), labels[i])
+                else:
+                    self.set_data_info(mapping.keys(), labels)
+        self.set_data(data_dict, download=download, **kwargs)
         self.set_labels(download=download, **kwargs)
 
     def url_mapping(self, id, base_url, key_pattern='n\d+_\d+',
@@ -159,23 +199,15 @@ class URLDataset(Dataset):
                 mapping.update({key[0]: value[0]})
         return mapping
 
-    def set_data(self, ids, base_url, download=False, remove=True, load_transform=None,
-                 key_pattern='n\d+_\d+', value_pattern='http.+\.jpg', **kwargs):
-        # if download=False, data is dict with {id: url} mapping
-        # if download=True, data is tensor with actual downloaded data
-        data_dict = {}
-        for i, id in enumerate(ids):
-            clear_output(wait=True)
-            display('getting urls')
-            display('progress: %g%%' % (100. * (i + 1) / len(ids)))
-            data_dict.update(self.url_mapping(id, base_url, key_pattern, value_pattern))
+    def set_data(self, data_dict, download=False, load_transform=None, **kwargs):
+        # get data from urls in data_dict
         if download:
             data = []
-            for i, (id, fname) in enumerate(data_dict.items()):
+            for i, (id, url) in enumerate(data_dict.items()):
                 clear_output(wait=True)
                 display('downloading data')
                 display('progress: %g%%' % (100. * (i + 1) / len(data_dict)))
-                d = self.download_image(fname, id, remove)
+                d = self.download_image(url, id, download)
                 if d is None:
                     continue
                 d = functions.kwarg_fn([self,functions,list,dict,__builtins__,np,torch],
@@ -188,13 +220,10 @@ class URLDataset(Dataset):
             else:
                 self.data = data
         else:
-            self.data = data_dict
+            self.data = data_dict.copy()
 
     def set_labels(self, download=False, label_dtype=torch.uint8, **kwargs):
-        #TODO: figure out how to update labels for each id
-        # if download=False, labels is dict with {id: label} mapping
-        # if download=True, labels is tensor with label values
-        # convert data_info to labels
+        # get labels from data_info
         if download:
             self.labels = list(self.data_info.values())
             if np.all([label is not None for label in self.labels]):
