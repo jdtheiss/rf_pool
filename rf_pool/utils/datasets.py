@@ -23,6 +23,8 @@ class Dataset(torch.utils.data.Dataset):
         self.root = None
         self.download = False
         self.timeout = 5.
+        self.find_img_url = False
+        self.url_pattern = 'src="([^\s]+\.jpg)"'
         self.load_fn = imageio.imread
         self.data_info = {}
         self.data = None
@@ -68,17 +70,33 @@ class Dataset(torch.utils.data.Dataset):
             elif key == pattern:
                 self.data_info.update({key: label})
 
+    def get_img_url(self, url, pattern='', timeout=5.):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as response:
+                html = response.read()
+                img_url = re.findall(pattern, html.decode('utf-8'))
+            if len(img_url) > 0:
+                img_url = img_url[0]
+            else:
+                img_url = None
+        except Exception as detail:
+            print('Error: %s' % detail)
+            img_url = None
+        return img_url
+
     def download_image(self, url, id, download=False, timeout=5.):
         try:
+            # if already downloaded, load
+            fname = os.path.join(self.root, str(id))
+            if os.path.isfile(fname):
+                return self.load_fn(fname)
+            # otherwise load load from html
+            req = urllib.request.Request(url, headers={'User-Agent': 'Magic Browser'})
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                html = response.read()
+                img = Image.open(io.BytesIO(html))
             if download:
-                fname = os.path.join(self.root, str(id))
-                if not os.path.isfile(fname):
-                    urllib.request.urlretrieve(url, filename=fname)
-                img = self.load_fn(fname)
-            else:
-                with urllib.request.urlopen(url, timeout=timeout) as response:
-                    html = response.read()
-                    img = Image.open(io.BytesIO(html))
+                img.save(fname)
         except Exception as detail:
             print('Error: %s' % detail)
             img = None
@@ -119,7 +137,7 @@ class Dataset(torch.utils.data.Dataset):
     def collate_fn(self, batch):
         batch = list(filter(lambda x : x is not None, batch))
         if len(batch) == 0:
-            index = np.random.randint(self.__len__()-1)
+            index = np.random.randint(self.__len__())
             return self.collate_fn([self.__getitem__(index)])
         return torch.utils.data.dataloader.default_collate(batch)
 
@@ -138,17 +156,25 @@ class Dataset(torch.utils.data.Dataset):
             label = -1
         if label is None:
             label = -1
+        # get url within html if necessary
+        if self.find_img_url and type(img) is str:
+            img = self.get_img_url(img, pattern=self.url_pattern,
+                                   timeout=self.timeout)
         # download if necessary
         if not self.download and type(img) is str:
-            img = self.download_image(img, index)
+            img = self.download_image(img, index, timeout=self.timeout)
             if img is None:
                 return None
-        # convert to numpy, Image
-        img = self.to_numpy(img)
-        img = self.to_Image(img)
-        # apply transform
-        if self.transform:
-            img = self.transform(img)
+        try:
+            # convert to numpy, Image
+            img = self.to_numpy(img)
+            img = self.to_Image(img)
+            # apply transform
+            if self.transform:
+                img = self.transform(img)
+        except Exception as detail:
+            print('Error: %s' % detail)
+            return None
         if hasattr(self, 'extras') and self.extras is not None:
             output = (img, self.extras[index], label)
         else:
@@ -160,9 +186,9 @@ class Dataset(torch.utils.data.Dataset):
 
 class URLDataset(Dataset):
     def __init__(self, root, urls=[], base_url=None, ids=[''], labels=None,
-                 download=False, **kwargs):
+                 download=False, find_img_url=False, **kwargs):
         super(URLDataset, self).__init__(root=root, labels=None, download=download,
-                                         **kwargs)
+                                         find_img_url=find_img_url, **kwargs)
         # set data_info using urls
         if len(urls) > 0:
             self.set_data_info(urls, labels)
