@@ -22,6 +22,7 @@ class Dataset(torch.utils.data.Dataset):
     def __init__(self, **kwargs):
         self.root = None
         self.download = False
+        self.timeout = 5.
         self.load_fn = imageio.imread
         self.data_info = {}
         self.data = None
@@ -67,7 +68,7 @@ class Dataset(torch.utils.data.Dataset):
             elif key == pattern:
                 self.data_info.update({key: label})
 
-    def download_image(self, url, id, download=False):
+    def download_image(self, url, id, download=False, timeout=5.):
         try:
             if download:
                 fname = os.path.join(self.root, str(id))
@@ -75,7 +76,7 @@ class Dataset(torch.utils.data.Dataset):
                     urllib.request.urlretrieve(url, filename=fname)
                 img = self.load_fn(fname)
             else:
-                with urllib.request.urlopen(url, timeout=0.5) as response:
+                with urllib.request.urlopen(url, timeout=timeout) as response:
                     html = response.read()
                     img = Image.open(io.BytesIO(html))
         except Exception as detail:
