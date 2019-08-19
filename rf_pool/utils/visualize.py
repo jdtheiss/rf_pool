@@ -139,7 +139,7 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
     if scores is None:
         scores = torch.zeros(heatmap.shape[0])
     scores = scores.reshape(scores.shape[0],1,1)
-    mask = (1 - torch.isnan(scores)).float()
+    mask = torch.isnan(scores).bitwise_not().float()
     scores[torch.isnan(scores)] = 0.
     score_map = scores * heatmap
     score_map = torch.div(torch.sum(score_map, 0),
