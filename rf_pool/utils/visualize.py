@@ -19,22 +19,22 @@ def plot_with_kwargs(fn, args, fn_prefix=None, **kwargs):
                  'solid_capstyle','solid_joinstyle','transform','a','url','visible',
                  'zorder']
     # get keys for fn
-    if fn == plt.colorbar:
+    if str(fn).find('colorbar') > 0:
         keys = ['mappable','pyplot','cax','ax','use_gridspec']
-    elif fn == plt.imshow:
+    elif str(fn).find('imshow') > 0:
         keys = ['X','cmap','aspect','interpolation','norm','vmax','vmin','alpha',
                 'origin','extent','shape','filternorm','filterrad']
-    elif fn == plt.plot:
-        keys = ['x','y','fmt','data','scalex','scaley']
-        keys += line_keys
-    elif fn == plt.savefig:
+    elif str(fn).find('savefig') > 0:
         keys = ['fname','dpi','facecolor','edgecolor','orientation','papertype',
                 'format','transparent','frameon','bbox_inches','pad_inches',
                 'bbox_extra_artists']
-    elif fn == plt.scatter:
+    elif str(fn).find('scatter') > 0:
         keys = ['x','y','s','c','marker','cmap','norm','vmax','vmin','alpha',
                 'linewidths','verts','edgecolors']
         keys += coll_keys
+    elif str(fn).find('plot') > 0: #TODO:regex will be better
+        keys = ['x','y','fmt','data','scalex','scaley']
+        keys += line_keys
     else:
         raise Exception('Unsupported fn: %a' % fn)
     # get kwargs
@@ -124,15 +124,21 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
     """
     #TODO:WRITEME
     """
-    # init figure, plot RF outlines in image space
-    fig = plt.figure(figsize=figsize)
+    # init figure
+    if 'ax' not in kwargs:
+        ax = plt
+        fig = plt.figure(figsize=figsize)
+    else:
+        ax = kwargs.pop('ax')
+        fig = ax.get_figure()
+    # plot RF outlines in image space
     if outline_rfs:
         mu, sigma = model.rf_to_image_space(layer_id)
         mu = mu + 0.5
         scatter_kwargs = {'s': np.prod(figsize)*sigma**2, 'alpha': 0.25,
                           'edgecolors': 'black', 'facecolors': 'none'}
         [kwargs.setdefault('RF_' + k, v) for k, v in scatter_kwargs.items()]
-        plot_with_kwargs(plt.scatter, [mu[:,1], mu[:,0]], fn_prefix='RF',
+        plot_with_kwargs(ax.scatter, [mu[:,1], mu[:,0]], fn_prefix='RF',
                          **kwargs)
     # get heatmap
     heatmap = model.rf_heatmap(layer_id)
@@ -147,18 +153,19 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
     score_map[torch.isnan(score_map)] = 0.
     # show score_map, update colorbar
     kwargs.setdefault('cmap', 'Greys')
-    plot_with_kwargs(plt.imshow, [score_map], **kwargs)
+    plot_with_kwargs(ax.imshow, [score_map], **kwargs)
     if colorbar:
-        plot_with_kwargs(plt.colorbar, [], **kwargs)
+        plot_with_kwargs(ax.colorbar, [], **kwargs)
     # add input to image using masked array
     if input is not None:
         if type(input) is np.ma.core.MaskedArray:
             ma_input = input
         else: # binary image masking out zeros
-            ma_input = np.ma.masked_array(1. - torch.gt(input, 0.), input==0.)
+            ma_input = np.ma.masked_array(torch.gt(input, 0.).bitwise_not(),
+                                          input==0.)
         kwargs.setdefault('input_cmap', 'gray')
         kwargs.setdefault('input_alpha', 1.)
-        plot_with_kwargs(plt.imshow, [ma_input], fn_prefix='input', **kwargs)
+        plot_with_kwargs(ax.imshow, [ma_input], fn_prefix='input', **kwargs)
     # remove xticks, yticks
     [kwargs.setdefault(k, v) for k, v in
     {'axis':'on', 'xticks':[], 'yticks':[]}.items()]
@@ -168,7 +175,7 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
     # save file if given
     if filename:
         kwargs.setdefault('dpi', 600.)
-        plot_with_kwargs(plt.savefig, [filename], **kwargs)
+        plot_with_kwargs(ax.savefig, [filename], **kwargs)
     # show plot
     kwargs.setdefault('show', True)
     if kwargs.get('show'):
