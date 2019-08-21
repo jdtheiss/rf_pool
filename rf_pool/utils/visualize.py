@@ -1,3 +1,5 @@
+import re
+
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -19,20 +21,20 @@ def plot_with_kwargs(fn, args, fn_prefix=None, **kwargs):
                  'solid_capstyle','solid_joinstyle','transform','a','url','visible',
                  'zorder']
     # get keys for fn
-    if str(fn).find('colorbar') > 0:
+    if re.search('[\.\s]colorbar', str(fn)):
         keys = ['mappable','pyplot','cax','ax','use_gridspec']
-    elif str(fn).find('imshow') > 0:
+    elif re.search('[\.\s]imshow', str(fn)):
         keys = ['X','cmap','aspect','interpolation','norm','vmax','vmin','alpha',
                 'origin','extent','shape','filternorm','filterrad']
-    elif str(fn).find('savefig') > 0:
+    elif re.search('[\.\s]savefig', str(fn)):
         keys = ['fname','dpi','facecolor','edgecolor','orientation','papertype',
                 'format','transparent','frameon','bbox_inches','pad_inches',
                 'bbox_extra_artists']
-    elif str(fn).find('scatter') > 0:
+    elif re.search('[\.\s]scatter', str(fn)):
         keys = ['x','y','s','c','marker','cmap','norm','vmax','vmin','alpha',
                 'linewidths','verts','edgecolors']
         keys += coll_keys
-    elif str(fn).find('plot') > 0: #TODO:regex will be better
+    elif re.search('[\.\s]plot', str(fn)):
         keys = ['x','y','fmt','data','scalex','scaley']
         keys += line_keys
     else:
@@ -131,6 +133,8 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
     else:
         ax = kwargs.pop('ax')
         fig = ax.get_figure()
+        bbox = ax.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+        figsize = [bbox.width, bbox.height]
     # plot RF outlines in image space
     if outline_rfs:
         mu, sigma = model.rf_to_image_space(layer_id)
