@@ -211,7 +211,7 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
     # save file if given
     if filename:
         kwargs.setdefault('dpi', 600.)
-        plot_with_kwargs(ax.savefig, [filename], **kwargs)
+        plot_with_kwargs(fig.savefig, [filename], **kwargs)
     # show plot
     kwargs.setdefault('show', True)
     if kwargs.get('show'):
