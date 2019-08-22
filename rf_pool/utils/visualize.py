@@ -122,7 +122,7 @@ def show_confusion_matrix(data, labels, cmap=plt.cm.afmhot):
     ax.set_yticklabels(labels.numpy(), minor=False)
     fig.colorbar(heatmap)
 
-def scatter_rfs(model, layer_id, remove=True, updates={}, figsize=(5,5), **kwargs):
+def scatter_rfs(model, layer_id, remove=False, updates={}, figsize=(5,5), **kwargs):
     # init figure
     if 'ax' not in kwargs:
         fig = plt.figure(figsize=figsize)
@@ -149,7 +149,7 @@ def scatter_rfs(model, layer_id, remove=True, updates={}, figsize=(5,5), **kwarg
     # get mu, sigma in image space
     mu, sigma = model.rf_to_image_space(layer_id)
     mu = mu + 0.5
-    sigma = sigma.squeeze()
+    sigma = sigma.squeeze(-1)
     # set array and sizes
     offsets = np.flip(mu.numpy(), 1)
     sizes = np.prod(figsize)*sigma**2
@@ -208,7 +208,7 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
         fig.colorbar(ax.images[0], ax=ax)
         # update rf scatter plot
         if outline_rfs:
-            scatter_rfs(model, layer_id, ax=ax, **kwargs)
+            scatter_rfs(model, layer_id, remove=True, ax=ax, **kwargs)
     # add input to image using masked array
     if input is not None:
         if type(input) is np.ma.core.MaskedArray:
