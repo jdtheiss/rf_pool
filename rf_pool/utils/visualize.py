@@ -128,13 +128,21 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
     """
     # init figure
     if 'ax' not in kwargs:
-        ax = plt
         fig = plt.figure(figsize=figsize)
+        ax = plt.gca()
     else:
         ax = kwargs.pop('ax')
         fig = ax.get_figure()
-        bbox = ax.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-        figsize = [bbox.width, bbox.height]
+    # set aspect equal
+    ax.set_aspect('equal', adjustable='box')
+    # get normalized h/w divide by 0.755 (size of ax without subplot)
+    bbox = np.array(ax.get_position().bounds[-2:]) / 0.755
+    # get idx for min size
+    idx = np.argmin(bbox)
+    # multiply by figure size to get appropriate size of ax object
+    figsize = (bbox[idx] * fig.get_size_inches()[idx],) * 2
+    # get heatmap
+    heatmap = model.rf_heatmap(layer_id)
     # plot RF outlines in image space
     if outline_rfs:
         mu, sigma = model.rf_to_image_space(layer_id)
@@ -144,8 +152,9 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
         [kwargs.setdefault('RF_' + k, v) for k, v in scatter_kwargs.items()]
         plot_with_kwargs(ax.scatter, [mu[:,1], mu[:,0]], fn_prefix='RF',
                          **kwargs)
-    # get heatmap
-    heatmap = model.rf_heatmap(layer_id)
+        ax.set_xlim(0, heatmap.shape[2])
+        ax.set_ylim(0, heatmap.shape[1])
+    # set scores
     if scores is None:
         scores = torch.zeros(heatmap.shape[0])
     scores = scores.reshape(scores.shape[0],1,1)
@@ -173,9 +182,9 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
     # remove xticks, yticks
     [kwargs.setdefault(k, v) for k, v in
     {'axis':'on', 'xticks':[], 'yticks':[]}.items()]
-    plt.axis(kwargs.get('axis'))
-    plt.xticks(kwargs.get('xticks'))
-    plt.yticks(kwargs.get('yticks'))
+    ax.axis(kwargs.get('axis'))
+    ax.set_xticks(kwargs.get('xticks'))
+    ax.set_yticks(kwargs.get('yticks'))
     # save file if given
     if filename:
         kwargs.setdefault('dpi', 600.)
