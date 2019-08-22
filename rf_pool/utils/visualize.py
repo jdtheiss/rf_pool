@@ -122,7 +122,7 @@ def show_confusion_matrix(data, labels, cmap=plt.cm.afmhot):
     fig.colorbar(heatmap)
 
 def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
-            filename=None, figsize=(5,5), colorbar=False, **kwargs):
+            filename=None, figsize=(5,5), **kwargs):
     """
     #TODO:WRITEME
     """
@@ -153,7 +153,7 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
         plot_with_kwargs(ax.scatter, [mu[:,1], mu[:,0]], fn_prefix='RF',
                          **kwargs)
         ax.set_xlim(0, heatmap.shape[2])
-        ax.set_ylim(0, heatmap.shape[1])
+        ax.set_ylim(heatmap.shape[1], 0)
     # set scores
     if scores is None:
         scores = torch.zeros(heatmap.shape[0])
@@ -167,8 +167,6 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
     # show score_map, update colorbar
     kwargs.setdefault('cmap', 'Greys')
     plot_with_kwargs(ax.imshow, [score_map], **kwargs)
-    if colorbar:
-        plot_with_kwargs(ax.colorbar, [], **kwargs)
     # add input to image using masked array
     if input is not None:
         if type(input) is np.ma.core.MaskedArray:
