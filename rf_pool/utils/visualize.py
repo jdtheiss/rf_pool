@@ -2,6 +2,7 @@ import re
 
 import torch
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import offsetbox
 
@@ -121,11 +122,7 @@ def show_confusion_matrix(data, labels, cmap=plt.cm.afmhot):
     ax.set_yticklabels(labels.numpy(), minor=False)
     fig.colorbar(heatmap)
 
-def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
-            filename=None, figsize=(5,5), **kwargs):
-    """
-    #TODO:WRITEME
-    """
+def scatter_rfs(model, layer_id, remove=True, figsize=(5,5), **kwargs):
     # init figure
     if 'ax' not in kwargs:
         fig = plt.figure(figsize=figsize)
@@ -133,6 +130,10 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
     else:
         ax = kwargs.pop('ax')
         fig = ax.get_figure()
+    # remove scatter plot
+    if remove:
+        [c.remove() for c in ax.get_children()
+         if type(c) is matplotlib.collections.PathCollection]
     # set aspect equal
     ax.set_aspect('equal', adjustable='box')
     # get normalized h/w divide by 0.755 (size of ax without subplot)
@@ -143,17 +144,35 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
     figsize = (bbox[idx] * fig.get_size_inches()[idx],) * 2
     # get heatmap
     heatmap = model.rf_heatmap(layer_id)
+    # get mu, sigma in image space
+    mu, sigma = model.rf_to_image_space(layer_id)
+    mu = mu + 0.5
+    scatter_kwargs = {'s': np.prod(figsize)*sigma**2, 'alpha': 0.25,
+                      'edgecolors': 'black', 'facecolors': 'none'}
+    [kwargs.setdefault('RF_' + k, v) for k, v in scatter_kwargs.items()]
+    sc = plot_with_kwargs(ax.scatter, [mu[:,1], mu[:,0]], fn_prefix='RF',
+                          **kwargs)
+    ax.set_xlim(0, heatmap.shape[2])
+    ax.set_ylim(heatmap.shape[1], 0)
+    return fig
+
+def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
+            filename=None, figsize=(5,5), colorbar=False, **kwargs):
+    """
+    #TODO:WRITEME
+    """
+    # init figure
+    if 'ax' not in kwargs:
+        fig = plt.figure(figsize=figsize)
+        ax = plt.gca()
+    else:
+        ax = kwargs.pop('ax')
+        fig = ax.get_figure()
     # plot RF outlines in image space
     if outline_rfs:
-        mu, sigma = model.rf_to_image_space(layer_id)
-        mu = mu + 0.5
-        scatter_kwargs = {'s': np.prod(figsize)*sigma**2, 'alpha': 0.25,
-                          'edgecolors': 'black', 'facecolors': 'none'}
-        [kwargs.setdefault('RF_' + k, v) for k, v in scatter_kwargs.items()]
-        plot_with_kwargs(ax.scatter, [mu[:,1], mu[:,0]], fn_prefix='RF',
-                         **kwargs)
-        ax.set_xlim(0, heatmap.shape[2])
-        ax.set_ylim(heatmap.shape[1], 0)
+        scatter_rfs(model, layer_id, ax=ax, **kwargs)
+    # get heatmap
+    heatmap = model.rf_heatmap(layer_id)
     # set scores
     if scores is None:
         scores = torch.zeros(heatmap.shape[0])
@@ -167,6 +186,12 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
     # show score_map, update colorbar
     kwargs.setdefault('cmap', 'Greys')
     plot_with_kwargs(ax.imshow, [score_map], **kwargs)
+    # colorbar
+    if colorbar:
+        fig.colorbar(ax.images[0], ax=ax)
+        # update rf scatter plot
+        if outline_rfs:
+            scatter_rfs(model, layer_id, ax=ax, **kwargs)
     # add input to image using masked array
     if input is not None:
         if type(input) is np.ma.core.MaskedArray:
