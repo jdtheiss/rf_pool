@@ -33,7 +33,7 @@ def plot_with_kwargs(fn, args, fn_prefix=None, **kwargs):
                 'bbox_extra_artists']
     elif re.search('[\.\s]scatter', str(fn)):
         keys = ['x','y','s','c','marker','cmap','norm','vmax','vmin','alpha',
-                'linewidths','verts','edgecolors']
+                'linewidths','verts','edgecolors','sizes']
         keys += coll_keys
     elif re.search('[\.\s]plot', str(fn)):
         keys = ['x','y','fmt','data','scalex','scaley']
@@ -122,7 +122,7 @@ def show_confusion_matrix(data, labels, cmap=plt.cm.afmhot):
     ax.set_yticklabels(labels.numpy(), minor=False)
     fig.colorbar(heatmap)
 
-def scatter_rfs(model, layer_id, remove=True, figsize=(5,5), **kwargs):
+def scatter_rfs(model, layer_id, remove=True, updates={}, figsize=(5,5), **kwargs):
     # init figure
     if 'ax' not in kwargs:
         fig = plt.figure(figsize=figsize)
@@ -130,10 +130,12 @@ def scatter_rfs(model, layer_id, remove=True, figsize=(5,5), **kwargs):
     else:
         ax = kwargs.pop('ax')
         fig = ax.get_figure()
-    # remove scatter plot
-    if remove:
-        [c.remove() for c in ax.get_children()
-         if type(c) is matplotlib.collections.PathCollection]
+    # get scatter plots in ax
+    sc = [c for c in ax.get_children()
+          if type(c) is matplotlib.collections.PathCollection]
+    # remove scatter plot if remove and no updates
+    if remove and len(updates) == 0:
+        [c.remove() for c in sc]
     # set aspect equal
     ax.set_aspect('equal', adjustable='box')
     # get normalized h/w divide by 0.755 (size of ax without subplot)
@@ -147,11 +149,28 @@ def scatter_rfs(model, layer_id, remove=True, figsize=(5,5), **kwargs):
     # get mu, sigma in image space
     mu, sigma = model.rf_to_image_space(layer_id)
     mu = mu + 0.5
-    scatter_kwargs = {'s': np.prod(figsize)*sigma**2, 'alpha': 0.25,
+    sigma = sigma.squeeze()
+    # set array and sizes
+    array = [mu[:,1], mu[:,0]]
+    sizes = np.prod(figsize)*sigma**2
+    # set kwargs for scatter
+    scatter_kwargs = {'sizes': sizes, 'alpha': 0.25,
                       'edgecolors': 'black', 'facecolors': 'none'}
     [kwargs.setdefault('RF_' + k, v) for k, v in scatter_kwargs.items()]
-    sc = plot_with_kwargs(ax.scatter, [mu[:,1], mu[:,0]], fn_prefix='RF',
-                          **kwargs)
+    # set scatter plot
+    if len(updates) == 0:
+        sc = plot_with_kwargs(ax.scatter, array, fn_prefix='RF', **kwargs)
+    else: # udpate
+        for sc_i in sc:
+            for key, value in updates.items():
+                fn = getattr(sc_i, 'set_' + key)
+                if value is not None:
+                    fn(value)
+                elif key in scatter_kwargs:
+                    fn(scatter_kwargs.get(key))
+                elif hasattr(sc_i, 'get_' + key):
+                    fn(getattr(sc_i, 'get_' + key))
+    # set limits to heatmap size
     ax.set_xlim(0, heatmap.shape[2])
     ax.set_ylim(heatmap.shape[1], 0)
     return fig
