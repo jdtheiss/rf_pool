@@ -151,15 +151,15 @@ def scatter_rfs(model, layer_id, remove=True, updates={}, figsize=(5,5), **kwarg
     mu = mu + 0.5
     sigma = sigma.squeeze()
     # set array and sizes
-    array = [mu[:,1], mu[:,0]]
+    offsets = np.flip(mu.numpy(), 1)
     sizes = np.prod(figsize)*sigma**2
     # set kwargs for scatter
-    scatter_kwargs = {'sizes': sizes, 'alpha': 0.25,
+    scatter_kwargs = {'offsets': offsets, 'sizes': sizes, 'alpha': 0.25,
                       'edgecolors': 'black', 'facecolors': 'none'}
     [kwargs.setdefault('RF_' + k, v) for k, v in scatter_kwargs.items()]
     # set scatter plot
     if len(updates) == 0:
-        sc = plot_with_kwargs(ax.scatter, array, fn_prefix='RF', **kwargs)
+        sc = plot_with_kwargs(ax.scatter, offsets.T, fn_prefix='RF', **kwargs)
     else: # udpate
         for sc_i in sc:
             for key, value in updates.items():
@@ -168,8 +168,6 @@ def scatter_rfs(model, layer_id, remove=True, updates={}, figsize=(5,5), **kwarg
                     fn(value)
                 elif key in scatter_kwargs:
                     fn(scatter_kwargs.get(key))
-                elif hasattr(sc_i, 'get_' + key):
-                    fn(getattr(sc_i, 'get_' + key))
     # set limits to heatmap size
     ax.set_xlim(0, heatmap.shape[2])
     ax.set_ylim(heatmap.shape[1], 0)
@@ -189,7 +187,7 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
         fig = ax.get_figure()
     # plot RF outlines in image space
     if outline_rfs:
-        scatter_rfs(model, layer_id, ax=ax, **kwargs)
+        scatter_rfs(model, layer_id, remove=False, ax=ax, **kwargs)
     # get heatmap
     heatmap = model.rf_heatmap(layer_id)
     # set scores
