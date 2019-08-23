@@ -149,7 +149,8 @@ def scatter_rfs(model, layer_id, remove=False, updates={}, figsize=(5,5), **kwar
     # get mu, sigma in image space
     mu, sigma = model.rf_to_image_space(layer_id)
     mu = mu + 0.5
-    sigma = sigma.squeeze(-1)
+    if sigma.ndimension() == 2:
+        sigma = sigma.squeeze(-1)
     # set array and sizes
     offsets = np.flip(mu.numpy(), 1)
     sizes = np.prod(figsize)*sigma**2
