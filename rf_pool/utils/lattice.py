@@ -449,7 +449,8 @@ def init_foveated_lattice(img_shape, scale, spacing, std=1., n_rf=None, n_rings=
     sigma = torch.as_tensor([s for i, s in enumerate(sigma.tolist()) if i not in remove_idx])
     return mu, sigma
 
-def init_uniform_lattice(center, n_kernel_side, spacing, sigma_init=1.):
+def init_uniform_lattice(center, n_kernel_side, spacing, sigma_init=1.,
+                         rotate=0.):
     """
     Creates a uniform lattice of kernel centers (mu)
     and standard deviations (sigma)
@@ -464,6 +465,8 @@ def init_uniform_lattice(center, n_kernel_side, spacing, sigma_init=1.):
         spacing between receptive field centers
     sigma_init : float
         standard deviation initialization [default: 1.]
+    rotate : float
+        rotation (in radians, counterclockwise) to apply to the entire array
 
     Returns
     -------
@@ -489,20 +492,27 @@ def init_uniform_lattice(center, n_kernel_side, spacing, sigma_init=1.):
     cx, cy = center
     if type(n_kernel_side) is int:
         n_kernel_side = (n_kernel_side,)*2
-    if n_kernel_side[1] % 2 == 0:
-        cx = cx + np.floor(spacing/2)
-    if n_kernel_side[0] % 2 == 0:
-        cy = cy + np.floor(spacing/2)
     lattice_coord_x = torch.arange(n_kernel_side[0]) - np.floor(n_kernel_side[0]/2)
     lattice_coord_y = torch.arange(n_kernel_side[1]) - np.floor(n_kernel_side[1]/2)
-    # x-coodinates
-    x = cx + spacing * lattice_coord_x
-    x = x.repeat(n_kernel_side[1]).reshape(n_kernel_side)
-    # y-coordinates
-    y = cy + spacing * lattice_coord_y
-    y = y.repeat(n_kernel_side[0]).reshape(n_kernel_side).t()
+    # x-coodinates, y-coordinates
+    x = spacing * lattice_coord_x.float()
+    y = spacing * lattice_coord_y.float()
+    # update based on kernel side
+    if n_kernel_side[0] % 2 == 0:
+        x = x + np.floor(spacing/2)
+    if n_kernel_side[1] % 2 == 0:
+        y = y + np.floor(spacing/2)
+    # repeat
+    x = x.repeat(n_kernel_side[1]).reshape(n_kernel_side).flatten()
+    y = y.repeat(n_kernel_side[0]).reshape(n_kernel_side).t().flatten()
+    # rotate
+    rx = np.cos(rotate) * x - np.sin(rotate) * y
+    ry = np.sin(rotate) * x + np.cos(rotate) * y
+    # center
+    x = rx + cx
+    y = ry + cy
     # mu and sigma
-    mu = torch.stack([x.flatten(),y.flatten()], dim=-1)
+    mu = torch.stack([x,y], dim=-1)
     mu = torch.as_tensor(mu, dtype=torch.float32)
     sigma = torch.ones((mu.shape[0],1), dtype=torch.float32) * sigma_init
 
