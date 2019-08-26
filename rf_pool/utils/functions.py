@@ -145,12 +145,12 @@ def param_search(fn, args, kwargs, param_name, bounds, Ns=None, verbose=True,
         plt.show()
     return cost
 
-def bootstrap(x, n_iter, fn=np.mean, fn_kwargs={}):
+def bootstrap(*args, n_samples=1000, fn=np.mean, fn_kwargs={}):
     stats = []
-    size = len(x)
-    for n in range(n_iter):
-        x_n = [x[i] for i in np.random.randint(0, size, size=size)]
-        stats.append(fn(x_n, **fn_kwargs))
+    for n in range(n_samples):
+        idx = [np.random.randint(len(x), size=len(x)) for x in args]
+        sampled_args = [np.array(x)[i] for x, i in zip(args, idx)]
+        stats.append(fn(*sampled_args, **fn_kwargs))
     return stats
 
 def repeat(x, repeats):
