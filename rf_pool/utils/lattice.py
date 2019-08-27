@@ -350,7 +350,7 @@ def mask_kernel_lattice(mu, sigma, kernel_shape):
     return mask_kernel_2d(mu, sigma, xy)
 
 def init_foveated_lattice(img_shape, scale, spacing, std=1., n_rf=None, n_rings=None,
-                          min_ecc=1., offset=[0.,0.], rotate_rings=True):
+                          min_ecc=1., offset=[0.,0.], rotate_rings=True, rotate=0.):
     """
     Creates a foveated lattice of kernel centers (mu) and
     stantard deviations (sigma)
@@ -369,6 +369,8 @@ def init_foveated_lattice(img_shape, scale, spacing, std=1., n_rf=None, n_rings=
         minimum eccentricity for gaussian rings [default: 1.]
     rotate_rings : bool
         rotate receptive fields between rings [default: False]
+    rotate : float
+        rotation (in radians, counterclockwise) to apply to the entire array
 
     Returns
     -------
@@ -435,6 +437,10 @@ def init_foveated_lattice(img_shape, scale, spacing, std=1., n_rf=None, n_rings=
     # set mu, sigma
     mu = torch.as_tensor(torch.cat(mu, dim=0), dtype=torch.float32)
     sigma = torch.cat(sigma, 0).unsqueeze(1)
+    # rotate mu
+    rx = np.cos(rotate) * mu[:,0] - np.sin(rotate) * mu[:,1]
+    ry = np.sin(rotate) * mu[:,0] + np.cos(rotate) * mu[:,1]
+    mu = torch.stack([rx,ry], dim=-1)
     # set offset of mu
     mu = mu + torch.as_tensor(offset, dtype=mu.dtype)
     # add img_shape//2 to mu
