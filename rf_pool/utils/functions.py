@@ -55,7 +55,7 @@ def gabor_filter(theta, sigma, wavelength, filter_shape, gamma=0.3):
 
 
 def param_search(fn, args, kwargs, param_name, bounds, Ns=None, verbose=True,
-                 xscale='linear'):
+                 xscale='linear', show_cost=True):
     """
     Search parameter space for given function
 
@@ -118,8 +118,9 @@ def param_search(fn, args, kwargs, param_name, bounds, Ns=None, verbose=True,
     for i, param in enumerate(param_space):
         # display progress
         clear_output(wait=True)
-        display('Progress: %a%%' % (100. * i / len(param_space)))
-        display('Cost: %a' % cost)
+        display('Progress: %0.2a%%' % (100. * i / len(param_space)))
+        if show_cost:
+            display('Cost: %a' % cost)
         if verbose:
             display('Parameter search space: %a' % param_space)
             display('Parameter value: %a' % param)
@@ -135,7 +136,8 @@ def param_search(fn, args, kwargs, param_name, bounds, Ns=None, verbose=True,
         cost.append(cost_i)
     # plot final cost
     clear_output(wait=True)
-    display('Cost: %a' % cost)
+    if show_cost:
+        display('Cost: %a' % cost)
     if verbose:
         if is_iter:
             plt.plot(np.arange(len(param_space)), cost)
