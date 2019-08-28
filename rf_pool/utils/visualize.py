@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import offsetbox
+from matplotlib import patches
 
 from . import functions
 
@@ -121,6 +122,35 @@ def show_confusion_matrix(data, labels, cmap=plt.cm.afmhot):
     ax.set_xticklabels(labels.numpy(), minor=False)
     ax.set_yticklabels(labels.numpy(), minor=False)
     fig.colorbar(heatmap)
+
+def bounding_box(ax, n_box, center, width, height, fill=False, **kwargs):
+    # set to list if not already
+    if type(center) is not list:
+        center = [center] * n_box
+    if type(width) is not list:
+        width = [width] * n_box
+    if type(height) is not list:
+        height = [height] * n_box
+    # set fill to kwargs
+    kwargs.update({'fill': fill})
+    # function to get corner from center, width, height
+    corner_fn = lambda x, w, h: (x[0] - w / 2., x[1] - h / 2.)
+    # set args
+    args = []
+    for n in range(n_box):
+        corner_n = corner_fn(center[n], width[n], height[n])
+        args.append([corner_n, width[n], height[n]])
+    # get list kwargs
+    list_keys = [k for k, v in kwargs.items()
+                 if type(v) is list and len(v) == n_box]
+    list_kwargs = []
+    for n in range(n_box):
+        list_kwargs.append(dict([(k, kwargs.get(k)[n]) for k in list_keys]))
+    [kwargs.pop(k) for k in list_keys]
+    # set rectangle
+    for arg, list_kwarg in zip(args, list_kwargs):
+        ax.add_patch(patches.Rectangle(*arg, **list_kwarg, **kwargs))
+    return ax
 
 def scatter_rfs(model, layer_id, remove=False, updates={}, figsize=(5,5), **kwargs):
     # init figure
