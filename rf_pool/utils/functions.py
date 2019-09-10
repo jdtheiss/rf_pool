@@ -4,7 +4,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy
 from scipy.io import loadmat
-from skimage.transform import resize
+try:
+    from skimage.transform import resize
+except Exception as detail:
+    print('Error: %s' % detail)
 import torch
 
 def gabor_filter(theta, sigma, wavelength, filter_shape, gamma=0.3):
