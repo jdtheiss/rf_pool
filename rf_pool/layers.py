@@ -84,12 +84,12 @@ class Layer(torch.nn.Module):
                                                    delta_sigma)))
             self.delta_sigma = delta_sigma
         # update mu if img_shape doesnt match rfs.shape[-2:]
-        if self.update_img_shape and self.rfs.shape[-2:] != self.img_shape:
+        if self.update_img_shape and self.rfs.shape[-2:] != torch.Size(self.img_shape):
             with torch.no_grad():
                 img_diff = torch.sub(torch.tensor(self.img_shape, dtype=mu.dtype),
                                      torch.tensor(self.rfs.shape[-2:], dtype=mu.dtype))
                 mu = torch.add(mu, img_diff / 2.)
-        elif self.rfs.shape[-2:] != self.img_shape:
+        elif self.rfs.shape[-2:] != torch.Size(self.img_shape):
             raise Exception('rfs.shape[-2:] != self.img_shape')
         # update mu, sigma with priority map
         if priority_map is not None:
