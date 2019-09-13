@@ -163,7 +163,7 @@ def get_adjusted_sizes(ax, size):
     s = ((trans(size_data)-trans((0,0)))*ppd)
     return np.maximum(s[:,0], s[:,1])
 
-def plot_rfs(model, layer_id, mu0=None, figsize=(5,5), **kwargs):
+def plot_rfs(model, layer_id, mu0=None, sigma0=None, figsize=(5,5), **kwargs):
     # init figure
     if 'ax' not in kwargs:
         fig = plt.figure(figsize=figsize)
@@ -188,6 +188,9 @@ def plot_rfs(model, layer_id, mu0=None, figsize=(5,5), **kwargs):
         mu0 = model.rf_to_image_space(layer_id, mu0)[0]
         offsets0 = np.flip(mu0.numpy(), 1)
         offsets = np.stack([offsets0, offsets], -1)
+    if sigma0 is not None:
+        assert sigma0.shape == sigma.shape
+        sigma = model.rf_to_image_space(layer_id, sigma0)[0]
     # set sigma sizes
     sigma = 2. * np.ceil(sigma)
     if sigma.ndimension() == 2:
