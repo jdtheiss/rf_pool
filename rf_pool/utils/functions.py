@@ -108,7 +108,7 @@ def param_search(fn, args, kwargs, param_name, bounds, Ns=None, verbose=True,
     if type(param_name) is not list:
         param_name = [param_name]
     # set param_space
-    if len(bounds) > 2:
+    if len(bounds) > 2 or Ns is None:
         param_space = bounds
     else:
         param_space = np.linspace(bounds[0], bounds[1], Ns)
@@ -151,6 +151,37 @@ def param_search(fn, args, kwargs, param_name, bounds, Ns=None, verbose=True,
     return cost
 
 def bootstrap(*args, n_samples=1000, fn=np.mean, fn_kwargs={}):
+    """
+    Get a distribution of statistics by randomly sampling from a given set of
+    values (with replacement)
+
+    Parameters
+    ----------
+    *args : array-like
+        input(s) to be resampled and passed to the statistic function
+    n_samples : int
+        number of resamples to perform [default: 1000]
+    fn : function
+        statistic function to apply to resampled distribution [default: np.mean]
+    fn_kwargs : dict
+        keyword arguments passed to the statistic function
+
+    Returns
+    -------
+    stats : list
+        distribution of statistics
+
+    Examples
+    --------
+    >>> # get bootstrapped p-value for y > x
+    >>> x = np.random.rand(100)
+    >>> y = np.random.rand(100) + 5.
+    >>> n_samples = 1000
+    >>> fn = lambda x, y: np.greater(np.mean(x), np.mean(y))
+    >>> p = np.mean(bootstrap(x, y, n_samples=n_samples, fn=fn))
+    >>> print(p)
+    0.0
+    """
     stats = []
     for n in range(n_samples):
         idx = [np.random.randint(len(x), size=len(x)) for x in args]
