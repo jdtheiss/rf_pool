@@ -17,11 +17,12 @@ def plot_with_kwargs(fn, args, fn_prefix=None, **kwargs):
     # .Line2D kwargs
     line_keys = ['alpha','animated','aa','clip_box','clip_on','clip_path','color','c',
                  'contains','dash_capstyle','dash_joinstyle','dashes','drawstyle',
-                 'figure','fillstyle','gid','label','ls','lw','marker','mec','mew',
-                 'mfc','mfcalt','ms','markevery','path_effects','picker','pickradius',
-                 'rasterized','sketch_params','length','randomness','snap',
-                 'solid_capstyle','solid_joinstyle','transform','a','url','visible',
-                 'zorder']
+                 'figure','fillstyle','gid','label','linestyle','ls','linewidth','lw',
+                 'marker','markeredgecolor','mec','markeredgewidth','mew',
+                 'markerfacecolor','mfc','markerfacecoloralt','mfcalt','markersize',
+                 'ms','markevery','path_effects','picker','pickradius','rasterized',
+                 'sketch_params','length','randomness','snap','solid_capstyle',
+                 'solid_joinstyle','transform','a','url','visible','zorder']
     # get keys for fn
     if re.search('[\.\s]colorbar', str(fn)):
         keys = ['mappable','pyplot','cax','ax','use_gridspec']
@@ -154,6 +155,66 @@ def bounding_box(ax, n_box, center, width, height, fill=False, **kwargs):
         ax.add_patch(patches.Rectangle(*arg, **list_kwarg, **kwargs))
     return fig
 
+def get_adjusted_sizes(ax, size):
+    # set sizes
+    ppd = 72./ax.figure.dpi
+    trans = ax.transData.transform
+    size_data = np.stack([size, size]).T
+    s = ((trans(size_data)-trans((0,0)))*ppd)
+    return np.maximum(s[:,0], s[:,1])
+
+def plot_rfs(model, layer_id, mu0=None, figsize=(5,5), **kwargs):
+    # init figure
+    if 'ax' not in kwargs:
+        fig = plt.figure(figsize=figsize)
+        ax = plt.gca()
+    else:
+        ax = kwargs.pop('ax')
+        fig = ax.get_figure()
+    # set aspect equal
+    ax.figure.canvas.draw()
+    ax.set_aspect('equal', adjustable='box')
+    # get heatmap
+    heatmap = model.rf_heatmap(layer_id)
+    # set limits to heatmap size
+    ax.set_xlim(0.5, heatmap.shape[2]-0.5)
+    ax.set_ylim(heatmap.shape[1]-0.5, 0.5)
+    # get mu, sigma
+    mu, sigma = model.rf_to_image_space(layer_id)
+    # set mu offsets
+    offsets = np.flip(mu.numpy(), 1)
+    if mu0 is not None:
+        assert mu0.shape == mu.shape
+        mu0 = model.rf_to_image_space(layer_id, mu0)[0]
+        offsets0 = np.flip(mu0.numpy(), 1)
+        offsets = np.stack([offsets0, offsets], -1)
+    # set sigma sizes
+    sigma = 2. * np.ceil(sigma)
+    if sigma.ndimension() == 2:
+        sigma = sigma.squeeze(-1)
+    sigma = sigma.numpy()
+    sigma = get_adjusted_sizes(ax, sigma)
+    # set kwargs for plot
+    plot_kwargs = {'markersize': sigma.tolist(), 'color': 'black',
+                   'marker': 'o', 'markevery': [int(mu0 is not None)],
+                   'markeredgecolor': 'black', 'markerfacecolor': 'none'}
+    if kwargs.get('fn_prefix') is not None:
+        fn_prefix = kwargs.get('fn_prefix') + '_'
+    else:
+        fn_prefix = ''
+    [kwargs.setdefault(fn_prefix + k, v) for k, v in plot_kwargs.items()]
+    # get list kwargs
+    list_keys = [k for k, v in kwargs.items()
+                 if type(v) is list and len(v) == mu.shape[0]]
+    list_kwargs = []
+    for n in range(mu.shape[0]):
+        list_kwargs.append(dict([(k, kwargs.get(k)[n]) for k in list_keys]))
+    [kwargs.pop(k) for k in list_keys]
+    # plot RFs
+    for i, list_kwargs in enumerate(list_kwargs):
+        plot_with_kwargs(ax.plot, offsets[i], **list_kwargs, **kwargs)
+    return fig
+
 def scatter_rfs(model, layer_id, remove=False, updates={}, figsize=(5,5), **kwargs):
     # init figure
     if 'ax' not in kwargs:
@@ -185,18 +246,18 @@ def scatter_rfs(model, layer_id, remove=False, updates={}, figsize=(5,5), **kwar
     # set mu offsets
     offsets = np.flip(mu.numpy(), 1)
     # set sizes
-    ppd = 72./ax.figure.dpi
-    trans = ax.transData.transform
-    size_data = np.stack([sigma, sigma]).T
-    s = ((trans(size_data)-trans((0,0)))*ppd)
-    s = np.minimum(s[:,0], s[:,1])
+    sigma = get_adjusted_sizes(ax, sigma)
     # set kwargs for scatter
-    scatter_kwargs = {'offsets': offsets, 'sizes': s**2, 'alpha': 0.25,
+    scatter_kwargs = {'offsets': offsets, 'sizes': sigma**2, 'alpha': 0.25,
                       'edgecolors': 'black', 'facecolors': 'none'}
-    [kwargs.setdefault('RF_' + k, v) for k, v in scatter_kwargs.items()]
+    if kwargs.get('fn_prefix') is not None:
+        fn_prefix = kwargs.get('fn_prefix') + '_'
+    else:
+        fn_prefix = ''
+    [kwargs.setdefault(fn_prefix + k, v) for k, v in scatter_kwargs.items()]
     # set scatter plot
     if len(updates) == 0:
-        sc = plot_with_kwargs(ax.scatter, offsets.T, fn_prefix='RF', **kwargs)
+        sc = plot_with_kwargs(ax.scatter, offsets.T, **kwargs)
     else: # udpate
         for sc_i in sc:
             for key, value in updates.items():
@@ -207,7 +268,7 @@ def scatter_rfs(model, layer_id, remove=False, updates={}, figsize=(5,5), **kwar
                     fn(scatter_kwargs.get(key))
     return fig
 
-def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
+def heatmap(model, layer_id, scores=None, input=None, rf_fn=scatter_rfs,
             filename=None, figsize=(5,5), colorbar=False, **kwargs):
     """
     #TODO:WRITEME
@@ -220,8 +281,8 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
         ax = kwargs.pop('ax')
         fig = ax.get_figure()
     # plot RF outlines in image space
-    if outline_rfs:
-        scatter_rfs(model, layer_id, remove=False, ax=ax, **kwargs)
+    if rf_fn:
+        rf_fn(model, layer_id, remove=False, ax=ax, fn_prefix='RF', **kwargs)
     # get heatmap
     heatmap = model.rf_heatmap(layer_id)
     # set scores
@@ -241,8 +302,8 @@ def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
     if colorbar:
         fig.colorbar(ax.images[0], ax=ax)
         # update rf scatter plot
-        if outline_rfs:
-            scatter_rfs(model, layer_id, remove=True, ax=ax, **kwargs)
+        if rf_fn:
+            rf_fn(model, layer_id, remove=True, ax=ax, fn_prefix='RF', **kwargs)
     # add input to image using masked array
     if input is not None:
         if type(input) is np.ma.core.MaskedArray:
