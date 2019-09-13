@@ -127,7 +127,8 @@ def prob_max_pool(u, out_shape, mask=None):
     if type(mask) is torch.Tensor:
         off_p_mask = torch.ones(mask.shape[:-1] + (1,), dtype=mask.dtype)
         # partition multinomials so there is no overlap
-        overlap = torch.mul(1 - torch.eq(torch.cumsum(mask, -2), 1), mask)
+        overlap = torch.mul(1. - torch.eq(torch.cumsum(mask, -2), 1).float(),
+                            mask)
         mask = torch.cat([mask - overlap, off_p_mask], -1)
     probs = local_softmax(events, -1, mask)
     probs = torch.flatten(probs, 0, -2)
@@ -613,6 +614,9 @@ def rf_pool(u, t=None, rfs=None, pool_type=None, kernel_size=None, mask_thr=1e-6
                 p_mean[:, :, r::b_h, c::b_w] = p_mean_b[:,:,:,:,(r*b_h) + c]
                 h_mean[:, :, r::b_h, c::b_w] = h_mean_b[:,:,:,:,(r*b_h) + c]
                 h_sample[:, :, r::b_h, c::b_w] = h_sample_b[:,:,:,:,(r*b_h) + c]
+
+    elif pool_type is None:
+        p_mean = h_mean = h_sample = u
 
     # function pool_type
     elif type(pool_type) is not str:
