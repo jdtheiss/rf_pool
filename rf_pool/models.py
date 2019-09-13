@@ -600,7 +600,7 @@ class Model(nn.Module):
         pre_layer_ids.reverse()
         # for each layer apply transpose convolution of ones and unpooling
         rfs = torch.unsqueeze(rf_layer.rfs, 1).detach()
-        w_shape = self.layers[layer_id].forward_layer.hidden.weight.shape[-2:]
+        w_shape = self.layers[layer_id].forward_layer.hidden.kernel_size[0]
         w = torch.ones((1, 1) + w_shape)
         heatmap = torch.conv_transpose2d(rfs, w)
         heatmap = torch.gt(heatmap, 0.).float()
@@ -614,7 +614,7 @@ class Model(nn.Module):
             # conv_transpose2d
             hidden = self.layers[id].get_modules('forward_layer', ['hidden'])
             if len(hidden) == 1 and hasattr(hidden[0], 'weight'):
-                w_shape = hidden[0].weight.shape[-2:]
+                w_shape = hidden[0].kernel_size[0]
                 w = torch.ones((1, 1) + w_shape)
                 heatmap = torch.conv_transpose2d(heatmap, w)
             heatmap = torch.gt(heatmap, 0.).float()

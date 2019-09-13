@@ -124,6 +124,8 @@ def show_confusion_matrix(data, labels, cmap=plt.cm.afmhot):
     fig.colorbar(heatmap)
 
 def bounding_box(ax, n_box, center, width, height, fill=False, **kwargs):
+    # get figure
+    fig = ax.get_figure()
     # set to list if not already
     if type(center) is not list:
         center = [center] * n_box
@@ -150,7 +152,7 @@ def bounding_box(ax, n_box, center, width, height, fill=False, **kwargs):
     # set rectangle
     for arg, list_kwarg in zip(args, list_kwargs):
         ax.add_patch(patches.Rectangle(*arg, **list_kwarg, **kwargs))
-    return ax
+    return fig
 
 def scatter_rfs(model, layer_id, remove=False, updates={}, figsize=(5,5), **kwargs):
     # init figure
@@ -167,25 +169,29 @@ def scatter_rfs(model, layer_id, remove=False, updates={}, figsize=(5,5), **kwar
     if remove and len(updates) == 0:
         [c.remove() for c in sc]
     # set aspect equal
+    ax.figure.canvas.draw()
     ax.set_aspect('equal', adjustable='box')
-    # get normalized h/w divide by 0.755 (size of ax without subplot)
-    bbox = np.array(ax.get_position().bounds[-2:]) / 0.755
-    # get idx for min size
-    idx = np.argmin(bbox)
-    # multiply by figure size to get appropriate size of ax object
-    figsize = (bbox[idx] * fig.get_size_inches()[idx],) * 2
     # get heatmap
     heatmap = model.rf_heatmap(layer_id)
+    # set limits to heatmap size
+    ax.set_xlim(0.5, heatmap.shape[2]-0.5)
+    ax.set_ylim(heatmap.shape[1]-0.5, 0.5)
     # get mu, sigma in image space
     mu, sigma = model.rf_to_image_space(layer_id)
-    mu = mu + 0.5
+    sigma = 2. * np.ceil(sigma)
     if sigma.ndimension() == 2:
         sigma = sigma.squeeze(-1)
-    # set array and sizes
+    sigma = sigma.numpy()
+    # set mu offsets
     offsets = np.flip(mu.numpy(), 1)
-    sizes = np.prod(figsize)*sigma**2
+    # set sizes
+    ppd = 72./ax.figure.dpi
+    trans = ax.transData.transform
+    size_data = np.stack([sigma, sigma]).T
+    s = ((trans(size_data)-trans((0,0)))*ppd)
+    s = np.minimum(s[:,0], s[:,1])
     # set kwargs for scatter
-    scatter_kwargs = {'offsets': offsets, 'sizes': sizes, 'alpha': 0.25,
+    scatter_kwargs = {'offsets': offsets, 'sizes': s**2, 'alpha': 0.25,
                       'edgecolors': 'black', 'facecolors': 'none'}
     [kwargs.setdefault('RF_' + k, v) for k, v in scatter_kwargs.items()]
     # set scatter plot
@@ -199,9 +205,6 @@ def scatter_rfs(model, layer_id, remove=False, updates={}, figsize=(5,5), **kwar
                     fn(value)
                 elif key in scatter_kwargs:
                     fn(scatter_kwargs.get(key))
-    # set limits to heatmap size
-    ax.set_xlim(0, heatmap.shape[2])
-    ax.set_ylim(heatmap.shape[1], 0)
     return fig
 
 def heatmap(model, layer_id, scores=None, input=None, outline_rfs=True,
