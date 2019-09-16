@@ -127,9 +127,8 @@ def prob_max_pool(u, out_shape, mask=None):
     if type(mask) is torch.Tensor:
         off_p_mask = torch.ones(mask.shape[:-1] + (1,), dtype=mask.dtype)
         # partition multinomials so there is no overlap
-        overlap = torch.mul(1. - torch.eq(torch.cumsum(mask, -2), 1).float(),
-                            mask)
-        mask = torch.cat([mask - overlap, off_p_mask], -1)
+        mask = torch.mul(mask, torch.eq(torch.cumsum(mask.bool(), 0), 1).float())
+        mask = torch.cat([mask, off_p_mask], -1)
     probs = local_softmax(events, -1, mask)
     probs = torch.flatten(probs, 0, -2)
     samples = Multinomial(probs=probs).sample()
