@@ -682,7 +682,7 @@ class DeepBeliefNetwork(Model):
         else:
             top_down = self.layers[layer_ids[-1]].gibbs_vhv(top_layer_input, k=k)[3]
         # reconstruct down to layer_id
-        post_layer_ids = self.get_layer_ids(layer_id, forward=False)[1:]
+        post_layer_ids = self.get_layer_ids(layer_id, forward=False)[1:-1]
         layer_top_down = self.apply_layers(top_down, post_layer_ids, forward=False)
         # get layer_id input
         pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
