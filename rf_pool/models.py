@@ -89,9 +89,11 @@ class Model(nn.Module):
     def n_layers(self):
         return len(self.layers)
 
-    def output_shapes(self, input_shape=None):
+    def output_shapes(self, input_shape=None, layer_ids=None):
         if input_shape is None:
             input_shape = self.data_shape
+        if layer_ids is None:
+            layer_ids = self.get_layer_ids()
         # create dummy input
         input = torch.zeros(input_shape)
         # get each layer output shape
@@ -99,9 +101,13 @@ class Model(nn.Module):
         for layer_id, layer in self.layers.named_children():
             input = layer(input)
             if type(input) is list:
-                output_shapes.append([i.shape for i in input])
+                shape_i = [i.shape for i in input]
             else:
-                output_shapes.append(input.shape)
+                shape_i = input.shape
+            if layer_id in layer_ids:
+                output_shapes.append(shape_i)
+            if layer_id == layer_ids[-1]:
+                break
         return output_shapes
 
     def append(self, layer_id, layer):
