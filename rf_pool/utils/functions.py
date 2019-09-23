@@ -231,8 +231,8 @@ def to_numpy(x):
 def to_tensor(x, is_tensor, dtype=None):
     if dtype is None:
         dtype = x.dtype
-    elif type(dtype) is str and is_tensor:
-        dtype = getattr(torch, dtype)
+    if type(dtype) is str or is_tensor:
+        dtype = getattr(torch, str(dtype))
     if is_tensor:
         x = torch.as_tensor(x, dtype=dtype)
     else:
