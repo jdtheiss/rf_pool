@@ -1,4 +1,5 @@
 import pickle
+import re
 
 import IPython.display
 from IPython.display import clear_output, display
@@ -8,6 +9,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+from . import losses
 from .modules import RBM
 from .utils import functions, visualize
 
@@ -365,8 +367,7 @@ class Model(nn.Module):
         return loss_history
 
     def optimize_texture(self, n_steps, input, seed, loss_fn, optimizer,
-                         layer_ids, module_name=None, transform=None,
-                         monitor=100, show_texture=[], **kwargs):
+                         transform=None, monitor=100, show_images=[], **kwargs):
         """
         #TODO:WRITEME
         """
@@ -374,21 +375,28 @@ class Model(nn.Module):
         on_parameters = self.get_trainable_params()
         self.set_requires_grad(pattern='', requires_grad=False)
         loss_input = input
+        # set loss_fn to LayerLoss if not
+        if torch.typename(loss_fn).find('losses') == -1:
+            loss_fn = losses.LayerLoss(self, loss_fn, **kwargs)
         # optimize texture
         loss_history = []
         running_loss = 0.
         for i in range(n_steps):
             optimizer.zero_grad()
-            # transform input, get loss
+            # transform input
             if transform:
-                loss_input = transform(input.squeeze(1)).reshape(seed.shape)
-            loss = self.add_loss([input, seed], loss_fn, layer_ids, module_name,
-                                 **kwargs)
+                if type(input) is list:
+                    loss_input = [transform(input_i.squeeze(1)).reshape(seed.shape)
+                                  for input_i in input]
+                else:
+                    loss_input = transform(input.squeeze(1)).reshape(seed.shape)
+            # get loss
+            loss = loss_fn(seed, loss_input)
             loss.backward()
             # update seed
             optimizer.step()
             running_loss += loss.item()
-            # monitor loss, show_texture
+            # monitor loss, show_images
             if (i+1) % monitor == 0:
                 # display loss
                 clear_output(wait=True)
@@ -400,8 +408,8 @@ class Model(nn.Module):
                 plt.show()
                 running_loss = 0.
                 # monitor texture
-                if show_texture:
-                    self.show_texture(*show_texture)
+                if show_images:
+                    visualize.show_images(*show_images, **kwargs)
                 functions.kwarg_fn([IPython.display, self], None, **kwargs)
         # turn on model gradients
         self.set_requires_grad(on_parameters, requires_grad=True)
@@ -463,34 +471,6 @@ class Model(nn.Module):
                 layer.sparsity(input, module_name, target_i, cost_i, l2_reg_i)
             input = layer.forward(input)
 
-    def show_texture(self, input, seed):
-        assert input.shape == seed.shape, (
-            'input and seed shapes must match'
-        )
-        # get number of input images
-        n_images = input.shape[0]
-
-        # permute, squeeze input and seed
-        input = torch.squeeze(input.permute(0,2,3,1), -1).detach()
-        seed = torch.squeeze(seed.permute(0,2,3,1), -1).detach()
-
-        # set cmap
-        if input.shape[-1] == 3:
-            cmap = None
-            input = functions.normalize_range(input)
-            seed = functions.normalize_range(seed)
-        else:
-            cmap = 'gray'
-
-        # init figure, axes
-        fig, ax = plt.subplots(n_images, 2)
-        ax = np.reshape(ax, (n_images, 2))
-        for n in range(n_images):
-            ax[n,0].imshow(input[n], cmap=cmap)
-            ax[n,1].imshow(seed[n], cmap=cmap)
-        plt.show()
-        return fig
-
     def show_lattice(self, x=None, figsize=(5,5), cmap=None):
         # get rf_layers
         rf_layers = []
@@ -527,7 +507,7 @@ class Model(nn.Module):
             w = self.layers[layer_id].apply_modules(w,'reconstruct_layer',
                                                     ['activation'])
             w = self.apply_layers(w, pre_layer_ids, forward=False)
-        return visualize.plot_images(w, img_shape, figsize, cmap)
+        return visualize.show_images(w, img_shape, figsize, cmap=cmap)
 
     def show_negative(self, input, layer_id, n_images=-1, k=1, img_shape=None,
                       figsize=(5,5), cmap=None):
