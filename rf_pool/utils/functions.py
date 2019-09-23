@@ -10,6 +10,26 @@ except Exception as detail:
     print('Error: %s' % detail)
 import torch
 
+def parse_list_args(n_iter, *args, **kwargs):
+    if n_iter == 1:
+        return [args], [kwargs]
+    list_args = []
+    list_kwargs = []
+    for n in range(n_iter):
+        list_args.append([])
+        list_kwargs.append({})
+        for arg in args:
+            if type(arg) is list and len(arg) == n_iter:
+                list_args[-1].append(arg[n])
+            else:
+                list_args[-1].append(arg)
+        for k, v in kwargs.items():
+            if type(v) is list and len(v) == n_iter:
+                list_kwargs[-1].update({k: v[n]})
+            else:
+                list_kwargs[-1].update({k: v})
+    return list_args, list_kwargs
+
 def gabor_filter(theta, sigma, wavelength, filter_shape, gamma=0.3):
     """
     Create gabor filter
