@@ -53,13 +53,13 @@ def plot_with_kwargs(fn, args, fn_prefix=None, **kwargs):
     # call function
     return fn(*args, **fn_kwargs)
 
-def plot_images(w, img_shape=None, figsize=(5, 5), cmap=None, **kwargs):
+def show_images(*args, img_shape=None, figsize=(5, 5), **kwargs):
     """
-    Plot images contained in tensor
+    Show images contained in tensor
 
     Paramaters
     ----------
-    w : torch.tensor
+    args : torch.tensor
         tensor of images to plot with ndimension == 3 or ndimension == 4
         image dimensions should be contained in w.shape[-2:] and image channels
         should be contained in w.shape[1] (optional)
@@ -67,26 +67,41 @@ def plot_images(w, img_shape=None, figsize=(5, 5), cmap=None, **kwargs):
         shape of image contained in last dimension of w [default: None]
     figsize : tuple
         figure size (passed to subplots) [default: (5, 5)]
-    cmap : str or None
-        color map (passed to imshow) [default: None]
+    n_cols : int, optional
+        number of columns for images [default: np.sqrt(imgs.shape[0]) or len(imgs)]
+    n_rows : int, optional
+        number of rows for images [default: imgs.shape[0]/n_cols or imgs[0].shape[0]]
+    **kwargs : keyword arguments
+        kwargs passed to imshow
 
     Returns
     -------
     fig : matplotlib.figure.Figure
-        figure with w.shape[0] (or w.shape[0] + w.shape[1]) images with
-        np.ceil(np.sqrt(w.shape[0])) number of rows and columns
+        figure with imgs.shape[0] (or imgs.shape[0] + imgs.shape[1]) images with
+        axes shape (n_rows, n_cols)
 
     Notes
     -----
-    If w.ndimension() == 4 and w.shape[1] > 3, dimensions 0 and 1 will be
+    If imgs.ndimension() == 4 and imgs.shape[1] > 3, dimensions 0 and 1 will be
     flattened together.
     """
+
+    # if list, set n_cols, n_rows and stack
+    if len(args) > 0:
+        kwargs.setdefault('n_cols', len(args))
+        kwargs.setdefault('n_rows', args[0].shape[0])
+        imgs = torch.stack(args).transpose(0,1).flatten(0,1)
+    else:
+        imgs = args[0]
+    imgs = torch.detach(imgs)
     # if channels > 3, reshape
-    if w.ndimension() == 4 and w.shape[1] > 3:
-        w = torch.flatten(w, 0, 1).unsqueeze(1)
+    if imgs.ndimension() == 4 and imgs.shape[1] > 3:
+        imgs = torch.flatten(imgs, 0, 1).unsqueeze(1)
     # get columns and rows
-    n_cols = np.ceil(np.sqrt(w.shape[0])).astype('int')
-    n_rows = np.ceil(w.shape[0] / n_cols).astype('int')
+    kwargs.setdefault('n_cols', np.ceil(np.sqrt(imgs.shape[0])).astype('int'))
+    n_cols = kwargs.pop('n_cols')
+    kwargs.setdefault('n_rows', np.ceil(imgs.shape[0] / n_cols).astype('int'))
+    n_rows = kwargs.pop('n_rows')
     # init figure and axes
     fig, ax = plt.subplots(n_rows, n_cols, figsize=figsize)
     ax = np.reshape(ax, (n_rows, n_cols))
@@ -94,16 +109,16 @@ def plot_images(w, img_shape=None, figsize=(5, 5), cmap=None, **kwargs):
     cnt = 0
     for r in range(n_rows):
         for c in range(n_cols):
-            if cnt >= w.shape[0]:
-                w_n = torch.zeros_like(w[0])
+            if cnt >= imgs.shape[0]:
+                img_i = torch.zeros_like(imgs[0])
             else:
-                w_n = w[cnt].detach()
+                img_i = imgs[cnt]
             if img_shape:
-                w_n = torch.reshape(w_n, (-1,) + img_shape)
-            w_n = torch.squeeze(w_n.permute(1,2,0), -1).numpy()
-            w_n = functions.normalize_range(w_n, dims=(0,1))
+                img_i = torch.reshape(img_i, (-1,) + img_shape)
+            img_i = torch.squeeze(img_i.permute(1,2,0), -1).numpy()
+            img_i = functions.normalize_range(img_i, dims=(0,1))
             ax[r,c].axis('off')
-            ax[r,c].imshow(w_n, cmap=cmap, **kwargs)
+            ax[r,c].imshow(img_i, **kwargs)
             cnt += 1
     plt.show()
     return fig
@@ -164,6 +179,7 @@ def get_adjusted_sizes(ax, size):
     return np.maximum(s[:,0], s[:,1])
 
 def plot_rfs(model, layer_id, mu0=None, sigma0=None, figsize=(5,5), **kwargs):
+    #TODO: figure out how to update RFs if colormap is added etc.
     # init figure
     if 'ax' not in kwargs:
         fig = plt.figure(figsize=figsize)
@@ -291,6 +307,7 @@ def heatmap(model, layer_id, scores=None, input=None, rf_fn=scatter_rfs,
     # set scores
     if scores is None:
         scores = torch.zeros(heatmap.shape[0])
+    scores = scores.clone()
     scores = scores.reshape(scores.shape[0],1,1)
     mask = torch.isnan(scores).bitwise_not().float()
     scores[torch.isnan(scores)] = 0.
