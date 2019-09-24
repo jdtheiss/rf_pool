@@ -125,14 +125,21 @@ class Model(nn.Module):
     def apply_layers(self, input, layer_ids=[], output_layer=None, forward=True,
                      **kwargs):
         if len(layer_ids) == 0 and output_layer is not None:
+            if type(output_layer) is not list:
+                output_layer = [output_layer]
             layer_ids = self.get_layer_ids(output_layer, forward=forward)
         layers = self.get_layers(layer_ids)
-        for layer in layers:
+        output = []
+        for layer_id, layer in zip(layer_ids, layers):
             if forward:
                 input = layer.apply_modules(input, 'forward_layer', **kwargs)
             else:
                 input = layer.apply_modules(input, 'reconstruct_layer', **kwargs)
-        return input
+            if layer_id in output_layer:
+                output.append(input)
+            else:
+                output = input
+        return output
 
     def forward(self, input):
         for name, layer in self.layers.named_children():
@@ -151,8 +158,9 @@ class Model(nn.Module):
         if not forward:
             layer_ids.reverse()
         if layer_id is not None:
-            layer_id = str(layer_id)
-            cnt = [n+1 for n, id in enumerate(layer_ids) if id == layer_id][0]
+            if type(layer_id) is not list:
+                layer_id = [layer_id]
+            cnt = [n+1 for n, id in enumerate(layer_ids) if id in layer_id][-1]
             layer_ids = layer_ids[:cnt]
         return layer_ids
 
@@ -374,24 +382,28 @@ class Model(nn.Module):
         # turn off model gradients
         on_parameters = self.get_trainable_params()
         self.set_requires_grad(pattern='', requires_grad=False)
+        # transform input
         loss_input = input
+        if transform:
+            if type(input) is list:
+                loss_input = [transform(input_i.squeeze(1)).reshape(seed.shape)
+                              for input_i in input]
+            else:
+                loss_input = transform(input.squeeze(1)).reshape(seed.shape)
         # set loss_fn to LayerLoss if not
         if torch.typename(loss_fn).find('losses') == -1:
-            loss_fn = losses.LayerLoss(self, loss_fn, **kwargs)
+            loss_fn = losses.LayerLoss(self, loss_fn, target=loss_input, **kwargs)
+            loss_input = [] # set to empty since target set in loss_fn
         # optimize texture
         loss_history = []
         running_loss = 0.
         for i in range(n_steps):
             optimizer.zero_grad()
-            # transform input
-            if transform:
-                if type(input) is list:
-                    loss_input = [transform(input_i.squeeze(1)).reshape(seed.shape)
-                                  for input_i in input]
-                else:
-                    loss_input = transform(input.squeeze(1)).reshape(seed.shape)
             # get loss
-            loss = loss_fn(seed, loss_input)
+            if len(loss_input) > 0:
+                loss = loss_fn(seed, loss_input)
+            else:
+                loss = loss_fn(seed)
             loss.backward()
             # update seed
             optimizer.step()
