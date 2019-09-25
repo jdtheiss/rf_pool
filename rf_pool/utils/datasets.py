@@ -24,7 +24,7 @@ class Dataset(torch.utils.data.Dataset):
         self.download = False
         self.timeout = 5.
         self.find_img_url = False
-        self.url_pattern = 'src="([^\s]+\.jpg)"'
+        self.url_pattern = '"([^\s]+\.jpg)"'
         self.load_fn = imageio.imread
         self.data_info = {}
         self.data = None
@@ -91,6 +91,9 @@ class Dataset(torch.utils.data.Dataset):
             if os.path.isfile(fname):
                 return self.load_fn(fname)
             # otherwise load load from html
+            url = url.replace('\\', '')
+            if not url.startswith('http'):
+                url = 'http:' + url
             req = urllib.request.Request(url, headers={'User-Agent': 'Magic Browser'})
             with urllib.request.urlopen(req, timeout=timeout) as response:
                 html = response.read()
@@ -156,6 +159,9 @@ class Dataset(torch.utils.data.Dataset):
             label = -1
         if label is None:
             label = -1
+        # call if type is fn
+        if type(img) is type(lambda x: None):
+            img = img(0)
         # get url within html if necessary
         if self.find_img_url and type(img) is str:
             img = self.get_img_url(img, pattern=self.url_pattern,
