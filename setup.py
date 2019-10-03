@@ -26,7 +26,7 @@ if os.environ.get('CC') is None and os.environ.get('CXX') is None:
         os.environ['CXX'] = gxx[0]
 
 # set extra_compile_args
-gcc_version = re.findall('^gcc-(\d)', os.environ.get('CC'))
+gcc_version = re.findall('gcc-(\d)', os.environ.get('CC'))
 if len(gcc_version) == 1:
     gcc_version = int(gcc_version[0])
 else:
