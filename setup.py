@@ -7,6 +7,8 @@ from sys import platform
 def search(path, pattern):
     output = []
     for p in path.split(os.path.pathsep):
+        if not os.path.isdir(p):
+            continue
         files = os.listdir(p)
         for f in files:
             if re.match(pattern, f):
