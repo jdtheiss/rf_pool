@@ -13,7 +13,7 @@ template <typename T>
 class pool {
 public:
     c_ops<T> ops;
-    
+    // max pool operation, set output to max value in mask at index
     void max_pool(T* array, size_t mask_size, T* mask, T* output) {
         size_t* mask_index = (size_t*) malloc(mask_size * sizeof(size_t));
         size_t index_size = ops.where(mask, 0, ops.gt, mask_size, mask_index);
@@ -61,7 +61,20 @@ static PyObject* max_pool(PyObject* self, PyObject* args)
 }
 
 static PyMethodDef pool_methods[] = {
-    {"max_pool", max_pool<float>, METH_VARARGS, ""},
+    {"max_pool", max_pool<float>, METH_VARARGS, 
+     "max_pool(array, mask)\n \
+     Parameters\n \
+     ----------\n \
+     array : numpy.ndarray\n \
+         input array with shape (batch*channel, img_height, img_width)\n \
+     mask : numpy.ndarray\n \
+         receptive field pooling mask with shape(n_RFs, img_height, img_width)\n \
+     Returns\n \
+     -------\n \
+     output : numpy.ndarray\n \
+         output array with shape (batch*channel, img_height, img_width)\n \
+         with the maximum value within each receptive field maintained and\n \
+         all other values set to zero."},
     {NULL, NULL, 0, NULL},
 };
 
@@ -77,5 +90,4 @@ PyMODINIT_FUNC PyInit_pool(void) {
     
     import_array();
     return PyModule_Create(&pool_definition);
-};
-    
+};    
