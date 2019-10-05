@@ -519,7 +519,8 @@ class Model(nn.Module):
             w = self.layers[layer_id].apply_modules(w,'reconstruct_layer',
                                                     ['activation'])
             w = self.apply_layers(w, pre_layer_ids, forward=False)
-        return visualize.show_images(w, img_shape, figsize, cmap=cmap)
+        return visualize.show_images(w, img_shape=img_shape, figsize=figsize,
+                                     cmap=cmap)
 
     def show_negative(self, input, layer_id, n_images=-1, k=1, img_shape=None,
                       figsize=(5,5), cmap=None):

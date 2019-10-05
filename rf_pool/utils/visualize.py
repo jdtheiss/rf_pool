@@ -87,7 +87,7 @@ def show_images(*args, img_shape=None, figsize=(5, 5), **kwargs):
     """
 
     # if list, set n_cols, n_rows and stack
-    if len(args) > 0:
+    if len(args) > 1:
         kwargs.setdefault('n_cols', len(args))
         kwargs.setdefault('n_rows', args[0].shape[0])
         imgs = torch.stack(args).transpose(0,1).flatten(0,1)
