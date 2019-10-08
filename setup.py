@@ -40,8 +40,8 @@ else:
     extra_compile_args = []
     
 # set pool C++ extension
-pool_module = Extension('pool', 
-                        sources=['src/pool.cpp'],
+pool_module = Extension('pool',
+                        sources=['src/poolmodule.cpp'],
                         language='C++',
                         include_dirs=[numpy.get_include()],
                         extra_compile_args=extra_compile_args,
