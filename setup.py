@@ -45,7 +45,8 @@ pool_module = Extension('pool',
                         language='C++',
                         include_dirs=[numpy.get_include()],
                         extra_compile_args=extra_compile_args,
-                       )
+                        depends=['src/ops.h','src/ops.cpp','src/pool.h','src/pool.cpp',
+                                 'src/distributions.h','src/distributions.cpp'])
 
 # get long_description
 with open('README.md', 'r') as f:

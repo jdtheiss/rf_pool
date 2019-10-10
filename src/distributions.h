@@ -1,12 +1,10 @@
 #pragma once
-#include <random>
 
-template <typename T>
+template<typename T>
 struct distributions {
-    // random generator
-    std::default_random_engine re;
-    static void random_seed(unsigned seed, std::default_random_engine re);
-    static std::uniform_real_distribution<T> uniform(T low, T high);
-    static void multinomial(const T* a, size_t size, T* output, T rand);
-    static void multinomial(const T* a, size_t size, size_t* mask, T* output, T rand);
+    static T rand();
+    static void multinomial(const T* a, size_t size, T* output);
+    static void multinomial(const T* a, size_t size, size_t* mask, T* output);
+    static void multinomial(const T* a, size_t kernel[2], size_t img_shape[2], 
+                            size_t stride[2], size_t size, T* output);
 };
