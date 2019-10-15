@@ -490,7 +490,7 @@ class Model(nn.Module):
         rf_layers = []
         for layer_id, layer in self.layers.named_children():
             pool = layer.get_modules('forward_layer', ['pool'])
-            if len(pool) == 1 and torch.typename(pool[0]).find('layers') >=0 and \
+            if len(pool) == 1 and torch.typename(pool[0]).find('pool') >=0 and \
                pool[0].rfs is not None:
                 rf_layers.append(pool[0])
         n_lattices =  len(rf_layers)
@@ -572,7 +572,7 @@ class Model(nn.Module):
 
     def rf_output(self, input, layer_id, **kwargs):
         rf_layer = self.layers[layer_id].forward_layer.pool
-        assert torch.typename(rf_layer).find('layers') > -1, (
+        assert torch.typename(rf_layer).find('pool') > -1, (
             'No rf_pool layer found.'
         )
         # get layers before layer id
@@ -593,7 +593,7 @@ class Model(nn.Module):
 
     def rf_heatmap(self, layer_id):
         rf_layer = self.layers[layer_id].forward_layer.pool
-        assert torch.typename(rf_layer).find('layers') > -1, (
+        assert torch.typename(rf_layer).find('pool') > -1, (
             'No rf_pool layer found.'
         )
         # get layers before layer id

@@ -582,7 +582,7 @@ class RBM(Module):
         x_sample = self.apply_modules(x_mean, layer_name, ['sample'])
         # get pooling x_mean, x_sample if rf_pool
         pool_module = self.get_modules(layer_name, ['pool'])
-        if len(pool_module) > 0 and torch.typename(pool_module[0]).find('layers') > 0:
+        if len(pool_module) > 0 and torch.typename(pool_module[0]).find('pool') > 0:
             x_mean, x_sample = pool_module[0].apply(x_mean, output='all')[1:]
         return x_mean, x_sample
 
