@@ -128,6 +128,8 @@ class Model(nn.Module):
             if type(output_layer) is not list:
                 output_layer = [output_layer]
             layer_ids = self.get_layer_ids(output_layer, forward=forward)
+        elif output_layer is None:
+            output_layer = []
         layers = self.get_layers(layer_ids)
         output = []
         for layer_id, layer in zip(layer_ids, layers):
