@@ -60,21 +60,30 @@ void ops<T>::elem(const T* a, T fn(T), size_t size, T* output) {
     }
 }
 template<typename T>
-void ops<T>::elem(const T* a, const T* b, T fn(T, T), size_t size, size_t* mask, T* output) {
+void ops<T>::elem(const T* a, const T* b, T fn(T, T), size_t size, const T* mask, T* output) {
     for (size_t i=0; i < size; ++i) {
-        output[mask[i]] = fn(a[mask[i]], b[mask[i]]);
+        if ((i > 0) && (mask[i] == 0)) {
+            break;
+        }
+        output[size_t(mask[i])] = fn(a[size_t(mask[i])], b[size_t(mask[i])]);
     }
 }
 template<typename T>
-void ops<T>::elem(const T* a, T b, T fn(T, T), size_t size, size_t* mask, T* output) {
+void ops<T>::elem(const T* a, T b, T fn(T, T), size_t size, const T* mask, T* output) {
     for (size_t i=0; i < size; ++i) {
-        output[mask[i]] = fn(a[mask[i]], b);
+        if ((i > 0) && (mask[i] == 0)) {
+            break;
+        }
+        output[size_t(mask[i])] = fn(a[size_t(mask[i])], b);
     }
 }
 template<typename T>
-void ops<T>::elem(const T* a, T fn(T), size_t size, size_t* mask, T* output) {
+void ops<T>::elem(const T* a, T fn(T), size_t size, const T* mask, T* output) {
     for (size_t i=0; i < size; ++i) {
-        output[mask[i]] = fn(a[mask[i]]);
+        if ((i > 0) && (mask[i] == 0)) {
+            break;
+        }
+        output[size_t(mask[i])] = fn(a[size_t(mask[i])]);
     }
 }
 // slicewise
@@ -86,6 +95,33 @@ void ops<T>::slice(const T* a, size_t start[2], size_t end[2], size_t stride[2],
         for (size_t r=start[0]; r < end[0]; r+=stride[0]) {
             for (size_t c=start[1]; c < end[1]; c+=stride[1]) {
                 output[cnt] = a[i + r * img_shape[1] + c];
+                ++cnt;
+            }
+        }
+    }
+}
+template<typename T>
+size_t ops<T>::slice_index(const T* a, size_t start[2], size_t end[2], size_t stride[2],
+                           size_t img_shape[2], size_t size, size_t* output) {
+    size_t cnt = 0;
+    for (size_t i=0; i < size; i+=(img_shape[0]*img_shape[1])) {
+        for (size_t r=start[0]; r < end[0]; r+=stride[0]) {
+            for (size_t c=start[1]; c < end[1]; c+=stride[1]) {
+                output[cnt] = i + r * img_shape[1] + c;
+                ++cnt;
+            }
+        }
+    }
+    return cnt;
+}
+template<typename T>
+void ops<T>::slice_put(const T* b, size_t start[2], size_t end[2], size_t stride[2],
+                       size_t img_shape[2], size_t size, T* output) {
+    size_t cnt = 0;
+    for (size_t i=0; i < size; i+=(img_shape[0]*img_shape[1])) {
+        for (size_t r=start[0]; r < end[0]; r+=stride[0]) {
+            for (size_t c=start[1]; c < end[1]; c+=stride[1]) {
+                output[i + r * img_shape[1] + c] = b[cnt];
                 ++cnt;
             }
         }
@@ -118,20 +154,6 @@ void ops<T>::slice_fn(const T* a, T fn(T), size_t start[2], size_t end[2],
             }
         }
     }
-}
-template<typename T>
-size_t ops<T>::slice_index(const T* a, size_t start[2], size_t end[2], size_t stride[2],
-                           size_t img_shape[2], size_t size, size_t* output) {
-    size_t cnt = 0;
-    for (size_t i=0; i < size; i+=(img_shape[0]*img_shape[1])) {
-        for (size_t r=start[0]; r < end[0]; r+=stride[0]) {
-            for (size_t c=start[1]; c < end[1]; c+=stride[1]) {
-                output[cnt] = i + r * img_shape[1] + c;
-                ++cnt;
-            }
-        }
-    }
-    return cnt;
 }
 // kernelwise
 template<typename T>
@@ -281,10 +303,13 @@ T ops<T>::sum(const T* a, size_t size) {
     return o;
 }
 template<typename T>
-T ops<T>::sum(const T* a, size_t size, size_t* mask) { 
+T ops<T>::sum(const T* a, size_t size, const T* mask) { 
     T o = 0;
     for (size_t i=0; i < size; ++i) {
-        o += a[mask[i]];
+        if ((i > 0) && (size_t(mask[i]) == 0)) {
+            break;
+        }
+        o += a[size_t(mask[i])];
     }
     return o;
 }
@@ -297,11 +322,14 @@ void ops<T>::cumsum(const T* a, size_t size, T* output) {
     }
 }
 template<typename T>
-void ops<T>::cumsum(const T* a, size_t size, size_t* mask, T* output) {
+void ops<T>::cumsum(const T* a, size_t size, const T* mask, T* output) {
     T o = 0;
     for (size_t i=0; i < size; ++i) {
-        o += a[mask[i]];
-        output[mask[i]] = o;
+        if ((i > 0) && (size_t(mask[i]) == 0)) {
+            break;
+        }
+        o += a[size_t(mask[i])];
+        output[size_t(mask[i])] = o;
     }
 }
 template<typename T>
@@ -333,7 +361,7 @@ T ops<T>::mean(const T* a, size_t size) {
     return sum(a, size) / T(size);
 }
 template<typename T>
-T ops<T>::mean(const T* a, size_t size, size_t* mask) {
+T ops<T>::mean(const T* a, size_t size, const T* mask) {
     return sum(a, size, mask) / T(size);
 }
 template<typename T>
@@ -348,7 +376,7 @@ void ops<T>::softmax(const T* a, bool include_zero, size_t size, T* output) {
     elem(output, s, div, size, output);
 }
 template<typename T>
-void ops<T>::softmax(const T* a, bool include_zero, size_t size, size_t* mask, T* output) {
+void ops<T>::softmax(const T* a, bool include_zero, size_t size, const T* mask, T* output) {
     T m = max(a, size, mask);
     elem(a, m, sub, size, mask, output);
     elem(output, exp, size, mask, output);
@@ -384,15 +412,21 @@ void ops<T>::softmax(const T* a, bool include_zero, size_t kernel[2], size_t img
 }
 // utility
 template<typename T>
-size_t ops<T>::where(const T* a, T b, T fn(T, T), size_t size, size_t* output) {
-    size_t cnt = 0;
+void ops<T>::set(T b, size_t size, T* output) {
+    // size set
     for (size_t i=0; i < size; ++i) {
-        if (fn(a[i], b)) {
-            output[cnt] = i;
-            ++cnt;
-        }
+        output[i] = b;
     }
-    return cnt;
+}
+template<typename T>
+void ops<T>::set(T b, size_t size, const T* mask, T* output) {
+    // mask set
+    for (size_t i=0; i < size; ++i) {
+        if ((i > 0) && (size_t(mask[i]) == 0)) {
+            break;
+        }
+        output[size_t(mask[i])] = b;
+    }
 }
 template<typename T>
 void ops<T>::set_array(const T* b, size_t size, T* output) {
@@ -402,32 +436,39 @@ void ops<T>::set_array(const T* b, size_t size, T* output) {
     }
 }
 template<typename T>
-void ops<T>::set_array(const T* b, size_t size, size_t* mask, T* output) {
+void ops<T>::set_array(const T* b, size_t size, const T* mask, T* output) {
     // mask set
     for (size_t i=0; i < size; ++i) {
-        output[mask[i]] = b[mask[i]];
+        if ((i > 0) && (size_t(mask[i]) == 0)) {
+            break;
+        }
+        output[size_t(mask[i])] = b[size_t(mask[i])];
     }
 }
 template<typename T>
-void ops<T>::set(T b, size_t size, T* output) {
-    // size set
-    for (size_t i=0; i < size; ++i) {
-        output[i] = b;
+void ops<T>::set_kernel(const T* b, size_t kernel[2], size_t img_shape[2],
+                        size_t stride[2], size_t size, T* output) {
+    // kernel set
+    size_t start[] = {0, 0};
+    size_t end[] = {img_shape[0], img_shape[1]};
+    for (size_t r=0; r < kernel[0]; ++r) {
+        start[0] = r;
+        end[0] = img_shape[0] - (kernel[0] - 1 - r);
+        for (size_t c=0; c < kernel[1]; ++c) {
+            start[1] = c;
+            end[1] = img_shape[1] - (kernel[1] - 1 - c);
+            // set each block in output to b
+            slice_put(b, start, end, stride, img_shape, size, output);
+        }
     }
 }
-template<typename T>
-void ops<T>::set(T b, size_t size, size_t* mask, T* output) {
-    // mask set
-    for (size_t i=0; i < size; ++i) {
-        output[mask[i]] = b;
-    }
-}
+
 template<typename T>
 void ops<T>::zeros(size_t size, T* output) {
     set(0, size, output);
 }
 template<typename T>
-void ops<T>::zeros(size_t size, size_t* mask, T* output) {
+void ops<T>::zeros(size_t size, const T* mask, T* output) {
     set(0, size, mask, output);
 }
 template<typename T>
@@ -435,40 +476,67 @@ void ops<T>::ones(size_t size, T* output) {
     set(1, size, output);
 }
 template<typename T>
-void ops<T>::ones(size_t size, size_t* mask, T* output) {
+void ops<T>::ones(size_t size, const T* mask, T* output) {
     set(1, size, mask, output);
 }
 template<typename T>
-void ops<T>::find(const T* a, T fn(T, T), size_t size, T output[2]) 
+size_t ops<T>::where(const T* a, T b, T fn(T, T), size_t size, size_t* indices) {
+    size_t cnt = 0;
+    for (size_t i=0; i < size; ++i) {
+        if (fn(a[i], b)) {
+            indices[cnt] = i;
+            ++cnt;
+        }
+    }
+    return cnt;
+}
+template<typename T>
+size_t ops<T>::slice_where(const T* a, const T* b, T fn(T, T), size_t start[2], 
+                           size_t end[2], size_t stride[2],  size_t img_shape[2], 
+                           size_t size, T* output, size_t* indices) {
+    size_t cnt = 0;
+    for (size_t i=0; i < size; i+=(img_shape[0]*img_shape[1])) {
+        for (size_t r=start[0]; r < end[0]; r+=stride[0]) {
+            for (size_t c=start[1]; c < end[1]; c+=stride[1]) {
+                size_t idx = i + r * img_shape[1] + c;
+                if (fn(a[idx], b[cnt])) {
+                    output[cnt] = a[idx];
+                    indices[cnt] = r * img_shape[1] + c;
+                }
+                ++cnt;
+            }
+        }
+    }
+    return cnt;
+}
+template<typename T>
+void ops<T>::find(const T* a, T fn(T, T), size_t size, T& value, size_t& idx)
 {
     // size find
     for (size_t i=0; i < size; ++i) {
-        if (fn(a[i], output[0])) {
-            output[0] = a[i];
-            output[1] = T(i);
+        if (fn(a[i], value)) {
+            value = a[i];
+            idx = i;
         }
     }
 }
 template<typename T>
-void ops<T>::find(const T* a, T fn(T, T), size_t size, size_t* mask, T output[2]) 
+void ops<T>::find(const T* a, T fn(T, T), size_t size, const T* mask, T& value, size_t& idx)
 {
     // mask find
     for (size_t i=0; i < size; ++i) {
-        if (fn(a[mask[i]], output[0])) {
-            output[0] = a[mask[i]];
-            output[1] = T(mask[i]);
+        if ((i > 0) && (size_t(mask[i]) == 0)) {
+            break;
+        } else if (fn(a[size_t(mask[i])], value)) {
+            value = a[size_t(mask[i])];
+            idx = size_t(mask[i]);
         }
     }
 }
 template<typename T>
 void ops<T>::find(const T* a, T fn(T, T), size_t kernel[2], size_t img_shape[2],
-                  size_t stride[2], size_t size, T* val, size_t* idx) {
+                  size_t stride[2], size_t size, T* values, size_t* indices) {
     // kernel find
-    size_t block_size = output_size(kernel, img_shape, stride, size);
-    T* block = new T[block_size];
-    size_t* block_index = new size_t[block_size];
-    T* block_eval = new T[block_size];
-    size_t* block_mask = new size_t[block_size];
     size_t start[] = {0, 0};
     size_t end[] = {img_shape[0], img_shape[1]};
     for (size_t r=0; r < kernel[0]; ++r) {
@@ -478,125 +546,148 @@ void ops<T>::find(const T* a, T fn(T, T), size_t kernel[2], size_t img_shape[2],
             start[1] = c;
             end[1] = img_shape[1] - (kernel[1] - 1 - c);
             // perform fn elemwise, find indices where true, set output
-            slice(a, start, end, stride, img_shape, size, block);
-            slice_index(a, start, end, stride, img_shape, size, block_index);
-            elem(block, val, fn, block_size, block_eval);
-            size_t mask_size = where(block_eval, 0, gt, block_size, block_mask);
-            set_array(block, mask_size, block_mask, val);
-            ops<size_t>::set_array(block_index, mask_size, block_mask, idx);
+            slice_where(a, values, fn, start, end, stride, img_shape, size, values, indices);
         }
     }
-    delete [] block;
-    delete [] block_index;
-    delete [] block_eval;
-    delete [] block_mask;
 }
 // max and min
 template<typename T>
 T ops<T>::max(const T* a, size_t size) {
-    T output[2] = {-INFINITY, -1};
-    find(a, gt, size, output);
-    return output[0];
+    T value = -INFINITY;
+    size_t idx = 0;
+    find(a, gt, size, value, idx);
+    return value;
 }
 template<typename T>
-T ops<T>::max(const T* a, size_t size, size_t* mask) {
-    T output[2] = {-INFINITY, -1};
-    find(a, gt, size, mask, output);
-    return output[0];
+T ops<T>::max(const T* a, size_t size, const T* mask) {
+    T value = -INFINITY;
+    size_t idx = 0;
+    find(a, gt, size, mask, value, idx);
+    return value;
 }
 template<typename T>
-T ops<T>::argmax(const T* a, size_t size) {
-    T output[2] = {-INFINITY, -1};
-    find(a, gt, size, output);
-    return output[1];
+void ops<T>::max(const T* a, size_t kernel[2], size_t img_shape[2], 
+                 size_t stride[2], size_t size, T* output, size_t* indices) {
+    size_t block_size = output_size(kernel, img_shape, stride, size);
+    set(-INFINITY, block_size, output);
+    find(a, gt, kernel, img_shape, stride, size, output, indices); 
 }
 template<typename T>
-T ops<T>::argmax(const T* a, size_t size, size_t* mask) {
-    T output[2] = {-INFINITY, -1};
-    find(a, gt, size, mask, output);
-    return output[1];
+size_t ops<T>::argmax(const T* a, size_t size) {
+    T value = -INFINITY;
+    size_t idx = 0;
+    find(a, gt, size, value, idx);
+    return idx;
+}
+template<typename T>
+size_t ops<T>::argmax(const T* a, size_t size, const T* mask) {
+    T value = -INFINITY;
+    size_t idx = 0;
+    find(a, gt, size, mask, value, idx);
+    return idx;
 }
 template<typename T>
 T ops<T>::min(const T* a, size_t size) {
-    T output[2] = {INFINITY, -1};
-    find(a, lt, size, output);
-    return output[0];
+    T value = INFINITY;
+    size_t idx = 0;
+    find(a, lt, size, value, idx);
+    return value;
 }
 template<typename T>
-T ops<T>::min(const T* a, size_t size, size_t* mask) {
-    T output[2] = {INFINITY, -1};
-    find(a, lt, size, mask, output);
-    return output[0];
+T ops<T>::min(const T* a, size_t size, const T* mask) {
+    T value = INFINITY;
+    size_t idx = 0;
+    find(a, lt, size, mask, value, idx);
+    return value;
 }
 template<typename T>
-T ops<T>::argmin(const T* a, size_t size) {
-    T output[2] = {INFINITY, -1};
-    find(a, lt, size, output);
-    return output[1];
+void ops<T>::min(const T* a, size_t kernel[2], size_t img_shape[2], 
+                 size_t stride[2], size_t size, T* output, size_t* indices) {
+    size_t block_size = output_size(kernel, img_shape, stride, size);
+    set(INFINITY, block_size, output);
+    find(a, lt, kernel, img_shape, stride, size, output, indices);
 }
 template<typename T>
-T ops<T>::argmin(const T* a, size_t size, size_t* mask) {
-    T output[2] = {INFINITY, -1};
-    find(a, lt, size, mask, output);
-    return output[1];
+size_t ops<T>::argmin(const T* a, size_t size) {
+    T value = INFINITY;
+    size_t idx = 0;
+    find(a, lt, size, value, idx);
+    return idx;
 }
 template<typename T>
-void ops<T>::keep_max(const T* a, size_t size, T* output) {
-    T o[2] = {-INFINITY, -1};
-    find(a, gt, size, o);
+size_t ops<T>::argmin(const T* a, size_t size, const T* mask) {
+    T value = INFINITY;
+    size_t idx = 0;
+    find(a, lt, size, mask, value, idx);
+    return idx;
+}
+template<typename T>
+void ops<T>::keep_max(const T* a, size_t size, T* output, size_t* indices) {
+    T value = -INFINITY;
+    size_t idx = 0;
+    find(a, gt, size, value, idx);
     zeros(size, output);
-    if ((o[1] > -1) & (output[size_t(o[1])] != o[0]))
-        output[size_t(o[1])] = o[0];
+    if (value > -INFINITY) {
+        output[idx] = value;
+        indices[idx] = 1;
+    }
 }
 template<typename T>
-void ops<T>::keep_max(const T* a, size_t size, size_t* mask, T* output) {
-    T o[2] = {-INFINITY, -1};
-    find(a, gt, size, mask, o);
+void ops<T>::keep_max(const T* a, size_t size, const T* mask, T* output, size_t* indices) {
+    T value = -INFINITY;
+    size_t idx = 0;
+    find(a, gt, size, mask, value, idx);
     zeros(size, mask, output);
-    if ((o[1] > -1) & (output[size_t(o[1])] != o[0]))
-        output[size_t(o[1])] = o[0];
+    if (value > -INFINITY) {
+        output[idx] = value;
+        indices[idx] = 1;
+    }
 }
 template<typename T>
 void ops<T>::keep_max(const T* a, size_t kernel[2], size_t img_shape[2], 
-                      size_t stride[2], size_t size, T* output) {
+                      size_t stride[2], size_t size, T* output, size_t* indices) {
     size_t block_size = output_size(kernel, img_shape, stride, size);
-    T* value = new T[block_size];
-    size_t* idx = new size_t[block_size];
-    set(-INFINITY, block_size, value);
-    find(a, gt, kernel, img_shape, stride, size, value, idx);
+    T* values = new T[block_size];
+    set(-INFINITY, block_size, values);
+    find(a, gt, kernel, img_shape, stride, size, values, indices);
     zeros(size, output);
     for (size_t i=0; i < block_size; ++i) {
-        output[idx[i]] = value[i];
+        output[indices[i]] = values[i];
     }
-    delete [] value;
-    delete [] idx;
+    delete [] values;
 }
 template<typename T>
-void ops<T>::set_max(const T* a, T b, size_t size, T* output) {
-    T o[2] = {-INFINITY, -1};
-    find(a, gt, size, o);
+void ops<T>::set_max(const T* a, T b, size_t size, T* output, size_t* indices) {
+    T value = -INFINITY;
+    size_t idx = 0;
+    find(a, gt, size, value, idx);
     zeros(size, output);
-    if ((o[1] > -1) & (output[size_t(o[1])] != b))
-        output[size_t(o[1])] = b;
+    if (value > -INFINITY) {
+        output[idx] = b;
+        indices[idx] = 1;
+    }
 }
 template<typename T>
-void ops<T>::set_max(const T* a, T b, size_t size, size_t* mask, T* output) {
-    T o[2] = {-INFINITY, -1};
-    find(a, gt, size, mask, o);
+void ops<T>::set_max(const T* a, T b, size_t size, const T* mask, T* output, size_t* indices) {
+    T value = -INFINITY;
+    size_t idx = 0;
+    find(a, gt, size, mask, value, idx);
     zeros(size, mask, output);
-    if ((o[1] > -1) & (output[size_t(o[1])] != b))
-        output[size_t(o[1])] = b;
+    if (value > -INFINITY) {
+        output[idx] = b;
+        indices[idx] = 1;
+    }
 }
 template<typename T>
 void ops<T>::set_max(const T* a, T b, size_t kernel[2], size_t img_shape[2], 
-                     size_t stride[2], size_t size, T* output) {
+                     size_t stride[2], size_t size, T* output, size_t* indices) {
     size_t block_size = output_size(kernel, img_shape, stride, size);
-    T* value = new T[block_size];
-    size_t* idx = new size_t[block_size];
-    set(-INFINITY, block_size, value);
-    find(a, gt, kernel, img_shape, stride, size, value, idx);
+    T* values = new T[block_size];
+    set(-INFINITY, block_size, values);
+    find(a, gt, kernel, img_shape, stride, size, values, indices);
     zeros(size, output);
-    set(b, block_size, idx, output);
-    delete [] value;
-    delete [] idx;
+    for (size_t i=0; i < block_size; ++i) {
+        output[indices[i]] = b;
+    }
+    delete [] values;
 }
