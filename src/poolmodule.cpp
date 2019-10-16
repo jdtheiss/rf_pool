@@ -9,8 +9,6 @@
 #endif
 #include "pool.cpp"
 
-static pool<float> P;
-
 template<typename T>
 static void parse_list_args(PyObject* list_arg, size_t size, T* output) {
     if (list_arg == Py_None) {
@@ -36,19 +34,33 @@ static void parse_list_args(PyObject* list_arg, size_t size, T* output) {
             output[i] = PyFloat_AsDouble(list_arg);
         }
     }
-    if (iter != NULL) {
-        Py_DECREF(iter);
+    Py_XDECREF(iter);
+}
+
+static bool check_kwargs(PyObject* kwargs, const char* key) {
+    PyObject* py_key = PyUnicode_FromString(key);
+    bool ret = false;
+    if (!PyDict_Contains(kwargs, py_key)) {
+        ret = false;
+    } else if (PyDict_GetItem(kwargs, py_key) != Py_None) {
+        ret = true;
     }
+    Py_DECREF(py_key);
+    return ret;
 }
 
 template<typename T, typename fn>
-static PyObject* rf_pool(PyObject* args, fn pool_fn)
+static PyObject* rf_pool(PyObject* args, PyObject* kwargs, fn pool_fn)
 {
     // get inputs
-    size_t len_args = PyList_Size(args);
-    PyArrayObject* array = (PyArrayObject*) PyList_GetItem(args, 0);
-    PyArrayObject* mask_indices = (PyArrayObject*) PyArray_FROM_O(PyList_GetItem(args, 1));
-    bool retain_shape = PyObject_IsTrue(PyList_GetItem(args, len_args-1));
+    PyArrayObject* array = NULL;
+    PyArrayObject* mask_indices = NULL;
+    bool retain_shape = false;
+    array = (PyArrayObject*) PyArray_FROM_O(PyTuple_GetItem(args, 0));
+    mask_indices = (PyArrayObject*) PyArray_FROM_O(PyDict_GetItemString(kwargs, "mask_indices"));
+    if (check_kwargs(kwargs, "retain_shape")) {
+        retain_shape = PyObject_IsTrue(PyDict_GetItemString(kwargs, "retain_shape"));
+    }
     
     // get ndim, dims, type from array
     int ndim_a = PyArray_NDIM(array);
@@ -69,7 +81,7 @@ static PyObject* rf_pool(PyObject* args, fn pool_fn)
         npy_intp new_dims[4];
         int cnt = 0;
         for (int i=0; i < ndim_a; ++i) {
-            if ((i == 1) & (retain_shape)) {
+            if (i == 1) {
                 new_dims[i] = dims_m[0];
             } else {
                 new_dims[i] = dims_a[cnt];
@@ -79,9 +91,11 @@ static PyObject* rf_pool(PyObject* args, fn pool_fn)
         output = (PyArrayObject*) PyArray_ZEROS(ndim_a, new_dims, type_a, 0);
         indices = (PyArrayObject*) PyArray_ZEROS(ndim_a, new_dims, NPY_LONG, 0);
     } else {
-        output = (PyArrayObject*) PyArray_ZEROS(ndim_a, dims_a, type_a, 0);
-        indices = (PyArrayObject*) PyArray_ZEROS(ndim_a, dims_a, NPY_LONG, 0);
+    output = (PyArrayObject*) PyArray_ZEROS(ndim_a, dims_a, type_a, 0);
+    indices = (PyArrayObject*) PyArray_ZEROS(ndim_a, dims_a, NPY_LONG, 0);
     }
+    PyArray_ENABLEFLAGS(output, NPY_ARRAY_OWNDATA);
+    PyArray_ENABLEFLAGS(indices, NPY_ARRAY_OWNDATA);
     
     // loop through batch*channels
     #pragma omp parallel for collapse(2)
@@ -99,24 +113,23 @@ static PyObject* rf_pool(PyObject* args, fn pool_fn)
             }
         }
     }
+    Py_DECREF(array);
     Py_DECREF(mask_indices);
-    return Py_BuildValue("(OO)", (PyObject*) output, (PyObject*) indices);
+    return Py_BuildValue("(NN)", (PyObject*) output, (PyObject*) indices);
 }
 
 template<typename T, typename fn>
-static PyObject* kernel_pool(PyObject* args, fn pool_fn, bool subsample = true)
+static PyObject* kernel_pool(PyObject* args, PyObject* kwargs, fn pool_fn, bool subsample = true)
 {
-    // get array
-    PyArrayObject* array = (PyArrayObject*) PyList_GetItem(args, 0);
-    
-    // get list vars
+    // get inputs
+    PyArrayObject* array = NULL;
     size_t kernel[2];
-    PyObject* kernel_obj = PyList_GetItem(args, 2);
-    parse_list_args<size_t>(kernel_obj, 2, kernel);
     size_t stride[2];
-    PyObject* stride_obj = PyList_GetItem(args, 3);
-    parse_list_args<size_t>(stride_obj, 2, stride);
-    if ((stride_obj == Py_None) & (kernel_obj != Py_None)) {
+    array = (PyArrayObject*) PyArray_FROM_O(PyTuple_GetItem(args, 0));
+    parse_list_args<size_t>(PyDict_GetItemString(kwargs, "kernel_size"), 2, kernel);
+    if (check_kwargs(kwargs, "stride")) {
+        parse_list_args<size_t>(PyDict_GetItemString(kwargs, "stride"), 2, stride);
+    } else {
         stride[0] = kernel[0];
         stride[1] = kernel[1];
     }
@@ -142,6 +155,8 @@ static PyObject* kernel_pool(PyObject* args, fn pool_fn, bool subsample = true)
     }
     PyArrayObject* output = (PyArrayObject*) PyArray_ZEROS(ndim_a, dims_a, type_a, 0);
     PyArrayObject* indices = (PyArrayObject*) PyArray_ZEROS(ndim_a, dims_a, NPY_LONG, 0);
+    PyArray_ENABLEFLAGS(output, NPY_ARRAY_OWNDATA);
+    PyArray_ENABLEFLAGS(indices, NPY_ARRAY_OWNDATA);
     
     // loop through batch*channels
     #pragma omp parallel for 
@@ -149,24 +164,23 @@ static PyObject* kernel_pool(PyObject* args, fn pool_fn, bool subsample = true)
         pool_fn((T*) PyArray_GETPTR1(array, i), kernel, img_shape, stride, img_size, 
                 (T*) PyArray_GETPTR1(output, i), (size_t*) PyArray_GETPTR1(indices, i));
     }
-    
-    return Py_BuildValue("(OO)", (PyObject*) output, (PyObject*) indices);
+    Py_DECREF(array);
+    return Py_BuildValue("(NN)", (PyObject*) output, (PyObject*) indices);
 }
 
 template<typename T, typename fn>
-static PyObject* kernel_unpool(PyObject* args, fn unpool_fn)
+static PyObject* kernel_unpool(PyObject* args, PyObject* kwargs, fn unpool_fn)
 {
-    // get array
-    PyArrayObject* array = (PyArrayObject*) PyList_GetItem(args, 0);
-    
-    // get list vars
+    // get inputs
+    PyArrayObject* array = NULL;
+    PyArrayObject* mask = NULL;
     size_t kernel[2];
-    PyObject* kernel_obj = PyList_GetItem(args, 2);
-    parse_list_args<size_t>(kernel_obj, 2, kernel);
     size_t stride[2];
-    PyObject* stride_obj = PyList_GetItem(args, 3);
-    parse_list_args<size_t>(stride_obj, 2, stride);
-    if ((stride_obj == Py_None) & (kernel_obj != Py_None)) {
+    array = (PyArrayObject*) PyArray_FROM_O(PyTuple_GetItem(args, 0));
+    parse_list_args<size_t>(PyDict_GetItemString(kwargs, "kernel_size"), 2, kernel);
+    if (check_kwargs(kwargs, "stride")) {
+        parse_list_args<size_t>(PyDict_GetItemString(kwargs, "stride"), 2, stride);
+    } else {
         stride[0] = kernel[0];
         stride[1] = kernel[1];
     }
@@ -185,15 +199,16 @@ static PyObject* kernel_unpool(PyObject* args, fn unpool_fn)
         }
     }
     PyArrayObject* output = (PyArrayObject*) PyArray_ZEROS(ndim_a, dims_a, type_a, 0);
+    PyArray_ENABLEFLAGS(output, NPY_ARRAY_OWNDATA);
     
     // get mask
-    PyArrayObject* mask;
-    if (PyList_GetItem(args, 1) != Py_None) {
-        mask = (PyArrayObject*) PyArray_FROM_OT(PyList_GetItem(args, 1), type_a);
+    if (PyDict_Contains(kwargs, PyUnicode_FromString("mask"))) {
+        mask = (PyArrayObject*) PyArray_FROM_OT(PyDict_GetItemString(kwargs, "mask"), type_a);
     } else {
         mask = (PyArrayObject*) PyArray_ZEROS(ndim_a, dims_a, type_a, 0);
         PyArray_FillWithScalar(mask, PyFloat_FromDouble(1));
     }
+    PyArray_ENABLEFLAGS(mask, NPY_ARRAY_OWNDATA);
     
     // set img_shape
     size_t img_shape[] = {size_t(dims_a[ndim_a - 2]), size_t(dims_a[ndim_a - 1])};
@@ -201,128 +216,143 @@ static PyObject* kernel_unpool(PyObject* args, fn unpool_fn)
     // call kernel pooling function
     unpool_fn((T*) PyArray_DATA(array), kernel, img_shape, stride, PyArray_SIZE(output), 
               (T*) PyArray_DATA(mask), (T*) PyArray_DATA(output));
+    Py_DECREF(array);
     Py_DECREF(mask);
     return (PyObject*) output;
-}
-
-static PyObject* parse_args(PyObject* self, PyObject* args, PyObject* kwargs)
-{
-    PyArrayObject* array = NULL;
-    PyObject* mask_obj = Py_None;
-    PyObject* kernel_obj = Py_None;
-    PyObject* stride_obj = Py_None;
-    PyObject* retain_shape = Py_False;
-
-    static char const* kwlist[] = {"array", "mask_indices", "kernel_size",
-                                   "stride", "retain_shape", NULL};
-    // parse inputs
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O!|OOOO", 
-                                     const_cast<char**>(kwlist), 
-                                     &PyArray_Type, &array, &mask_obj,
-                                     &kernel_obj, &stride_obj,
-                                     &retain_shape))
-        return NULL;
-    
-    // return list of input args/kwargs
-    return Py_BuildValue("[OOOOO]", (PyObject*) array, mask_obj, kernel_obj, stride_obj, retain_shape);
 }
 
 template<typename T, typename rf_fn, typename kernel_fn>
 static PyObject* max_pool(PyObject* self, PyObject* args, PyObject* kwargs)
 {   
-    // apply pooling functions
-    PyObject* inputs = parse_args(self, args, kwargs);
-    PyObject* output_tuple = Py_None;
+    // apply rf pooling function
+    PyObject* output_tuple = NULL;
     PyObject* index_mask = Py_None;
-    if (PyList_GetItem(inputs, 1) != Py_None) {
-        output_tuple = rf_pool<T, rf_fn>(inputs, P.rf_max_pool);
+    if (check_kwargs(kwargs, "mask_indices")) {
+        output_tuple = rf_pool<T, rf_fn>(args, kwargs, pool<T>::rf_max_pool);
         index_mask = PyTuple_GetItem(output_tuple, 1);
-        PyList_SetItem(inputs, 0, PyTuple_GetItem(output_tuple, 0));
+        Py_INCREF(index_mask);
     }
+    // apply kernel pooling function
     PyObject* index_kernel = Py_None;
-    if (PyList_GetItem(inputs, 2) != Py_None) {
-        output_tuple = kernel_pool<T, kernel_fn>(inputs, P.kernel_max_pool);
+    if (check_kwargs(kwargs, "kernel_size")) {
+        if (check_kwargs(kwargs, "mask_indices")) {
+            PyObject* local_args = PyTuple_GetSlice(output_tuple, 0, 1);
+            Py_DECREF(output_tuple);
+            output_tuple = kernel_pool<T, kernel_fn>(local_args, kwargs, pool<T>::kernel_max_pool);
+            Py_DECREF(local_args);
+        } else {
+            output_tuple = kernel_pool<T, kernel_fn>(args, kwargs, pool<T>::kernel_max_pool);
+        }
         index_kernel = PyTuple_GetItem(output_tuple, 1);
+        Py_INCREF(index_kernel);
     }
+    // set output
     PyObject* output = PyTuple_GetItem(output_tuple, 0);
-    Py_DECREF(output_tuple);
-    return Py_BuildValue("(OOO)", output, index_mask, index_kernel);
+    Py_INCREF(output);
+    Py_XDECREF(output_tuple);
+    return Py_BuildValue("(NNN)", output, index_mask, index_kernel);
 }
 
 template<typename T, typename rf_fn, typename kernel_fn>
 static PyObject* probmax(PyObject* self, PyObject* args, PyObject* kwargs)
 {
-    // apply pooling functions
-    PyObject* inputs = parse_args(self, args, kwargs);
-    PyObject* output_tuple = Py_None;
-    PyObject* index_mask = Py_None;
+    // apply kernel pooling function
+    PyObject* output_tuple = NULL;
     PyObject* index_kernel = Py_None;
-    if (PyList_GetItem(inputs, 2) != Py_None) {
-        output_tuple = kernel_pool<T, kernel_fn>(inputs, P.kernel_probmax_pool, false);
+    if (check_kwargs(kwargs, "kernel_size")) {
+        output_tuple = kernel_pool<T, kernel_fn>(args, kwargs, pool<T>::kernel_probmax);
         index_kernel = PyTuple_GetItem(output_tuple, 1);
+        Py_INCREF(index_kernel);
     }
-    if (PyList_GetItem(inputs, 1) != Py_None) {
-        output_tuple = rf_pool<T, rf_fn>(inputs, P.rf_probmax_pool);
+    // apply rf pooling function
+    PyObject* index_mask = Py_None;
+    if (check_kwargs(kwargs, "mask_indices")) {
+        if (check_kwargs(kwargs, "kernel_size")) {
+            PyObject* local_args = PyTuple_GetSlice(output_tuple, 0, 1);
+            Py_DECREF(output_tuple);
+            output_tuple = rf_pool<T, rf_fn>(local_args, kwargs, pool<T>::rf_probmax_pool);
+        } else {
+            output_tuple = rf_pool<T, rf_fn>(args, kwargs, pool<T>::rf_probmax_pool);
+        }
         index_mask = PyTuple_GetItem(output_tuple, 1);
-        PyList_SetItem(inputs, 0, PyTuple_GetItem(output_tuple, 0));
+        Py_INCREF(index_mask);
     }
+    // set output
     PyObject* output = PyTuple_GetItem(output_tuple, 0);
-    Py_DECREF(output_tuple);
-    return Py_BuildValue("(OOO)", output, index_mask, index_kernel);
+    Py_INCREF(output);
+    Py_XDECREF(output_tuple);
+    return Py_BuildValue("(NNN)", output, index_mask, index_kernel);
 }
 
 template<typename T, typename rf_fn, typename kernel_fn>
 static PyObject* probmax_pool(PyObject* self, PyObject* args, PyObject* kwargs)
 {
-    // apply pooling functions
-    PyObject* inputs = parse_args(self, args, kwargs);
-    PyObject* output_tuple = Py_None;
-    PyObject* index_mask = Py_None;
+    // apply kernel pooling function
+    PyObject* output_tuple = NULL;
     PyObject* index_kernel = Py_None;
-    if (PyList_GetItem(inputs, 2) != Py_None) {
-        output_tuple = kernel_pool<T, kernel_fn>(inputs, P.kernel_probmax_pool);
+    if (check_kwargs(kwargs, "kernel_size")) {
+        output_tuple = kernel_pool<T, kernel_fn>(args, kwargs, pool<T>::kernel_probmax_pool);
         index_kernel = PyTuple_GetItem(output_tuple, 1);
+        Py_INCREF(index_kernel);
     }
-    if (PyList_GetItem(inputs, 1) != Py_None) {
-        output_tuple = rf_pool<T, rf_fn>(inputs, P.rf_probmax_pool);
+    // apply rf pooling function
+    PyObject* index_mask = Py_None;
+    if (check_kwargs(kwargs, "mask_indices")) {
+        if (check_kwargs(kwargs, "kernel_size")) {
+            PyObject* local_args = PyTuple_GetSlice(output_tuple, 0, 1);
+            Py_DECREF(output_tuple);
+            output_tuple = rf_pool<T, rf_fn>(local_args, kwargs, pool<T>::rf_probmax_pool);
+        } else {
+            output_tuple = rf_pool<T, rf_fn>(args, kwargs, pool<T>::rf_probmax_pool);
+        }
         index_mask = PyTuple_GetItem(output_tuple, 1);
-        PyList_SetItem(inputs, 0, PyTuple_GetItem(output_tuple, 0));
+        Py_INCREF(index_mask);
     }
+    // set output
     PyObject* output = PyTuple_GetItem(output_tuple, 0);
-    Py_DECREF(output_tuple);
-    return Py_BuildValue("(OOO)", output, index_mask, index_kernel);
+    Py_INCREF(output);
+    Py_XDECREF(output_tuple);
+    return Py_BuildValue("(NNN)", output, index_mask, index_kernel);
 }
 
 template<typename T, typename rf_fn, typename kernel_fn>
 static PyObject* stochastic_pool(PyObject* self, PyObject* args, PyObject* kwargs)
 {   
-    // apply pooling functions
-    PyObject* inputs = parse_args(self, args, kwargs);
-    PyObject* output_tuple = Py_None;
+    // apply rf pooling function
+    PyObject* output_tuple = NULL;
     PyObject* index_mask = Py_None;
-    if (PyList_GetItem(inputs, 1) != Py_None) {
-        output_tuple = rf_pool<T, rf_fn>(inputs, P.rf_stochastic_pool);
+    if (check_kwargs(kwargs, "mask_indices")) {
+        output_tuple = rf_pool<T, rf_fn>(args, kwargs, pool<T>::rf_stochastic_pool);
         index_mask = PyTuple_GetItem(output_tuple, 1);
-        PyList_SetItem(inputs, 0, PyTuple_GetItem(output_tuple, 0));
+        Py_INCREF(index_mask);
     }
+    // apply kernel pooling function
     PyObject* index_kernel = Py_None;
-    if (PyList_GetItem(inputs, 2) != Py_None) {
-        output_tuple = kernel_pool<T, kernel_fn>(inputs, P.kernel_stochastic_pool);
+    if (check_kwargs(kwargs, "kernel_size")) {
+        if (check_kwargs(kwargs, "mask_indices")) {
+            PyObject* local_args = PyTuple_GetSlice(output_tuple, 0, 1);
+            Py_DECREF(output_tuple);
+            output_tuple = kernel_pool<T, kernel_fn>(local_args, kwargs, pool<T>::kernel_stochastic_pool);
+            Py_DECREF(local_args);
+        } else {
+            output_tuple = kernel_pool<T, kernel_fn>(args, kwargs, pool<T>::kernel_stochastic_pool);
+        }
         index_kernel = PyTuple_GetItem(output_tuple, 1);
+        Py_INCREF(index_kernel);
     }
+    // set output
     PyObject* output = PyTuple_GetItem(output_tuple, 0);
-    Py_DECREF(output_tuple);
-    return Py_BuildValue("(OOO)", output, index_mask, index_kernel);
+    Py_INCREF(output);
+    Py_XDECREF(output_tuple);
+    return Py_BuildValue("(NNN)", output, index_mask, index_kernel);
 }
 
 template<typename T, typename grad_fn>
 static PyObject* unpool(PyObject* self, PyObject* args, PyObject* kwargs)
 {   
     // apply unpooling functions
-    PyObject* input_tuple = parse_args(self, args, kwargs);
-    PyObject* output = kernel_unpool<T, grad_fn>(input_tuple, P.kernel_unpool);
-    Py_DECREF(input_tuple);
-    return Py_BuildValue("(O)", output);
+    PyObject* output = kernel_unpool<T, grad_fn>(args, kwargs, pool<T>::kernel_unpool);
+    return Py_BuildValue("(N)", output);
 }
 
 typedef void (rf_fn)(const float*, size_t, const float*, float*, size_t*);

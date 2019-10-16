@@ -555,41 +555,9 @@ def stochastic_pool(input, **kwargs):
     return apply(input, pool_fn='stochastic_pool', **kwargs)
 
 def unpool(input, index_mask, **kwargs):
-    return apply(input, rf_indices=index_mask, pool_fn='unpool', **kwargs)
+    return apply(input, pool_fn='unpool', mask=index_mask, **kwargs)
 
-def _apply_grad(grad_output, grad_input, grad_fn=None, index_mask=None,
-                index_kernel=None, kernel_size=None, stride=None):
-    # if no grad_fn, use indices
-    if grad_fn is None:
-        if index_kernel is not None:
-            grad_input.flatten(2).scatter_(2, index_kernel.flatten(2),
-                                           grad_output.flatten(2));
-        else:
-            grad_input = grad_output
-        if index_mask is not None:
-            index_mask = torch.where(index_mask == 0)
-            grad_input[index_mask] = 0.
-        return grad_input
-
-    # assert pool_fn in pool and get pool_grad
-    assert hasattr(pool, grad_fn)
-    grad_fn = getattr(pool, grad_fn)
-
-    # set input kwargs
-    keys = ['mask_indices', 'kernel_size', 'stride']
-    args = [indices, kernel_size, stride]
-    kwargs = dict([(k,d) for (k, d) in zip(keys, args)])
-
-    # apply grad function
-    input = grad_output.data.flatten(0,1).numpy()
-    grad_input = grad_fn(input, **kwargs)
-    grad_input = torch.as_tensor(grad_input, dtype=grad_output.dtype)
-    output_shape = grad_output.shape[:2] + grad_input.shape[2:]
-    grad_input = grad_input.reshape(output_shape)
-
-    return grad_input
-
-def apply(u, rf_indices=None, pool_fn=None, kernel_size=None,
+def apply(u, pool_fn=None, rf_indices=None, kernel_size=None,
           stride=None, retain_shape=False, return_indices=False, **kwargs):
     """
     Receptive field pooling
@@ -637,7 +605,7 @@ def apply(u, rf_indices=None, pool_fn=None, kernel_size=None,
     """
 
     # get input shape
-    batch_size, ch, u_h, u_w = u.shape
+    batch_size, ch = u.shape[:2]
 
     # if no pool_fn, return u
     if pool_fn is None:
@@ -660,11 +628,12 @@ def apply(u, rf_indices=None, pool_fn=None, kernel_size=None,
     kwargs.setdefault('retain_shape', retain_shape)
 
     # apply cpp pooling function
-    input = u.data.numpy().reshape(-1, u_h, u_w)
+    input = u.data.flatten(0,1)
     outputs = list(pool_fn(input, **kwargs))
     for i, output in enumerate(outputs):
         if output is not None:
-            output = output.reshape((batch_size, ch,) + output.shape[1:])
+            output_shape = (batch_size, ch,) + output.shape[1:]
+            output = output.reshape(output_shape)
             outputs[i] = torch.as_tensor(output)
 
     # return without grad if less than 3 outputs
@@ -679,6 +648,38 @@ def apply(u, rf_indices=None, pool_fn=None, kernel_size=None,
         return _PoolGrad_with_indices.apply(*grad_args)
 
     return _PoolGrad.apply(*grad_args)
+
+def _apply_grad(grad_output, grad_input, grad_fn=None, index_mask=None,
+                index_kernel=None, kernel_size=None, stride=None):
+    # if no grad_fn, use indices
+    if grad_fn is None:
+        if index_kernel is not None:
+            grad_input.flatten(2).scatter_(2, index_kernel.flatten(2),
+                                           grad_output.flatten(2));
+        else:
+            grad_input = grad_output
+        if index_mask is not None:
+            index_mask = torch.where(index_mask == 0)
+            grad_input[index_mask] = 0.
+        return grad_input
+
+    # assert pool_fn in pool and get pool_grad
+    assert hasattr(pool, grad_fn)
+    grad_fn = getattr(pool, grad_fn)
+
+    # set input kwargs
+    keys = ['mask_indices', 'kernel_size', 'stride']
+    args = [indices, kernel_size, stride]
+    kwargs = dict([(k,d) for (k, d) in zip(keys, args)])
+
+    # apply grad function
+    input = grad_output.data.flatten(0,1)
+    grad_input = grad_fn(input, **kwargs)
+    grad_input = torch.as_tensor(grad_input, dtype=grad_output.dtype)
+    output_shape = grad_output.shape[:2] + grad_input.shape[2:]
+    grad_input = grad_input.reshape(output_shape)
+
+    return grad_input
 
 class _PoolGrad(Function):
     @staticmethod
@@ -704,6 +705,10 @@ class _PoolGrad_with_indices(Function):
         ctx.grad_args = args
         ctx.save_for_backward(input)
         output.requires_grad_(input.requires_grad)
+        if args[0] is None:
+            return output, args[1]
+        elif args[1] is None:
+            return output, args[0]
         return output, args[0], args[1]
 
     @staticmethod
