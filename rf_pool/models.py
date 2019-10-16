@@ -124,14 +124,15 @@ class Model(nn.Module):
 
     def apply_layers(self, input, layer_ids=[], output_layer=None, forward=True,
                      **kwargs):
+        output = []
         if len(layer_ids) == 0 and output_layer is not None:
             if type(output_layer) is not list:
                 output_layer = [output_layer]
             layer_ids = self.get_layer_ids(output_layer, forward=forward)
         elif output_layer is None:
+            output = input
             output_layer = []
         layers = self.get_layers(layer_ids)
-        output = []
         for layer_id, layer in zip(layer_ids, layers):
             if forward:
                 input = layer.apply_modules(input, 'forward_layer', **kwargs)
