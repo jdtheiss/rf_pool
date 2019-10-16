@@ -542,6 +542,12 @@ def max_pool(input, **kwargs):
     kwargs.setdefault('grad_fn', None)
     return apply(input, pool_fn='max_pool', **kwargs)
 
+def probmax(input, **kwargs):
+    if 'rfs' in kwargs:
+        kwargs.setdefault('rf_indices', rf_to_indices(kwargs.pop('rfs')))
+    kwargs.setdefault('grad_fn', None)
+    return apply(input, pool_fn='probmax', **kwargs)
+
 def probmax_pool(input, **kwargs):
     if 'rfs' in kwargs:
         kwargs.setdefault('rf_indices', rf_to_indices(kwargs.pop('rfs')))

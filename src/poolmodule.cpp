@@ -260,7 +260,7 @@ static PyObject* probmax(PyObject* self, PyObject* args, PyObject* kwargs)
     PyObject* output_tuple = NULL;
     PyObject* index_kernel = Py_None;
     if (check_kwargs(kwargs, "kernel_size")) {
-        output_tuple = kernel_pool<T, kernel_fn>(args, kwargs, pool<T>::kernel_probmax);
+        output_tuple = kernel_pool<T, kernel_fn>(args, kwargs, pool<T>::kernel_probmax, false);
         index_kernel = PyTuple_GetItem(output_tuple, 1);
         Py_INCREF(index_kernel);
     }
@@ -373,8 +373,6 @@ static PyMethodDef pool_methods[] = {
          receptive field pooling indices with shape(n_RFs, img_height * img_width)\n \
      kernel_size : tuple or int, optional\n \
          pooling kernel to apply for kernel pooling (e.g., 2x2 MaxPool)\n \
-     img_shape : tuple or int, optional\n \
-         image shape used for kernel pooling\n \
      stride : tuple or int, optional\n \
          stride used for kernel pooling [default : kernel]\n\n \
      Returns\n \
@@ -399,8 +397,6 @@ static PyMethodDef pool_methods[] = {
          receptive field pooling indices with shape(n_RFs, img_height * img_width)\n \
      kernel_size : tuple or int, optional\n \
          pooling kernel to apply for kernel pooling (e.g., 2x2 MaxPool)\n \
-     img_shape : tuple or int, optional\n \
-         image shape used for kernel pooling\n \
      stride : tuple or int, optional\n \
          stride used for kernel pooling [default : kernel]\n\n \
      Returns\n \
@@ -431,8 +427,6 @@ static PyMethodDef pool_methods[] = {
          receptive field pooling indices with shape(n_RFs, img_height/kernel[0] * img_width/kernel[1])\n \
      kernel_size : tuple or int, optional\n \
          pooling kernel to apply for kernel pooling (e.g., 2x2 MaxPool)\n \
-     img_shape : tuple or int, optional\n \
-         image shape used for kernel pooling\n \
      stride : tuple or int, optional\n \
          stride used for kernel pooling [default : kernel]\n\n \
      Returns\n \
@@ -462,8 +456,6 @@ static PyMethodDef pool_methods[] = {
          receptive field pooling indices with shape(n_RFs, img_height * img_width)\n \
      kernel_size : tuple or int, optional\n \
          pooling kernel to apply for kernel pooling (e.g., 2x2 MaxPool)\n \
-     img_shape : tuple or int, optional\n \
-         image shape used for kernel pooling\n \
      stride : tuple or int, optional\n \
          stride used for kernel pooling [default : kernel]\n\n \
      Returns\n \
@@ -490,8 +482,6 @@ static PyMethodDef pool_methods[] = {
          receptive field pooling mask with shape(n_RFs, img_height, img_width)\n \
      kernel_size : tuple or int, optional\n \
          pooling kernel to apply for kernel pooling (e.g., 2x2 MaxPool)\n \
-     img_shape : tuple or int, optional\n \
-         image shape used for kernel pooling\n \
      stride : tuple or int, optional\n \
          stride used for kernel pooling [default : kernel]\n\n \
      Returns\n \
