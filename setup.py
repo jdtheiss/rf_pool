@@ -16,6 +16,7 @@ def search(path, pattern):
     return output
 
 # set CC, CXX
+gcc_version = []
 if os.environ.get('CC') is None and os.environ.get('CXX') is None:
     path=os.getenv('PATH')
     gcc = search(path, '^gcc-\d+$')
@@ -26,7 +27,8 @@ if os.environ.get('CC') is None and os.environ.get('CXX') is None:
         os.environ['CXX'] = gxx[0]
 
 # set extra_compile_args
-gcc_version = re.findall('gcc-(\d)', os.environ.get('CC'))
+if os.environ.get('CC') is not None:
+    gcc_version = re.findall('gcc-(\d)', os.environ.get('CC'))
 if len(gcc_version) == 1:
     gcc_version = int(gcc_version[0])
 else:
