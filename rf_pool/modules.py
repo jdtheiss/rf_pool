@@ -578,12 +578,13 @@ class RBM(Module):
     def sample(self, x, layer_name):
         # get activation
         x_mean = self.apply_modules(x, layer_name, ['activation'])
-        # sample from x_mean
-        x_sample = self.apply_modules(x_mean, layer_name, ['sample'])
         # get pooling x_mean, x_sample if rf_pool
         pool_module = self.get_modules(layer_name, ['pool'])
         if len(pool_module) > 0 and torch.typename(pool_module[0]).find('pool') > 0:
-            x_mean, x_sample = pool_module[0].apply(x_mean, output='all')[1:]
+            pool_fn = pool_module[0].pool_fn.replace('_pool', '')
+            x_mean = pool_module[0](x_mean, pool_fn=pool_fn)
+        # sample from x_mean
+        x_sample = self.apply_modules(x_mean, layer_name, ['sample'])
         return x_mean, x_sample
 
     def sample_h_given_v(self, v):
@@ -1120,14 +1121,6 @@ class CRBM(RBM):
             else:
                 out = loss
         return out.item()
-
-class ssRBM(RBM):
-    """
-    #TODO:WRITEME
-    """
-    def __init__(self, **kwargs):
-        super(ssRBM, self).__init__(**kwargs)
-        raise NotImplementedError
 
 if __name__ == '__main__':
     import doctest
