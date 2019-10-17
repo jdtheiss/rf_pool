@@ -98,7 +98,7 @@ static PyObject* rf_pool(PyObject* args, PyObject* kwargs, fn pool_fn)
     PyArray_ENABLEFLAGS(indices, NPY_ARRAY_OWNDATA);
     
     // loop through batch*channels
-    #pragma omp parallel for collapse(2)
+    #pragma omp parallel for collapse(2) num_threads(4)
     for (size_t i=0; i < size_t(dims_a[0]); ++i) {
         // loop through mask_indices
         for (size_t j=0; j < size_t(dims_m[0]); ++j) {
@@ -159,7 +159,7 @@ static PyObject* kernel_pool(PyObject* args, PyObject* kwargs, fn pool_fn, bool 
     PyArray_ENABLEFLAGS(indices, NPY_ARRAY_OWNDATA);
     
     // loop through batch*channels
-    #pragma omp parallel for 
+    #pragma omp parallel for num_threads(4)
     for (size_t i=0; i < size_t(dims_a[0]); ++i) {
         pool_fn((T*) PyArray_GETPTR1(array, i), kernel, img_shape, stride, img_size, 
                 (T*) PyArray_GETPTR1(output, i), (size_t*) PyArray_GETPTR1(indices, i));
@@ -230,8 +230,8 @@ static PyObject* max_pool(PyObject* self, PyObject* args, PyObject* kwargs)
     if (check_kwargs(kwargs, "mask_indices")) {
         output_tuple = rf_pool<T, rf_fn>(args, kwargs, pool<T>::rf_max_pool);
         index_mask = PyTuple_GetItem(output_tuple, 1);
-        Py_INCREF(index_mask);
     }
+    Py_INCREF(index_mask);
     // apply kernel pooling function
     PyObject* index_kernel = Py_None;
     if (check_kwargs(kwargs, "kernel_size")) {
@@ -244,8 +244,8 @@ static PyObject* max_pool(PyObject* self, PyObject* args, PyObject* kwargs)
             output_tuple = kernel_pool<T, kernel_fn>(args, kwargs, pool<T>::kernel_max_pool);
         }
         index_kernel = PyTuple_GetItem(output_tuple, 1);
-        Py_INCREF(index_kernel);
     }
+    Py_INCREF(index_kernel);
     // set output
     PyObject* output = PyTuple_GetItem(output_tuple, 0);
     Py_INCREF(output);
@@ -262,8 +262,8 @@ static PyObject* probmax(PyObject* self, PyObject* args, PyObject* kwargs)
     if (check_kwargs(kwargs, "kernel_size")) {
         output_tuple = kernel_pool<T, kernel_fn>(args, kwargs, pool<T>::kernel_probmax, false);
         index_kernel = PyTuple_GetItem(output_tuple, 1);
-        Py_INCREF(index_kernel);
     }
+    Py_INCREF(index_kernel);
     // apply rf pooling function
     PyObject* index_mask = Py_None;
     if (check_kwargs(kwargs, "mask_indices")) {
@@ -275,8 +275,8 @@ static PyObject* probmax(PyObject* self, PyObject* args, PyObject* kwargs)
             output_tuple = rf_pool<T, rf_fn>(args, kwargs, pool<T>::rf_probmax_pool);
         }
         index_mask = PyTuple_GetItem(output_tuple, 1);
-        Py_INCREF(index_mask);
     }
+    Py_INCREF(index_mask);
     // set output
     PyObject* output = PyTuple_GetItem(output_tuple, 0);
     Py_INCREF(output);
@@ -293,8 +293,8 @@ static PyObject* probmax_pool(PyObject* self, PyObject* args, PyObject* kwargs)
     if (check_kwargs(kwargs, "kernel_size")) {
         output_tuple = kernel_pool<T, kernel_fn>(args, kwargs, pool<T>::kernel_probmax_pool);
         index_kernel = PyTuple_GetItem(output_tuple, 1);
-        Py_INCREF(index_kernel);
     }
+    Py_INCREF(index_kernel);
     // apply rf pooling function
     PyObject* index_mask = Py_None;
     if (check_kwargs(kwargs, "mask_indices")) {
@@ -306,8 +306,8 @@ static PyObject* probmax_pool(PyObject* self, PyObject* args, PyObject* kwargs)
             output_tuple = rf_pool<T, rf_fn>(args, kwargs, pool<T>::rf_probmax_pool);
         }
         index_mask = PyTuple_GetItem(output_tuple, 1);
-        Py_INCREF(index_mask);
     }
+    Py_INCREF(index_mask);
     // set output
     PyObject* output = PyTuple_GetItem(output_tuple, 0);
     Py_INCREF(output);
@@ -324,8 +324,8 @@ static PyObject* stochastic_pool(PyObject* self, PyObject* args, PyObject* kwarg
     if (check_kwargs(kwargs, "mask_indices")) {
         output_tuple = rf_pool<T, rf_fn>(args, kwargs, pool<T>::rf_stochastic_pool);
         index_mask = PyTuple_GetItem(output_tuple, 1);
-        Py_INCREF(index_mask);
     }
+    Py_INCREF(index_mask);
     // apply kernel pooling function
     PyObject* index_kernel = Py_None;
     if (check_kwargs(kwargs, "kernel_size")) {
@@ -338,8 +338,8 @@ static PyObject* stochastic_pool(PyObject* self, PyObject* args, PyObject* kwarg
             output_tuple = kernel_pool<T, kernel_fn>(args, kwargs, pool<T>::kernel_stochastic_pool);
         }
         index_kernel = PyTuple_GetItem(output_tuple, 1);
-        Py_INCREF(index_kernel);
     }
+    Py_INCREF(index_kernel);
     // set output
     PyObject* output = PyTuple_GetItem(output_tuple, 0);
     Py_INCREF(output);
