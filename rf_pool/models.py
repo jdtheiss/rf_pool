@@ -519,8 +519,6 @@ class Model(nn.Module):
         pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
         pre_layer_ids.reverse()
         if len(pre_layer_ids) > 0:
-            w = self.layers[layer_id].apply_modules(w,'reconstruct_layer',
-                                                    ['activation'])
             w = self.apply_layers(w, pre_layer_ids, forward=False)
         return visualize.show_images(w, img_shape=img_shape, figsize=figsize,
                                      cmap=cmap)
