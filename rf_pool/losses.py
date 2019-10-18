@@ -36,7 +36,7 @@ class LayerLoss(Loss):
     """
     """
     def __init__(self, model, loss_fn, layer_ids, module_name=None, cost=1.,
-                 parameters=None, target=None, **kwargs):
+                 parameters=None, input_target=None, target=None, **kwargs):
         super(LayerLoss, self).__init__()
         self.model = model
         self.loss_fn = loss_fn
@@ -46,11 +46,12 @@ class LayerLoss(Loss):
         self.cost = functions.parse_list_args(len(layer_ids), cost)[0]
         self.cost = [c[0] for c in self.cost]
         self.parameters = parameters
+        self.input_target = input_target
         self.target = target
         self.kwargs = functions.parse_list_args(len(layer_ids), **kwargs)[1]
-        # set target to features if given
-        if self.target is not None:
-            self.target = self.get_features(self.target)
+        # set input_target to features if given
+        if self.input_target is not None:
+            self.input_target = self.get_features(self.input_target)
 
     def get_features(self, *args):
         args = list(args)
@@ -58,15 +59,20 @@ class LayerLoss(Loss):
         if self.parameters:
             on_parameters = self.model.get_trainable_params()
             self.model.set_requires_grad(pattern='', requires_grad=False)
-            self.model.set_requires_grad(parameters, requires_grad=True)
+            self.model.set_requires_grad(self.parameters, requires_grad=True)
         # get features
         feat = []
         i = 0
         for (name, layer) in self.model.layers.named_children():
             if name in self.layer_ids:
-                feat.append([layer.apply_modules(arg, 'forward_layer',
-                             output_module=self.module_name[i], **self.kwargs[i])
-                             for arg in args])
+                feat.append([])
+                for arg in args:
+                    output = layer.apply_modules(arg, 'forward_layer',
+                                                 output_module=self.module_name[i],
+                                                 **self.kwargs[i])
+                    if type(output) is list:
+                        output = torch.cat([torch.flatten(o) for o in output])
+                    feat[-1].append(output)
                 i += 1
             for ii, arg in enumerate(args):
                 args[ii] = layer.forward(arg)
@@ -77,11 +83,16 @@ class LayerLoss(Loss):
         return feat
 
     def forward(self, *args):
+        # if self.target is None and self.input_target is None:
         feat = self.get_features(*args)
+        # else:
+        #     feat = self.get_features(args[0])
         loss = torch.zeros(1, requires_grad=True)
         for i, feat_i in enumerate(feat):
-            if self.target is not None:
-                loss_i = self.loss_fn(*feat_i, *self.target[i])
+            if self.input_target is not None:
+                loss_i = self.loss_fn(*feat_i, *self.input_target[i])
+            elif self.target is not None:
+                loss_i = self.loss_fn(*feat_i, self.target)
             else:
                 loss_i = self.loss_fn(*feat_i)
             loss = loss + loss_i * self.cost[i]

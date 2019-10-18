@@ -292,6 +292,12 @@ class Model(nn.Module):
                                                  'label_params','show_negative',
                                                  'show_lattice'],
                                                 default={}))
+        # added loss
+        if options.get('add_loss'):
+            if type(options.get('add_loss')) is dict:
+                extra_loss = losses.LayerLoss(self, **dict)
+            else:
+                extra_loss = options.get('add_loss')
         # if layer-wise training, ensure layer_id str and get pre_layer_ids
         if options.get('layer_id') is not None:
             layer_id = str(options.get('layer_id'))
@@ -322,9 +328,10 @@ class Model(nn.Module):
                     # train
                     loss = self.layers[layer_id].train(layer_input,
                                                        optimizer=optimizer,
-                                                       add_loss=options.get('add_loss'),
                                                        sparsity=options.get('sparsity'),
                                                        **kwargs)
+                    if options.get('add_loss'):
+                        loss = loss + extra_loss(*inputs)
                 else: # normal training
                     # zero gradients
                     optimizer.zero_grad()
@@ -334,8 +341,7 @@ class Model(nn.Module):
                     loss = loss_fn(output, label)
                     # additional loss
                     if options.get('add_loss'):
-                        added_loss = self.add_loss(inputs, **options.get('add_loss'))
-                        loss = loss + added_loss
+                        loss = loss + extra_loss(*inputs)
                     # sparsity
                     if options.get('sparsity'):
                         self.sparsity(inputs[0], **options.get('sparsity'))
@@ -441,33 +447,6 @@ class Model(nn.Module):
                     self.set_requires_grad(label_params.get(label),
                                            requires_grad=requires_grad)
 
-    def add_loss(self, inputs, loss_fn, layer_ids, module_name=None,
-                 cost=1., parameters=None, **kwargs):
-        """
-        #TODO:WRITEME
-        """
-        if parameters:
-            on_parameters = self.get_trainable_params()
-            self.set_requires_grad(pattern='', requires_grad=False)
-            self.set_requires_grad(parameters, requires_grad=True)
-        loss = torch.zeros(1, requires_grad=True)
-        for i, (name, layer) in enumerate(self.layers.named_children()):
-            if name in layer_ids:
-                kwargs_i = {}
-                for key, value in kwargs.items():
-                    if type(value) is list:
-                        kwargs_i.update({key: value[i]})
-                    else:
-                        kwargs_i.update({key: value})
-                loss = loss + layer.add_loss(inputs, loss_fn, module_name, **kwargs_i)
-            for ii, input in enumerate(inputs):
-                inputs[ii] = layer.forward(input)
-        loss = torch.mul(loss, cost)
-        if parameters:
-            self.set_requires_grad(parameters, requires_grad=False)
-            self.set_requires_grad(on_parameters, requires_grad=True)
-        return loss
-
     def sparsity(self, input, layer_ids, module_name, target, cost=1., l2_reg=0.):
         for i, (name, layer) in enumerate(self.layers.named_children()):
             if name in layer_ids:
@@ -491,7 +470,7 @@ class Model(nn.Module):
         rf_layers = []
         for layer_id, layer in self.layers.named_children():
             pool = layer.get_modules('forward_layer', ['pool'])
-            if len(pool) == 1 and torch.typename(pool[0]).find('pool') >=0 and \
+            if len(pool) == 1 and hasattr(pool[0], 'rfs') and \
                pool[0].rfs is not None:
                 rf_layers.append(pool[0])
         n_lattices =  len(rf_layers)
@@ -571,7 +550,7 @@ class Model(nn.Module):
 
     def rf_output(self, input, layer_id, **kwargs):
         rf_layer = self.layers[layer_id].forward_layer.pool
-        assert torch.typename(rf_layer).find('pool') > -1, (
+        assert hasattr(rf_layer, 'rfs'), (
             'No rf_pool layer found.'
         )
         # get layers before layer id
@@ -592,7 +571,7 @@ class Model(nn.Module):
 
     def rf_heatmap(self, layer_id):
         rf_layer = self.layers[layer_id].forward_layer.pool
-        assert torch.typename(rf_layer).find('pool') > -1, (
+        assert hasattr(rf_layer, 'rfs'), (
             'No rf_pool layer found.'
         )
         # get layers before layer id
