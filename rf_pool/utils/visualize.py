@@ -1,11 +1,11 @@
 import re
 
-import torch
-import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import offsetbox
 from matplotlib import patches
+import numpy as np
+import torch
 
 from . import functions
 

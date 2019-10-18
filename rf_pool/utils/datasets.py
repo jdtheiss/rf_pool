@@ -3,6 +3,7 @@ import io
 import os.path
 import re
 import urllib.request
+import warnings
 
 import imageio
 import IPython.display
@@ -11,7 +12,6 @@ import numpy as np
 from PIL import Image
 import torch
 import torchvision
-import warnings
 
 from . import stimuli, functions
 

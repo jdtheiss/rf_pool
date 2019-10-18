@@ -4,10 +4,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy
 from scipy.io import loadmat
-try:
-    from skimage.transform import resize
-except Exception as detail:
-    print('Error: %s' % detail)
 import torch
 
 def parse_list_args(n_iter, *args, **kwargs):
@@ -287,26 +283,6 @@ def normalize_range(x, dims=(1,2)):
     x = x / (np.max(x, axis=dims, keepdims=True) + 1e-6)
     x = to_tensor(x, is_tensor)
     return x
-
-def fast_whiten(data, Qss_file='Qss_kyoto.mat', Qnn=0.5):
-    """
-    #TODO:WRITEME
-    """
-    data, is_tensor = to_numpy(data)
-    # normalize mean and std
-    data = normalize(data)
-    # load Qss_freq
-    Qss_freq = loadmat(Qss_file)['Qss_freq']
-    filt = np.sqrt(Qss_freq)/(Qss_freq + Qnn)
-    # whiten each image
-    wdata = []
-    for i in range(len(data)):
-        # resize filter
-        filt_i = resize(filt, data[i].shape[-2:], order=3, mode='constant')
-        If = scipy.fftpack.fft2(data[i])
-        wdata.append(scipy.real(scipy.fftpack.ifft2(If * scipy.fftpack.fftshift(filt_i))))
-    wdata = to_tensor(wdata, is_tensor, dtype='float32')
-    return wdata
 
 def kwarg_fn(modules=[list, dict, __builtins__, np, torch], x=None, **kwargs):
     """
