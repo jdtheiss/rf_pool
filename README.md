@@ -2,6 +2,8 @@
 Perform pooling across receptive fields of different sizes and locations in 
 convolutional neural networks (CNNs).
 
+![rf_pool](docs/rf_pooling.png)
+
 This package allows users to perform various pooling operations within receptive
 fields tiling the output of a convolutional layer. Whereas typical max-pooling 
 operations occur in blocks of pixels (e.g., 2x2 MaxPool), rf-pooling occurs 
