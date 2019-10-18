@@ -10,3 +10,17 @@ Various initializations for the receptive field array are available including
 uniform, foveated, and tiled. Furthermore, rf_pool supports building models 
 with feedforward or Restricted Boltzmann Machine (RBM) layers among a variety
 of other options.
+
+## Setup
+After downloading, run the following from command line:
+
+    $ cd rf_pool
+    $ pip install -r requirements.txt
+    $ python setup.py install
+
+## Demos
+Open a jupyter notebook, and begin exploring the notebooks in the "example" folder.
+These notebooks cover most of the typical cases for using rf_pool.
+
+## Experiments
+Experiments from our lab that have used rf_pool are hosted in the "experiments" folder.
