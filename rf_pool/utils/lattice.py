@@ -45,10 +45,11 @@ Examples
 """
 
 import warnings
-import torch
-import numpy as np
+
 import imageio
 import matplotlib.pyplot as plt
+import numpy as np
+import torch
 
 def multiply_gaussians(mu0, mu1, sigma0, sigma1):
     # reshape to (mu0_batch, 2, 1) (1, 2, mu1_batch)
@@ -467,7 +468,7 @@ def init_uniform_lattice(center, n_kernel_side, spacing, sigma_init=1.,
     center : tuple
         x-y coordinate for center of lattice
     n_kernel_side : tuple or int
-        height/width of the lattice. n_kernels = np.prod(n_kernel_side)
+        number of kernels along height/width of the lattice
     spacing : float
         spacing between receptive field centers
     sigma_init : float
