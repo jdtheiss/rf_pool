@@ -413,7 +413,7 @@ class Model(nn.Module):
                 loss = loss_fn(seed, loss_input)
             else:
                 loss = loss_fn(seed)
-            loss.backward()
+            loss.backward(retain_graph=True)
             # update seed
             optimizer.step()
             running_loss += loss.item()
