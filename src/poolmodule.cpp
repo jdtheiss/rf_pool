@@ -77,16 +77,10 @@ static PyObject* rf_pool(PyObject* args, PyObject* kwargs, fn pool_fn)
     PyArrayObject* output;
     PyArrayObject* indices;
     if (retain_shape) {
-        ndim_a = 4;
-        npy_intp new_dims[4];
-        int cnt = 0;
-        for (int i=0; i < ndim_a; ++i) {
-            if (i == 1) {
-                new_dims[i] = dims_m[0];
-            } else {
-                new_dims[i] = dims_a[cnt];
-                ++cnt;
-            }
+        npy_intp new_dims[3];
+        new_dims[0] = dims_a[0] * dims_m[0];
+        for (int i=1; i < ndim_a; ++i) {
+            new_dims[i] = dims_a[i];
         }
         output = (PyArrayObject*) PyArray_ZEROS(ndim_a, new_dims, type_a, 0);
         indices = (PyArrayObject*) PyArray_ZEROS(ndim_a, new_dims, NPY_LONG, 0);
@@ -105,7 +99,8 @@ static PyObject* rf_pool(PyObject* args, PyObject* kwargs, fn pool_fn)
             if (retain_shape) {
                 // call rf pooling function while retaining mask_indices shape
                 pool_fn((T*) PyArray_GETPTR1(array, i), mask_size, (T*) PyArray_GETPTR1(mask_indices, j),
-                        (T*) PyArray_GETPTR2(output, i, j), (size_t*) PyArray_GETPTR2(indices, i, j));
+                        (T*) PyArray_GETPTR1(output, i*dims_m[0] + j), 
+                        (size_t*) PyArray_GETPTR1(indices, i*dims_m[0] + j));
             } else {
                 // call rf pooling function
                 pool_fn((T*) PyArray_GETPTR1(array, i), mask_size, (T*) PyArray_GETPTR1(mask_indices, j),

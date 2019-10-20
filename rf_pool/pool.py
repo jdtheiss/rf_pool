@@ -643,7 +643,10 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
     outputs = list(pool_fn(input, **kwargs))
     for i, output in enumerate(outputs):
         if output is not None:
-            output_shape = (batch_size, ch,) + output.shape[1:]
+            if retain_shape:
+                output_shape = (batch_size, ch, -1) + output.shape[1:]
+            else:
+                output_shape = (batch_size, ch,) + output.shape[1:]
             output = output.reshape(output_shape)
             outputs[i] = torch.as_tensor(output)
 
