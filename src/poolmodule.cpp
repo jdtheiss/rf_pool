@@ -85,8 +85,8 @@ static PyObject* rf_pool(PyObject* args, PyObject* kwargs, fn pool_fn)
         output = (PyArrayObject*) PyArray_ZEROS(ndim_a, new_dims, type_a, 0);
         indices = (PyArrayObject*) PyArray_ZEROS(ndim_a, new_dims, NPY_LONG, 0);
     } else {
-    output = (PyArrayObject*) PyArray_ZEROS(ndim_a, dims_a, type_a, 0);
-    indices = (PyArrayObject*) PyArray_ZEROS(ndim_a, dims_a, NPY_LONG, 0);
+        output = (PyArrayObject*) PyArray_ZEROS(ndim_a, dims_a, type_a, 0);
+        indices = (PyArrayObject*) PyArray_ZEROS(ndim_a, dims_a, NPY_LONG, 0);
     }
     PyArray_ENABLEFLAGS(output, NPY_ARRAY_OWNDATA);
     PyArray_ENABLEFLAGS(indices, NPY_ARRAY_OWNDATA);
