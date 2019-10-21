@@ -1,19 +1,20 @@
 # rf_pool
-Perform pooling across receptive fields of different sizes and locations in 
+Perform pooling across receptive fields of different sizes and locations in
 convolutional neural networks (CNNs).
 
 ![rf_pool](docs/rf_pooling.png)
 
 This package allows users to perform various pooling operations within receptive
-fields tiling the output of a convolutional layer. Whereas typical max-pooling 
-operations occur in blocks of pixels (e.g., 2x2 MaxPool), rf-pooling occurs 
+fields tiling the output of a convolutional layer. Whereas typical max-pooling
+operations occur in blocks of pixels (e.g., 2x2 MaxPool), rf-pooling occurs
 within individual receptive fields covering variable areas of the image space.
 Various initializations for the receptive field array are available including
-uniform, foveated, and tiled. Furthermore, rf_pool supports building models 
+uniform, foveated, and tiled. Furthermore, rf_pool supports building models
 with feedforward or Restricted Boltzmann Machine (RBM) layers among a variety
 of other options.
 
 ## Setup
+Note: rf_pool requires python version >= 3.6.
 After downloading, run the following from command line:
 
     $ cd rf_pool
