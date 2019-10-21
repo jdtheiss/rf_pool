@@ -14,12 +14,13 @@ with feedforward or Restricted Boltzmann Machine (RBM) layers among a variety
 of other options.
 
 ## Setup
-Note: rf_pool requires python version >= 3.6.
 After downloading, run the following from command line:
 
     $ cd rf_pool
     $ pip install -r requirements.txt
     $ python setup.py install
+
+Note: rf_pool requires python version >= 3.6.
 
 ## Demos
 Open a jupyter notebook, and begin exploring the notebooks in the "example" folder.
