@@ -43,11 +43,6 @@ class Pool(torch.nn.Module):
 
     def set(self, **kwargs):
         functions.set_attributes(self, **kwargs)
-        if 'mu' in kwargs or 'sigma' in kwargs or 'lattice_fn' in kwargs:
-            self._update_rfs()
-        elif 'img_shape' in kwargs:
-            self.mu, self.sigma = self.update_mu_sigma()
-            self._update_rfs()
 
     def get(self, keys):
         output = []
@@ -78,11 +73,14 @@ class Pool(torch.nn.Module):
         if self.update_img_shape and \
            self.rfs.shape[-2:] != torch.Size(self.img_shape):
             with torch.no_grad():
-                img_diff = torch.sub(torch.tensor(self.img_shape, dtype=mu.dtype),
-                                     torch.tensor(self.rfs.shape[-2:], dtype=mu.dtype))
+                img_diff = torch.sub(torch.tensor(self.img_shape,
+                                                  dtype=mu.dtype),
+                                     torch.tensor(self.rfs.shape[-2:],
+                                                  dtype=mu.dtype))
                 mu = torch.add(mu, img_diff / 2.)
         elif self.rfs.shape[-2:] != torch.Size(self.img_shape):
-            raise Exception('rfs.shape[-2:] != self.img_shape')
+            raise Exception('rfs.shape[-2:] != self.img_shape.\n\n\
+            Set self.update_img_shape=True to avoid this error.')
         # update mu, sigma with priority map
         if priority_map is not None:
             mu, sigma = lattice.update_mu_sigma(mu, sigma, priority_map)
