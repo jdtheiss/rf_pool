@@ -1,3 +1,5 @@
+from collections import OrderedDict
+
 import IPython.display
 from IPython.display import clear_output, display
 import matplotlib.pyplot as plt
@@ -13,7 +15,7 @@ def parse_list_args(n_iter, *args, **kwargs):
     list_kwargs = []
     for n in range(n_iter):
         list_args.append([])
-        list_kwargs.append({})
+        list_kwargs.append(OrderedDict())
         for arg in args:
             if type(arg) is list and len(arg) == n_iter:
                 list_args[-1].append(arg[n])
@@ -284,7 +286,8 @@ def normalize_range(x, dims=(1,2)):
     x = to_tensor(x, is_tensor)
     return x
 
-def kwarg_fn(modules=[list, dict, __builtins__, np, torch], x=None, **kwargs):
+def kwarg_fn(modules=[list, OrderedDict, dict, __builtins__, np, torch], x=None,
+             **kwargs):
     """
     #TODO:WRITEME
     """
@@ -308,9 +311,9 @@ def kwarg_fn(modules=[list, dict, __builtins__, np, torch], x=None, **kwargs):
             output = fn(*value)
         elif type(value) is list:
             output = fn(x, *value)
-        elif type(value) is dict and no_input:
+        elif (type(value) is dict or type(value) is OrderedDict) and no_input:
             output = fn(**value)
-        elif type(value) is dict:
+        elif (type(value) is dict or type(value) is OrderedDict):
             output = fn(x, **value)
         if output is not None and x is not None:
             x = output
@@ -332,7 +335,7 @@ def set_deepattr(obj, path, value):
     return value
 
 def get_attributes(obj, keys, default=None, ignore_keys=False):
-    output = {}
+    output = OrderedDict()
     for key in keys:
         if type(key) is int:
             output.update({key: obj[key]})
@@ -345,7 +348,7 @@ def get_attributes(obj, keys, default=None, ignore_keys=False):
     return output
 
 def pop_attributes(obj, keys, default=None, ignore_keys=False):
-    output = {}
+    output = OrderedDict()
     for key in keys:
         if hasattr(obj, 'pop') and key in obj:
             output.update({key: obj.pop(key)})

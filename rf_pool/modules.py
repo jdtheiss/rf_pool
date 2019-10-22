@@ -1,3 +1,5 @@
+from collections import OrderedDict
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -118,7 +120,7 @@ class Module(nn.Module):
         layer = nn.Sequential()
         if hasattr(self, layer_name):
             orig_layer = getattr(self, layer_name)
-            mods = dict([(k, v) for k, v in orig_layer.named_children()])
+            mods = OrderedDict([(k, v) for k, v in orig_layer.named_children()])
         else:
             mods = {}
         # set pre-index modules
@@ -144,8 +146,8 @@ class Module(nn.Module):
         layer = nn.Sequential()
         if hasattr(self, layer_name):
             orig_layer = getattr(self, layer_name)
-            mods = dict([(k, v) for k, v in orig_layer.named_children()
-                         if k != module_name])
+            mods = OrderedDict([(k, v) for k, v in orig_layer.named_children()
+                                if k != module_name])
         else:
             mods = {}
         # set modules other than module_name
@@ -413,7 +415,8 @@ class Branch(Module):
         if self.cat_output:
             outputs = torch.cat(outputs, 1)
         if self.output_names is not None:
-            outputs = dict([(k,v) for k, v in zip(self.output_names, outputs)])
+            outputs = OrderedDict([(k,v) for k, v in
+                                   zip(self.output_names, outputs)])
         return outputs
 
     def reconstruct(self, input, names=[]):

@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import glob
 import io
 import os.path
@@ -27,12 +28,12 @@ class Dataset(torch.utils.data.Dataset):
         self.url_pattern = '"([^\s]+\.jpg)"'
         self.url_replace = ['','']
         self.load_fn = imageio.imread
-        self.data_info = {}
+        self.data_info = OrderedDict()
         self.data = None
         self.extras = None
         self.labels = None
         self.transform = None
-        self.label_map = {}
+        self.label_map = OrderedDict()
         functions.set_attributes(self, **kwargs)
 
     def set_data(self):
@@ -144,11 +145,13 @@ class Dataset(torch.utils.data.Dataset):
         return torch.utils.data.dataloader.default_collate(batch)
 
     def __getitem__(self, index):
-        if type(self.data) is dict and type(index) is int:
+        if (type(self.data) is dict or type(self.data) is OrderedDict) \
+           and type(index) is int:
             img = list(self.data.values())[index]
         else:
             img = self.data[index]
-        if type(self.labels) is dict and type(index) is int:
+        if (type(self.labels) is dict or type(self.labels) is OrderedDict) \
+           and type(index) is int:
             label = list(self.labels.values())[index]
         elif self.labels is not None:
             label = self.labels[index]
@@ -198,11 +201,12 @@ class URLDataset(Dataset):
         # set data_info using urls
         if len(urls) > 0:
             self.set_data_info(urls, labels)
-            data_dict = dict([(k,v) for k, v in zip(np.arange(len(urls)), urls)])
+            data_dict = OrderedDict([(k,v) for k, v in
+                                     zip(np.arange(len(urls)), urls)])
         # set data_info using url_mapping
         elif base_url is not None:
-            data_dict = {}
-            map_kwargs = {}
+            data_dict = OrderedDict()
+            map_kwargs = OrderedDict()
             if 'key_pattern' in kwargs:
                 map_kwargs.update({'key_pattern': kwargs.pop('key_pattern')})
             if 'value_pattern' in kwargs:
@@ -224,7 +228,7 @@ class URLDataset(Dataset):
                     value_pattern='http.+\.jpg'):
         with urllib.request.urlopen(base_url + id) as response:
             html = response.readlines()
-        mapping = {}
+        mapping = OrderedDict()
         for line in html:
             key = re.findall(key_pattern, line.decode('utf-8'))
             value = re.findall(value_pattern, line.decode('utf-8'))
@@ -417,7 +421,7 @@ class SearchDataset(Dataset):
                              self.target_loc, self.distractor_locs, **kwargs)
 
     def set_data_info(self, keys, labels):
-        self.data_info = {}
+        self.data_info = OrderedDict()
         for key in keys:
             self.data_info.update({key: np.where(key==labels)[0].tolist()})
 
@@ -559,7 +563,7 @@ class CrowdedDataset(Dataset):
                              self.target_labels, self.flanker_labels, **kwargs)
 
     def set_data_info(self, keys, labels):
-        self.data_info = {}
+        self.data_info = OrderedDict()
         for key in keys:
             self.data_info.update({key: np.where(key==labels)[0].tolist()})
 
@@ -677,7 +681,6 @@ class CrowdedCircles(torch.utils.data.Dataset):
         cross entropy [default: 0]
     **kwargs : dict
         see stimuli.make_crowded_circles()
-
     Methods
     -------
     make_stimuli(self, **kwargs)
