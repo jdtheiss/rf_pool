@@ -50,6 +50,7 @@ import imageio
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from torch.autograd import Function
 
 def multiply_gaussians(mu0, mu1, sigma0, sigma1):
     # reshape to (mu0_batch, 2, 1) (1, 2, mu1_batch)
@@ -71,7 +72,7 @@ def multiply_gaussians(mu0, mu1, sigma0, sigma1):
 def exp_kernel_2d(mu, sigma, xy):
     mu = mu.reshape(mu.shape + (1,1)).float()
     sigma = sigma.unsqueeze(-1).float()
-    return torch.exp(-torch.sum((xy - mu)**2., dim=-3)/ (2*sigma**2))
+    return torch.exp(-torch.sum((xy - mu)**2., dim=-3) / (2*sigma**2))
 
 def gaussian_kernel_2d(mu, sigma, xy):
     mu = mu.reshape(mu.shape + (1,1)).float()
@@ -85,8 +86,26 @@ def dog_kernel_2d(mu, sigma, ratio, xy):
 
 def mask_kernel_2d(mu, sigma, xy):
     kernels = exp_kernel_2d(mu, sigma, xy)
-    # threshold at 1 std
-    return torch.as_tensor(torch.ge(kernels, np.exp(-0.5)), dtype=kernels.dtype)
+    output = torch.as_tensor(torch.ge(kernels, np.exp(-0.5)), dtype=kernels.dtype)
+    return _MaskGrad.apply(kernels, output)
+    # kernels = exp_kernel_2d(mu, sigma, xy)
+    # # threshold at 1 std
+    # return torch.as_tensor(torch.ge(kernels, np.exp(-0.5)), dtype=kernels.dtype)
+
+class _MaskGrad(Function):
+    @staticmethod
+    def forward(ctx, kernels, output):
+        ctx.save_for_backward(kernels)
+        ctx.output = output
+        output.requires_grad_(kernels.requires_grad)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        kernels = ctx.saved_tensors[0]
+        with torch.no_grad():
+            grad_input = torch.mul(grad_output, ctx.output)
+        return grad_input, None
 
 def gaussian_field(priority_map):
     """
@@ -165,40 +184,6 @@ def update_mu_sigma(mu, sigma, priority_map):
     map_mu = map_mu[keep_indices].type(priority_map.dtype)
     map_sigma = 1. / map_sigma[keep_indices].type(priority_map.dtype)
     return multiply_gaussians(mu, map_mu, sigma, map_sigma)
-
-def mu_mask(mu, kernel_shape):
-    """
-    Returns a tensor of kernels with value = 1 at each mu location
-
-    Parameters
-    ----------
-    mu : torch.Tensor
-        kernel centers with shape (n_kernels, 2)
-    kernel_shape : tuple
-        shape of input feature map
-
-    Returns
-    -------
-    kernels : torch.Tensor
-        output kernels with shape
-        mu.shape[:-1] + (kernel_shape[0], kernel_shape[1])
-
-    Examples
-    --------
-    # Create tensor mask of 10 kernels with random centers.
-    >>> mu = torch.rand(10, 2)*200
-    >>> kernel_shape = (200,200)
-    >>> kernels = mu_mask(mu, kernel_shape)
-    """#TODO: use mask_kernel_lattice instead
-
-    # create the coordinates input to kernel function
-    x = torch.arange(kernel_shape[0])
-    y = torch.arange(kernel_shape[1])
-    xy = torch.stack(torch.meshgrid(x, y), dim=0).unsqueeze(0)
-    # reshape mu to same dimension as xy
-    mu = mu.reshape(mu.shape + (1,1))
-    # return 1s at mu locations
-    return torch.as_tensor(torch.prod(torch.eq(mu.int(), xy.int()), -3), dtype=mu.dtype)
 
 def exp_kernel_lattice(mu, sigma, kernel_shape):
     """
