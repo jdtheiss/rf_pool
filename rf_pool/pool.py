@@ -666,7 +666,7 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
         return outputs[0]
 
     # set grad args
-    grad_args = [u, rfs, grad_fn, *outputs, kernel_size, stride]
+    grad_args = [u, rfs, grad_fn, *outputs, kernel_size, stride, apply_mask]
 
     # return with indices
     if return_indices:
@@ -674,45 +674,55 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
 
     return _PoolGrad.apply(*grad_args)
 
-def _apply_grad(grad_output, input, rfs, grad_fn=None, index_mask=None,
-                index_kernel=None, kernel_size=None, stride=None):
-    # if no grad_fn, use indices
-    if grad_fn is None:
-        if index_kernel is not None:
-            grad_input = torch.zeros_like(input)
-            grad_input.flatten(2).scatter_(2, index_kernel.flatten(2),
-                                           grad_output.flatten(2));
-        else:
-            grad_input = grad_output
-        if index_mask is not None:
-            index_mask = torch.where(index_mask == 0)
-            grad_input[index_mask] = 0.
-        if rfs is not None:
-            grad_rfs = torch.zeros_like(rfs)
-            idx = torch.where(rfs)
-            g = torch.sum(torch.mul(grad_input, input), [0,1]).unsqueeze(0)
-            grad_rfs[idx] = g.repeat(rfs.shape)[idx]
-        else:
-            grad_rfs = None
-        return grad_input, grad_rfs
+def _default_grad(grad_output, input, rfs, index_mask=None, index_kernel=None,
+                  kernel_size=None, stride=None, apply_mask=False):
+    if index_kernel is not None:
+        grad_input = torch.zeros_like(input)
+        grad_input.flatten(2).scatter_(2, index_kernel.flatten(2),
+                                       grad_output.flatten(2));
+    else:
+        grad_input = grad_output
+    if index_mask is not None:
+        index_mask = torch.where(index_mask == 0)
+        grad_input[index_mask] = 0.
+    if rfs is not None:
+        if apply_mask:
+            grad_input = torch.sum(torch.mul(grad_input.unsqueeze(-3), rfs), -3)
+        grad_rfs = torch.zeros_like(rfs)
+        idx = torch.where(rfs)
+        g = torch.sum(torch.mul(grad_input, input), [0,1]).unsqueeze(0)
+        grad_rfs[idx] = g.repeat(rfs.shape)[idx]
+    else:
+        grad_rfs = None
+    return grad_input, grad_rfs
 
+def _apply_grad(grad_output, input, rfs, grad_fn, index_mask=None,
+                index_kernel=None, kernel_size=None, stride=None,
+                apply_mask=False, **kwargs):
     # assert pool_fn in pool and get pool_grad
     assert hasattr(pool, grad_fn)
     grad_fn = getattr(pool, grad_fn)
 
-    # set input kwargs
-    keys = ['mask_indices', 'kernel_size', 'stride']
-    args = [indices, kernel_size, stride]
-    kwargs = dict([(k,d) for (k, d) in zip(keys, args)])
+    # set kwargs
+    kwargs.setdefault('mask', rfs.data)
+    kwargs.setdefault('mask_indices', index_mask)
+    kwargs.setdefault('kernel_size', kernel_size)
+    kwargs.setdefault('stride', stride)
+    kwargs.setdefault('apply_mask', apply_mask)
 
     # apply grad function #TODO: make flexible using output tuple
-    input = grad_output.data.flatten(0,1)
-    grad_input = grad_fn(input, **kwargs)
+    grad_input = grad_fn(grad_output.data.flatten(0,1), **kwargs)
     grad_input = torch.as_tensor(grad_input, dtype=grad_output.dtype)
     output_shape = grad_output.shape[:2] + grad_input.shape[2:]
     grad_input = grad_input.reshape(output_shape)
 
-    return grad_input
+    # set grad for rfs
+    grad_rfs = torch.zeros_like(rfs)
+    idx = torch.where(rfs)
+    g = torch.sum(torch.mul(grad_input, input), [0,1]).unsqueeze(0)
+    grad_rfs[idx] = g.repeat(rfs.shape)[idx]
+
+    return grad_input, grad_rfs
 
 class _PoolGrad(Function):
     @staticmethod
@@ -726,9 +736,13 @@ class _PoolGrad(Function):
     @staticmethod
     def backward(ctx, grad_output):
         input, rfs = ctx.saved_tensors
-        grad_input, grad_rfs = _apply_grad(grad_output, input, rfs, ctx.grad_fn,
-                                           *ctx.grad_args)
-        return grad_input, grad_rfs, None, None, None, None, None, None
+        if ctx.grad_fn is not None:
+            grad_input, grad_rfs = _apply_grad(grad_output, input, rfs,
+                                               ctx.grad_fn, *ctx.grad_args)
+        else:
+            grad_input, grad_rfs = _default_grad(grad_output, input, rfs,
+                                                 *ctx.grad_args)
+        return grad_input, grad_rfs, None, None, None, None, None, None, None
 
 class _PoolGrad_with_indices(Function):
     @staticmethod
@@ -746,9 +760,13 @@ class _PoolGrad_with_indices(Function):
     @staticmethod
     def backward(ctx, grad_output, index_mask, index_kernel):
         input, rfs = ctx.saved_tensors
-        grad_input, grad_rfs = _apply_grad(grad_output, input, rfs, ctx.grad_fn,
-                                           *ctx.grad_args)
-        return grad_input, grad_rfs, None, None, None, None, None, None
+        if ctx.grad_fn is not None:
+            grad_input, grad_rfs = _apply_grad(grad_output, input, rfs,
+                                               ctx.grad_fn, *ctx.grad_args)
+        else:
+            grad_input, grad_rfs = _default_grad(grad_output, input, rfs,
+                                                 *ctx.grad_args)
+        return grad_input, grad_rfs, None, None, None, None, None, None, None
 
 if __name__ == '__main__':
     import doctest
