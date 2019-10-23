@@ -61,6 +61,10 @@ static PyObject* rf_pool(PyObject* args, PyObject* kwargs, fn pool_fn)
     if (check_kwargs(kwargs, "retain_shape")) {
         retain_shape = PyObject_IsTrue(PyDict_GetItemString(kwargs, "retain_shape"));
     }
+    bool apply_mask = false;
+    if (check_kwargs(kwargs, "apply_mask")) {
+        apply_mask = PyObject_IsTrue(PyDict_GetItemString(kwargs, "apply_mask"));
+    }
     
     // get ndim, dims, type from array
     int ndim_a = PyArray_NDIM(array);
@@ -68,6 +72,7 @@ static PyObject* rf_pool(PyObject* args, PyObject* kwargs, fn pool_fn)
     int type_a = PyArray_TYPE(array);
     
     // init mask_indices data
+    int ndim_m = PyArray_NDIM(mask_indices);
     size_t size_m = PyArray_SIZE(mask_indices);
     npy_intp* dims_m = PyArray_DIMS(mask_indices);
     size_t mask_size = size_m / dims_m[0];
@@ -91,25 +96,38 @@ static PyObject* rf_pool(PyObject* args, PyObject* kwargs, fn pool_fn)
     PyArray_ENABLEFLAGS(output, NPY_ARRAY_OWNDATA);
     PyArray_ENABLEFLAGS(indices, NPY_ARRAY_OWNDATA);
     
+    // get mask
+    PyArrayObject* mask;
+    if (apply_mask && check_kwargs(kwargs, "mask")) {
+        mask = (PyArrayObject*) PyArray_FROM_O(PyDict_GetItemString(kwargs, "mask"));
+    } else {
+        mask = (PyArrayObject*) PyArray_ZEROS(ndim_m, dims_m, type_a, 0);
+        apply_mask = false;
+    }
+    
     // loop through batch*channels
-    #pragma omp parallel for collapse(2) num_threads(4)
+    #pragma omp parallel for collapse(2)
     for (size_t i=0; i < size_t(dims_a[0]); ++i) {
         // loop through mask_indices
         for (size_t j=0; j < size_t(dims_m[0]); ++j) {
             if (retain_shape) {
                 // call rf pooling function while retaining mask_indices shape
-                pool_fn((T*) PyArray_GETPTR1(array, i), mask_size, (T*) PyArray_GETPTR1(mask_indices, j),
+                pool_fn((T*) PyArray_GETPTR1(array, i), (T*) PyArray_GETPTR1(mask, j),
+                        mask_size, (T*) PyArray_GETPTR1(mask_indices, j),
                         (T*) PyArray_GETPTR1(output, i*dims_m[0] + j), 
-                        (size_t*) PyArray_GETPTR1(indices, i*dims_m[0] + j));
+                        (size_t*) PyArray_GETPTR1(indices, i*dims_m[0] + j), apply_mask);
             } else {
                 // call rf pooling function
-                pool_fn((T*) PyArray_GETPTR1(array, i), mask_size, (T*) PyArray_GETPTR1(mask_indices, j),
-                        (T*) PyArray_GETPTR1(output, i), (size_t*) PyArray_GETPTR1(indices, i));
+                pool_fn((T*) PyArray_GETPTR1(array, i), (T*) PyArray_GETPTR1(mask, j),
+                        mask_size, (T*) PyArray_GETPTR1(mask_indices, j),
+                        (T*) PyArray_GETPTR1(output, i), (size_t*) PyArray_GETPTR1(indices, i),
+                        apply_mask);
             }
         }
     }
     Py_DECREF(array);
     Py_DECREF(mask_indices);
+    Py_XDECREF(mask);
     return Py_BuildValue("(NN)", (PyObject*) output, (PyObject*) indices);
 }
 
@@ -154,7 +172,7 @@ static PyObject* kernel_pool(PyObject* args, PyObject* kwargs, fn pool_fn, bool 
     PyArray_ENABLEFLAGS(indices, NPY_ARRAY_OWNDATA);
     
     // loop through batch*channels
-    #pragma omp parallel for num_threads(4)
+    #pragma omp parallel for
     for (size_t i=0; i < size_t(dims_a[0]); ++i) {
         pool_fn((T*) PyArray_GETPTR1(array, i), kernel, img_shape, stride, img_size, 
                 (T*) PyArray_GETPTR1(output, i), (size_t*) PyArray_GETPTR1(indices, i));
@@ -350,7 +368,7 @@ static PyObject* unpool(PyObject* self, PyObject* args, PyObject* kwargs)
     return Py_BuildValue("(N)", output);
 }
 
-typedef void (rf_fn)(const float*, size_t, const float*, float*, size_t*);
+typedef void (rf_fn)(const float*, const float*, size_t, const float*, float*, size_t*, bool);
 typedef void (kernel_fn)(const float*, size_t*, size_t*, size_t*, size_t, float*, size_t*);
 typedef void (grad_fn)(const float*, size_t*, size_t*, size_t*, size_t, const float*, float*);
 static PyMethodDef pool_methods[] = {

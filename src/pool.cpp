@@ -4,30 +4,62 @@
 
 // max pool operation, set output to max value in mask_indices at max index
 template<typename T>
-void pool<T>::rf_max_pool(const T* array, size_t size, const T* mask_indices, T* output, size_t* indices) {
-    ops<T>::keep_max(array, size, mask_indices, output, indices);
+void pool<T>::rf_max_pool(const T* array, const T* mask, size_t size, const T* mask_indices, 
+                          T* output, size_t* indices, bool apply_mask) {
+    T* masked_array = new T[size];
+    if (apply_mask) {
+        ops<T>::elem(array, mask, ops<T>::mul, size, mask_indices, masked_array);
+        ops<T>::keep_max(masked_array, size, mask_indices, output, indices);
+    } else {
+        ops<T>::keep_max(array, size, mask_indices, output, indices);
+    }
+    delete [] masked_array;
 }
 // probmax pool operation, set output to (1-prob all pixels off) across mask_indices at multinomial index
 template<typename T>
-void pool<T>::rf_probmax_pool(const T* array, size_t size, const T* mask_indices, T* output, size_t* indices) {
-    ops<T>::softmax(array, true, size, mask_indices, output);
-    T p_sum = ops<T>::sum(output, size, mask_indices);
-    distributions<T>::multinomial(output, size, mask_indices, output, indices);
+void pool<T>::rf_probmax_pool(const T* array, const T* mask, size_t size, const T* mask_indices, 
+                              T* output, size_t* indices, bool apply_mask) {
+    T* soft_out = new T[size];
+    if (apply_mask) {
+        ops<T>::elem(array, mask, ops<T>::mul, size, mask_indices, soft_out);
+        ops<T>::softmax(soft_out, true, size, mask_indices, soft_out);
+    } else {
+        ops<T>::softmax(array, true, size, mask_indices, soft_out);
+    }
+    T p_sum = ops<T>::sum(soft_out, size, mask_indices);
+    distributions<T>::multinomial(soft_out, size, mask_indices, output, indices);
     ops<T>::elem(output, p_sum, ops<T>::mul, size, mask_indices, output);
+    delete [] soft_out;
 }
 // stochastic max pool operation, set output to value at multinomial index in mask_indices
 template<typename T>
-void pool<T>::rf_stochastic_pool(const T* array, size_t size, const T* mask_indices, T* output, size_t* indices) {
-    ops<T>::softmax(array, false, size, mask_indices, output);
-    distributions<T>::multinomial(output, size, mask_indices, output, indices);
+void pool<T>::rf_stochastic_pool(const T* array, const T* mask, size_t size, const T* mask_indices,
+                                 T* output, size_t* indices, bool apply_mask) {
+    T* soft_out = new T[size];
+    if (apply_mask) {
+        ops<T>::elem(array, mask, ops<T>::mul, size, mask_indices, soft_out);
+        ops<T>::softmax(soft_out, false, size, mask_indices, soft_out);
+    } else {
+        ops<T>::softmax(array, false, size, mask_indices, soft_out);
+    }
+    distributions<T>::multinomial(soft_out, size, mask_indices, output, indices);
     ops<T>::elem(array, output, ops<T>::mul, size, mask_indices, output);
+    delete [] soft_out;
 }
 // lp pool operation, set output to LP value across mask_indices at max index
 template<typename T>
-void pool<T>::rf_lp_pool(const T* array, T p, size_t size, const T* mask_indices, T* output, size_t* indices) {
-    ops<T>::elem(array, p, ops<T>::pow, size, mask_indices, output);
-    T sum_output = ops<T>::sum(output, size, mask_indices);
+void pool<T>::rf_lp_pool(const T* array, T p, const T* mask, size_t size, const T* mask_indices, 
+                         T* output, size_t* indices, bool apply_mask) {
+    T* lp_out = new T[size];
+    if (apply_mask) {
+        ops<T>::elem(array, mask, ops<T>::mul, size, mask_indices, lp_out);
+        ops<T>::elem(lp_out, p, ops<T>::pow, size, mask_indices, lp_out);
+    } else {
+        ops<T>::elem(array, p, ops<T>::pow, size, mask_indices, lp_out);
+    }
+    T sum_output = ops<T>::sum(lp_out, size, mask_indices);
     ops<T>::set_max(array, ops<T>::pow(sum_output, 1 / p), size, mask_indices, output, indices);
+    delete [] lp_out;
 }
 // max pool with kernel, set output to max value across kernel blocks
 template<typename T>

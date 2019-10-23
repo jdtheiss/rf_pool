@@ -626,7 +626,6 @@ void ops<T>::keep_max(const T* a, size_t size, T* output, size_t* indices) {
     T value = -INFINITY;
     size_t idx = 0;
     find(a, gt, size, value, idx);
-    zeros(size, output);
     if (value > -INFINITY) {
         output[idx] = value;
         indices[idx] = 1;
@@ -637,7 +636,6 @@ void ops<T>::keep_max(const T* a, size_t size, const T* mask, T* output, size_t*
     T value = -INFINITY;
     size_t idx = 0;
     find(a, gt, size, mask, value, idx);
-    zeros(size, mask, output);
     if (value > -INFINITY) {
         output[idx] = value;
         indices[idx] = 1;
@@ -650,7 +648,6 @@ void ops<T>::keep_max(const T* a, size_t kernel[2], size_t img_shape[2],
     T* values = new T[block_size];
     set(-INFINITY, block_size, values);
     find(a, gt, kernel, img_shape, stride, size, values, indices);
-    zeros(size, output);
     for (size_t i=0; i < block_size; ++i) {
         output[indices[i]] = values[i];
     }
@@ -661,7 +658,6 @@ void ops<T>::set_max(const T* a, T b, size_t size, T* output, size_t* indices) {
     T value = -INFINITY;
     size_t idx = 0;
     find(a, gt, size, value, idx);
-    zeros(size, output);
     if (value > -INFINITY) {
         output[idx] = b;
         indices[idx] = 1;
@@ -672,7 +668,6 @@ void ops<T>::set_max(const T* a, T b, size_t size, const T* mask, T* output, siz
     T value = -INFINITY;
     size_t idx = 0;
     find(a, gt, size, mask, value, idx);
-    zeros(size, mask, output);
     if (value > -INFINITY) {
         output[idx] = b;
         indices[idx] = 1;
@@ -685,7 +680,6 @@ void ops<T>::set_max(const T* a, T b, size_t kernel[2], size_t img_shape[2],
     T* values = new T[block_size];
     set(-INFINITY, block_size, values);
     find(a, gt, kernel, img_shape, stride, size, values, indices);
-    zeros(size, output);
     for (size_t i=0; i < block_size; ++i) {
         output[indices[i]] = b;
     }

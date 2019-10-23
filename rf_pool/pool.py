@@ -3,7 +3,7 @@ import torch
 from torch.autograd import Function
 
 import pool
-from .utils import functions, lattice
+from .utils import functions, lattice, visualize
 
 class Pool(torch.nn.Module):
     """
@@ -26,7 +26,9 @@ class Pool(torch.nn.Module):
         self._update_rfs()
         self.pool_fn = None
         self.kernel_size = None
-        self.input_keys = ['rfs', 'rf_indices', 'pool_fn', 'kernel_size']
+        self.apply_mask = False
+        self.input_keys = ['rfs', 'rf_indices', 'pool_fn', 'kernel_size',
+                           'apply_mask']
         self.input_keys.extend(kwargs.keys())
         self.input_keys = np.unique(self.input_keys).tolist()
         functions.set_attributes(self, **kwargs)
@@ -96,14 +98,19 @@ class Pool(torch.nn.Module):
         if (mu is None and sigma is None):
             return
         elif (torch.allclose(mu, self.mu) and torch.allclose(sigma, self.sigma) \
-              and lattice_fn == self.lattice_fn and self.rfs is not None):
+              and lattice_fn is self.lattice_fn and self.rfs is not None):
             return
         assert self.lattice_fn is not None
         assert self.img_shape is not None
         # get rfs using lattice_fn
         args = [mu, sigma, self.img_shape]
         self.rfs = lattice_fn(*args)
-        self.rf_indices = rf_to_indices(self.rfs)
+        # get rf_indices using mask rfs
+        if lattice_fn is not lattice.mask_kernel_lattice:
+            self.rf_indices = rf_to_indices(lattice.mask_kernel_lattice(*args))
+            self.apply_mask = True
+        else:
+            self.rf_indices = rf_to_indices(self.rfs)
 
     def update_rfs(self, mu=None, sigma=None, lattice_fn=None):
         self._update_rfs(mu, sigma, lattice_fn)
@@ -563,7 +570,8 @@ def unpool(input, index_mask, **kwargs):
     return apply(input, pool_fn='unpool', mask=index_mask, **kwargs)
 
 def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
-          stride=None, retain_shape=False, return_indices=False, **kwargs):
+          stride=None, retain_shape=False, return_indices=False, apply_mask=False,
+          **kwargs):
     """
     Receptive field pooling
 
@@ -594,6 +602,9 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
         [default: False]
     return_indices : bool, optional
         boolean whether to return indices of u contributing to the pooled output
+    apply_mask : bool, optional
+        boolean whether to multiply rfs with input prior to applying pool_fn
+        [default: False]
     **kwargs : dict
         keyword arguments passed to pool_fn
 
@@ -631,10 +642,12 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
     pool_fn = getattr(pool, pool_fn)
 
     # set kwargs
+    kwargs.setdefault('mask', rfs.data)
     kwargs.setdefault('mask_indices', rf_indices)
     kwargs.setdefault('kernel_size', kernel_size)
     kwargs.setdefault('stride', stride)
     kwargs.setdefault('retain_shape', retain_shape)
+    kwargs.setdefault('apply_mask', apply_mask)
 
     # apply cpp pooling function
     input = u.data.flatten(0,1)
