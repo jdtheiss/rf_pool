@@ -86,10 +86,7 @@ def dog_kernel_2d(mu, sigma, ratio, xy):
 def mask_kernel_2d(mu, sigma, xy):
     kernels = exp_kernel_2d(mu, sigma, xy)
     # threshold at 1 std
-    mask = torch.as_tensor(torch.ge(kernels, np.exp(-0.5)), dtype=kernels.dtype)
-    with torch.no_grad():
-        kernels_no_grad = torch.add(kernels, 1e-6)
-    return torch.div(torch.mul(kernels, mask), kernels_no_grad)
+    return torch.as_tensor(torch.ge(kernels, np.exp(-0.5)), dtype=kernels.dtype)
 
 def gaussian_field(priority_map):
     """
