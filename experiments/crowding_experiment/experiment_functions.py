@@ -66,7 +66,7 @@ def apply_attention_field(model, layer_id, mu, sigma, loc, extent):
     attn_field = torch.zeros(img_shape)
     if extent > 0:
         attn_field[loc[0],loc[1]] = 1./extent
-        new_mu, new_sigma = lattice.update_mu_sigma(mu, sigma, attn_field)
+        new_mu, new_sigma = lattice.apply_attentional_field(mu, sigma, attn_field)
     else:
         new_mu, new_sigma = mu, sigma
     model.layers[layer_id].forward_layer.pool.update_rfs(mu=new_mu, sigma=new_sigma)
