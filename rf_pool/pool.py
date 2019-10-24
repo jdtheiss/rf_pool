@@ -17,8 +17,7 @@ class Pool(torch.nn.Module):
         self.img_shape = img_shape
         self.lattice_fn = lattice_fn
         # check for optional kwargs
-        options = functions.pop_attributes(kwargs, ['delta_mu', 'delta_sigma',
-                                                    'update_img_shape'])
+        options = functions.pop_attributes(kwargs, ['delta_mu', 'delta_sigma'])
         functions.set_attributes(self, **options)
         # set inputs for rf_pool
         self.rfs = None
@@ -71,21 +70,9 @@ class Pool(torch.nn.Module):
                                   delta_sigma)
             sigma = torch.sqrt(torch.exp(log_sigma))
             self.delta_sigma = delta_sigma
-        # update mu if img_shape doesnt match rfs.shape[-2:]
-        if self.update_img_shape and \
-           self.rfs.shape[-2:] != torch.Size(self.img_shape):
-            with torch.no_grad():
-                img_diff = torch.sub(torch.tensor(self.img_shape,
-                                                  dtype=mu.dtype),
-                                     torch.tensor(self.rfs.shape[-2:],
-                                                  dtype=mu.dtype))
-                mu = torch.add(mu, img_diff / 2.)
-        elif self.rfs.shape[-2:] != torch.Size(self.img_shape):
-            raise Exception('rfs.shape[-2:] != self.img_shape.\n\n\
-            Set self.update_img_shape=True to avoid this error.')
         # update mu, sigma with priority map
         if priority_map is not None:
-            mu, sigma = lattice.update_mu_sigma(mu, sigma, priority_map)
+            mu, sigma = lattice.apply_attentional_field(mu, sigma, priority_map)
         return mu, sigma
 
     def _update_rfs(self, mu=None, sigma=None, lattice_fn=None):
@@ -96,9 +83,6 @@ class Pool(torch.nn.Module):
         if lattice_fn is None:
             lattice_fn = self.lattice_fn
         if (mu is None and sigma is None):
-            return
-        elif (torch.allclose(mu, self.mu) and torch.allclose(sigma, self.sigma) \
-              and lattice_fn is self.lattice_fn and self.rfs is not None):
             return
         assert self.lattice_fn is not None
         assert self.img_shape is not None
@@ -113,6 +97,12 @@ class Pool(torch.nn.Module):
             self.rf_indices = rf_to_indices(self.rfs)
 
     def update_rfs(self, mu=None, sigma=None, lattice_fn=None):
+        if mu is not None:
+            self.set(mu=mu)
+        if sigma is not None:
+            self.set(sigma=sigma)
+        if lattice_fn is not None:
+            self.set(lattice_fn=lattice_fn)
         self._update_rfs(mu, sigma, lattice_fn)
         return self.rfs
 
@@ -177,8 +167,10 @@ class RF_Pool(Pool):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
-        mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
-        self._update_rfs(mu, sigma)
+        if delta_mu is not None or delta_sigma is not None or \
+        priority_map is not None:
+            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+            self._update_rfs(mu, sigma)
         # return pooling outputs
         return self.apply(u, **kwargs)
 
@@ -226,8 +218,10 @@ class RF_Uniform(Pool):
        # set img_shape
        self.img_shape = u.shape[-2:]
        # update rfs, mu, sigma
-       mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
-       self._update_rfs(mu, sigma)
+       if delta_mu is not None or delta_sigma is not None or \
+       priority_map is not None:
+           mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+           self._update_rfs(mu, sigma)
        # return pooling outputs
        return self.apply(u, **kwargs)
 
@@ -276,8 +270,10 @@ class RF_Random(Pool):
        # set img_shape
        self.img_shape = u.shape[-2:]
        # update rfs, mu, sigma
-       mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
-       self._update_rfs(mu, sigma)
+       if delta_mu is not None or delta_sigma is not None or \
+       priority_map is not None:
+           mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+           self._update_rfs(mu, sigma)
        # return pooling outputs
        return self.apply(u, **kwargs)
 
@@ -317,8 +313,10 @@ class RF_Squeeze(Pool):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
-        mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
-        self._update_rfs(mu, sigma)
+        if delta_mu is not None or delta_sigma is not None or \
+        priority_map is not None:
+            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+            self._update_rfs(mu, sigma)
         # apply pooling function
         output = self.apply(u, **kwargs)
         # get squeezed coordinates
@@ -364,8 +362,10 @@ class RF_CenterCrop(Pool):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
-        mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
-        self._update_rfs(mu, sigma)
+        if delta_mu is not None or delta_sigma is not None or \
+        priority_map is not None:
+            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+            self._update_rfs(mu, sigma)
         # apply pooling function
         output = self.apply(u, **kwargs)
         # get coordinates of center size
@@ -415,8 +415,10 @@ class MaxPool(Pool):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
-        mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
-        self._update_rfs(mu, sigma)
+        if delta_mu is not None or delta_sigma is not None or \
+        priority_map is not None:
+            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+            self._update_rfs(mu, sigma)
         # apply pooling function
         return self.apply(u, **kwargs)
 
@@ -465,8 +467,10 @@ class ProbmaxPool(Pool):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
-        mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
-        self._update_rfs(mu, sigma)
+        if delta_mu is not None or delta_sigma is not None or \
+        priority_map is not None:
+            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+            self._update_rfs(mu, sigma)
         # apply pooling function
         return self.apply(u, **kwargs)
 
@@ -513,8 +517,10 @@ class StochasticPool(Pool):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
-        mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
-        self._update_rfs(mu, sigma)
+        if delta_mu is not None or delta_sigma is not None or \
+        priority_map is not None:
+            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+            self._update_rfs(mu, sigma)
         # apply pooling function
         return self.apply(u, **kwargs)
 
