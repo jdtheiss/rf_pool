@@ -69,7 +69,6 @@ def apply_attention_field(model, layer_id, mu, sigma, loc, extent):
         new_mu, new_sigma = lattice.update_mu_sigma(mu, sigma, attn_field)
     else:
         new_mu, new_sigma = mu, sigma
-    model.layers[layer_id].forward_layer.pool.set(mu=new_mu, sigma=new_sigma)   
     model.layers[layer_id].forward_layer.pool.update_rfs(mu=new_mu, sigma=new_sigma)
     return model
 
@@ -104,8 +103,7 @@ def get_SNR_accuracy(target_loader, crowd_loader, peak, layer_id='1',batch_size=
             if rotate_fn is not None:
                 mu, sigma = lattice_fn(**lattice_kwargs, rotate=rotate_fn())
             else:
-                mu, sigma = lattice_fn(**lattice_kwargs)
-            model.layers[layer_id].forward_layer.pool.set(mu=mu, sigma=sigma) 
+                mu, sigma = lattice_fn(**lattice_kwargs) 
             model.layers[layer_id].forward_layer.pool.update_rfs(mu=mu, sigma=sigma)
         # get mask
         if RF_mask is None:
@@ -168,7 +166,6 @@ def get_heatmaps(target_loader, crowd_loader, peak, layer_id='1', batch_size=1, 
                 mu, sigma = lattice_fn(**lattice_kwargs, rotate=rotate_fn())
             else:
                 mu, sigma = lattice_fn(**lattice_kwargs)
-            model.layers[layer_id].forward_layer.pool.set(mu=mu, sigma=sigma) 
             model.layers[layer_id].forward_layer.pool.update_rfs(mu=mu, sigma=sigma)
         # get mask_i, add to mask
         if RF_mask is None:
