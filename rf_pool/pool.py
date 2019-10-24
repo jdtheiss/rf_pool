@@ -102,8 +102,8 @@ class Pool(torch.nn.Module):
         if sigma is not None:
             self.set(sigma=sigma)
         if lattice_fn is not None:
-            self.set(lattice_fn=lattice_fn)
-        self._update_rfs(mu, sigma, lattice_fn)
+            self.set(lattice_fn=lattice_fn, **kwargs)
+        self._update_rfs(mu, sigma, lattice_fn, **kwargs)
         return self.rfs
 
     def get_squeezed_coords(self, mu, sigma):
@@ -162,14 +162,14 @@ class RF_Pool(Pool):
         super(RF_Pool, self).__init__(mu, sigma, img_shape, lattice_fn,
                                       **kwargs)
 
-    def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
+    def forward(self, u, delta_mu=None, delta_sigma=None, fn=None,
                 **kwargs):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
         if delta_mu is not None or delta_sigma is not None or \
-        priority_map is not None:
-            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+        fn is not None:
+            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, fn, **kwargs)
             self._update_rfs(mu, sigma)
         # return pooling outputs
         return self.apply(u, **kwargs)
@@ -213,14 +213,14 @@ class RF_Uniform(Pool):
         super(RF_Uniform, self).__init__(mu, sigma, img_shape, lattice_fn,
                                          **kwargs)
 
-    def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
+    def forward(self, u, delta_mu=None, delta_sigma=None, fn=None,
                 **kwargs):
        # set img_shape
        self.img_shape = u.shape[-2:]
        # update rfs, mu, sigma
        if delta_mu is not None or delta_sigma is not None or \
-       priority_map is not None:
-           mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+       fn is not None:
+           mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, fn, **kwargs)
            self._update_rfs(mu, sigma)
        # return pooling outputs
        return self.apply(u, **kwargs)
@@ -265,14 +265,14 @@ class RF_Random(Pool):
         super(RF_Random, self).__init__(mu, sigma, img_shape, lattice_fn,
                                         **kwargs)
 
-    def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
+    def forward(self, u, delta_mu=None, delta_sigma=None, fn=None,
                 **kwargs):
        # set img_shape
        self.img_shape = u.shape[-2:]
        # update rfs, mu, sigma
        if delta_mu is not None or delta_sigma is not None or \
-       priority_map is not None:
-           mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+       fn is not None:
+           mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, fn, **kwargs)
            self._update_rfs(mu, sigma)
        # return pooling outputs
        return self.apply(u, **kwargs)
@@ -308,14 +308,14 @@ class RF_Squeeze(Pool):
         super(RF_Squeeze, self).__init__(mu, sigma, img_shape, lattice_fn,
                                          **kwargs)
 
-    def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
+    def forward(self, u, delta_mu=None, delta_sigma=None, fn=None,
                 **kwargs):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
         if delta_mu is not None or delta_sigma is not None or \
-        priority_map is not None:
-            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+        fn is not None:
+            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, fn, **kwargs)
             self._update_rfs(mu, sigma)
         # apply pooling function
         output = self.apply(u, **kwargs)
@@ -357,14 +357,14 @@ class RF_CenterCrop(Pool):
         super(RF_CenterCrop, self).__init__(mu, sigma, img_shape, lattice_fn,
                                             **kwargs)
 
-    def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
+    def forward(self, u, delta_mu=None, delta_sigma=None, fn=None,
                 **kwargs):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
         if delta_mu is not None or delta_sigma is not None or \
-        priority_map is not None:
-            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+        fn is not None:
+            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, fn, **kwargs)
             self._update_rfs(mu, sigma)
         # apply pooling function
         output = self.apply(u, **kwargs)
@@ -410,14 +410,14 @@ class MaxPool(Pool):
                                       kernel_size=kernel_size,
                                       pool_fn='max_pool', **kwargs)
 
-    def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
+    def forward(self, u, delta_mu=None, delta_sigma=None, fn=None,
                 **kwargs):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
         if delta_mu is not None or delta_sigma is not None or \
-        priority_map is not None:
-            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+        fn is not None:
+            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, fn, **kwargs)
             self._update_rfs(mu, sigma)
         # apply pooling function
         return self.apply(u, **kwargs)
@@ -462,14 +462,14 @@ class ProbmaxPool(Pool):
                                           kernel_size=kernel_size,
                                           pool_fn='probmax_pool', **kwargs)
 
-    def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
+    def forward(self, u, delta_mu=None, delta_sigma=None, fn=None,
                 **kwargs):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
         if delta_mu is not None or delta_sigma is not None or \
-        priority_map is not None:
-            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+        fn is not None:
+            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, fn, **kwargs)
             self._update_rfs(mu, sigma)
         # apply pooling function
         return self.apply(u, **kwargs)
@@ -512,14 +512,14 @@ class StochasticPool(Pool):
                                              kernel_size=kernel_size,
                                              pool_fn='stochastic_pool', **kwargs)
 
-    def forward(self, u, delta_mu=None, delta_sigma=None, priority_map=None,
+    def forward(self, u, delta_mu=None, delta_sigma=None, fn=None,
                 **kwargs):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
         if delta_mu is not None or delta_sigma is not None or \
-        priority_map is not None:
-            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, priority_map)
+        fn is not None:
+            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, fn, **kwargs)
             self._update_rfs(mu, sigma)
         # apply pooling function
         return self.apply(u, **kwargs)
@@ -638,14 +638,14 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
         return u
 
     # assert pool_fn in pool and get pool_grad
-    assert hasattr(pool, pool_fn)
+    assert hasattr(pool, pool_fn, **kwargs)
     if 'grad_fn' in kwargs:
         grad_fn = kwargs.pop('grad_fn')
     elif hasattr(pool, pool_fn + '_grad'):
         grad_fn = pool_fn + '_grad'
     else:
         grad_fn = None
-    pool_fn = getattr(pool, pool_fn)
+    pool_fn = getattr(pool, pool_fn, **kwargs)
 
     # set kwargs
     kwargs.setdefault('mask', rfs.data)
@@ -706,8 +706,8 @@ def _apply_grad(grad_output, input, rfs, grad_fn, index_mask=None,
                 index_kernel=None, kernel_size=None, stride=None,
                 apply_mask=False, **kwargs):
     # assert pool_fn in pool and get pool_grad
-    assert hasattr(pool, grad_fn)
-    grad_fn = getattr(pool, grad_fn)
+    assert hasattr(pool, grad_fn, **kwargs)
+    grad_fn = getattr(pool, grad_fn, **kwargs)
 
     # set kwargs
     kwargs.setdefault('mask', rfs.data)
