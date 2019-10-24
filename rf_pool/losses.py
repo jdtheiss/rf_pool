@@ -31,6 +31,18 @@ class MultiLoss(Loss):
         for loss_fn, weight, args_i in zip(self.losses, self.weights, list_args):
             loss = loss + torch.mul(loss_fn(*args_i), weight)
         return loss
+    
+class VarLoss(Loss):
+    """
+    """
+    def __init__(self, loss_fn, input, target):
+        super(VarLoss, self).__init__()
+        self.loss_fn = loss_fn
+        self.input = input
+        self.target = target
+        
+    def forward(self, *args):
+        return self.loss_fn(self.input, self.target)
 
 class LayerLoss(Loss):
     """

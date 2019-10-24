@@ -638,14 +638,14 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
         return u
 
     # assert pool_fn in pool and get pool_grad
-    assert hasattr(pool, pool_fn, **kwargs)
+    assert hasattr(pool, pool_fn)
     if 'grad_fn' in kwargs:
         grad_fn = kwargs.pop('grad_fn')
     elif hasattr(pool, pool_fn + '_grad'):
         grad_fn = pool_fn + '_grad'
     else:
         grad_fn = None
-    pool_fn = getattr(pool, pool_fn, **kwargs)
+    pool_fn = getattr(pool, pool_fn)
 
     # set kwargs
     kwargs.setdefault('mask', rfs.data)
