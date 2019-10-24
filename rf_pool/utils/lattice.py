@@ -52,7 +52,7 @@ import numpy as np
 import torch
 from torch.autograd import Function
 
-def multiply_gaussians(mu0, mu1, sigma0, sigma1):
+def multiply_gaussians(mu0, sigma0, mu1, sigma1):
     # reshape to (mu0_batch, 2, 1) (1, 2, mu1_batch)
     mu0 = torch.unsqueeze(mu0, -1)
     mu1 = torch.unsqueeze(mu1.t(), 0)
@@ -183,7 +183,7 @@ def apply_attentional_field(mu, sigma, priority_map):
         return mu, sigma
     map_mu = map_mu[keep_indices].type(priority_map.dtype)
     map_sigma = 1. / map_sigma[keep_indices].type(priority_map.dtype)
-    return multiply_gaussians(mu, map_mu, sigma, map_sigma)
+    return multiply_gaussians(mu, sigma, map_mu, map_sigma)
 
 def exp_kernel_lattice(mu, sigma, kernel_shape):
     """

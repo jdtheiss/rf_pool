@@ -54,7 +54,7 @@ class Pool(torch.nn.Module):
                 output.append(None)
         return output
 
-    def update_mu_sigma(self, delta_mu=None, delta_sigma=None, priority_map=None):
+    def update_mu_sigma(self, delta_mu=None, delta_sigma=None, fn=None, **kwargs):
         if self.mu is None and self.sigma is None:
             return (None, None)
         else:
@@ -70,9 +70,9 @@ class Pool(torch.nn.Module):
                                   delta_sigma)
             sigma = torch.sqrt(torch.exp(log_sigma))
             self.delta_sigma = delta_sigma
-        # update mu, sigma with priority map
-        if priority_map is not None:
-            mu, sigma = lattice.apply_attentional_field(mu, sigma, priority_map)
+        # update mu, sigma with a lattice function
+        if fn is not None:
+            mu, sigma = fn(mu, sigma, **kwargs)
         return mu, sigma
 
     def _update_rfs(self, mu=None, sigma=None, lattice_fn=None):
