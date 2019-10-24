@@ -137,7 +137,7 @@ def gaussian_gradient(kernels):
     w[1,0,0,:] = -1.
     return torch.conv2d(kernels, w)[0]
 
-def update_mu_sigma(mu, sigma, priority_map):
+def apply_attentional_field(mu, sigma, priority_map):
     """
     Returns updated mu and sigma after multiplication with a map of gaussian
     precision values
@@ -163,7 +163,7 @@ def update_mu_sigma(mu, sigma, priority_map):
     >>> kernel_shape = torch.as_tensor((24,24), dtype=torch.float32)
     >>> mu, sigma = init_uniform_lattice(kernel_shape//2, 3, 8, 2)
     >>> priority_map = torch.rand(kernel_shape)
-    >>> new_mu, new_sigma = update_mu_sigma(mu, sigma, priority_map)
+    >>> new_mu, new_sigma = apply_attentional_field(mu, sigma, priority_map)
 
     Notes
     -----
