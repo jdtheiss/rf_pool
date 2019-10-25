@@ -287,6 +287,8 @@ class Model(nn.Module):
         """
         # get layer_id (layer-wise training) from kwargs
         options = functions.pop_attributes(kwargs, ['layer_id'], default=None)
+        options.update(functions.pop_attributes(kwargs, ['retain_graph'],
+                                                default=False))
         # get options from kwargs
         options.update(functions.pop_attributes(kwargs,
                                                 ['add_loss','sparsity','scheduler',
@@ -347,7 +349,7 @@ class Model(nn.Module):
                     if options.get('sparsity'):
                         self.sparsity(inputs[0], **options.get('sparsity'))
                     # backprop
-                    loss.backward()
+                    loss.backward(retain_graph=options.get('retain_graph'))
                     loss = loss.item()
                     # update parameters
                     optimizer.step()
