@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch.autograd import Function
@@ -73,6 +74,7 @@ class Pool(torch.nn.Module):
         # update mu, sigma with a lattice function
         if fn is not None:
             mu, sigma = fn(mu, sigma, **kwargs)
+        self.tmp_mu, self.tmp_sigma = mu, sigma
         return mu, sigma
 
     def _update_rfs(self, mu=None, sigma=None, lattice_fn=None):
@@ -119,15 +121,28 @@ class Pool(torch.nn.Module):
         output = output[:, coords[0,0]:coords[1,0], coords[0,1]:coords[1,1]]
         return torch.reshape(output, input.shape[:-2] + output.shape[-2:])
 
-    def show_lattice(self, x=None, figsize=(5,5), cmap=None):
-        assert self.rfs is not None
-        if self.lattice_fn is lattice.mask_kernel_lattice:
-            mu, sigma = self.update_mu_sigma(self.delta_mu, self.delta_sigma)
-            rfs = lattice.exp_kernel_lattice(mu, sigma, self.img_shape)
+    def show_lattice(self, x=None, figsize=(5,5), cmap=None, **kwargs):
+        # get mu, sigma
+        if hasattr(self, 'tmp_mu') and self.tmp_mu is not None:
+            mu = self.tmp_mu
         else:
-            rfs = self.rfs
-        rf_lattice = lattice.make_kernel_lattice(rfs)
-        lattice.show_kernel_lattice(rf_lattice, x=x, figsize=figsize, cmap=cmap)
+            mu = self.mu
+        if hasattr(self, 'tmp_sigma') and self.tmp_sigma is not None:
+            sigma = self.tmp_sigma
+        else:
+            sigma = self.sigma
+        if x is not None:
+            # show input
+            fig, axes = plt.subplots(1, 2, figsize=figsize)
+            x = torch.squeeze(x.permute(0,2,3,1), -1).numpy()
+            x = x - np.min(x, axis=(1,2), keepdims=True)
+            x = x / np.max(x, axis=(1,2), keepdims=True)
+            axes[0].imshow(x[0], cmap=cmap)
+            visualize.scatter_rfs(mu, sigma, self.img_shape, ax=axes[1],
+                                  **kwargs)
+        else: # visualize rfs
+            visualize.scatter_rfs(mu, sigma, self.img_shape, figsize=figsize,
+                                  **kwargs)
 
     def forward(self):
         raise NotImplementedError

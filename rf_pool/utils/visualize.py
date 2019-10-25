@@ -178,8 +178,7 @@ def get_adjusted_sizes(ax, size):
     s = ((trans(size_data)-trans((0,0)))*ppd)
     return np.maximum(s[:,0], s[:,1])
 
-def plot_rfs(model, layer_id, mu0=None, sigma0=None, figsize=(5,5), **kwargs):
-    #TODO: figure out how to update RFs if colormap is added etc.
+def plot_rfs(mu, sigma, img_shape, mu0=None, sigma0=None, figsize=(5,5), **kwargs):
     # init figure
     if 'ax' not in kwargs:
         fig = plt.figure(figsize=figsize)
@@ -190,28 +189,22 @@ def plot_rfs(model, layer_id, mu0=None, sigma0=None, figsize=(5,5), **kwargs):
     # set aspect equal
     ax.figure.canvas.draw()
     ax.set_aspect('equal', adjustable='box')
-    # get heatmap
-    heatmap = model.rf_heatmap(layer_id)
     # set limits to heatmap size
-    ax.set_xlim(0.5, heatmap.shape[2]-0.5)
-    ax.set_ylim(heatmap.shape[1]-0.5, 0.5)
-    # get mu, sigma
-    mu, sigma = model.rf_to_image_space(layer_id)
+    ax.set_xlim(0.5, img_shape[1]-0.5)
+    ax.set_ylim(img_shape[0]-0.5, 0.5)
     # set mu offsets
-    offsets = np.flip(mu.numpy(), 1)
+    offsets = np.flip(mu.data.numpy(), 1)
     if mu0 is not None:
         assert mu0.shape == mu.shape
-        mu0 = model.rf_to_image_space(layer_id, mu0)[0]
-        offsets0 = np.flip(mu0.numpy(), 1)
+        offsets0 = np.flip(mu0.data.numpy(), 1)
         offsets = np.stack([offsets0, offsets], -1)
     if sigma0 is not None:
         assert sigma0.shape == sigma.shape
-        sigma = model.rf_to_image_space(layer_id, sigma0)[0]
     # set sigma sizes
     sigma = 2. * np.ceil(sigma)
     if sigma.ndimension() == 2:
         sigma = sigma.squeeze(-1)
-    sigma = sigma.numpy()
+    sigma = sigma.data.numpy()
     sigma = get_adjusted_sizes(ax, sigma)
     # set kwargs for plot
     plot_kwargs = {'markersize': sigma.tolist(), 'color': 'black',
@@ -234,7 +227,8 @@ def plot_rfs(model, layer_id, mu0=None, sigma0=None, figsize=(5,5), **kwargs):
         plot_with_kwargs(ax.plot, offsets[i], **list_kwargs, **kwargs)
     return fig
 
-def scatter_rfs(model, layer_id, remove=False, updates={}, figsize=(5,5), **kwargs):
+def scatter_rfs(mu, sigma, img_shape, remove=False, updates={}, figsize=(5,5),
+                **kwargs):
     # init figure
     if 'ax' not in kwargs:
         fig = plt.figure(figsize=figsize)
@@ -251,19 +245,16 @@ def scatter_rfs(model, layer_id, remove=False, updates={}, figsize=(5,5), **kwar
     # set aspect equal
     ax.figure.canvas.draw()
     ax.set_aspect('equal', adjustable='box')
-    # get heatmap
-    heatmap = model.rf_heatmap(layer_id)
     # set limits to heatmap size
-    ax.set_xlim(0.5, heatmap.shape[2]-0.5)
-    ax.set_ylim(heatmap.shape[1]-0.5, 0.5)
-    # get mu, sigma in image space
-    mu, sigma = model.rf_to_image_space(layer_id)
+    ax.set_xlim(0.5, img_shape[1]-0.5)
+    ax.set_ylim(img_shape[0]-0.5, 0.5)
+    # set sigma
     sigma = 2. * np.ceil(sigma)
     if sigma.ndimension() == 2:
         sigma = sigma.squeeze(-1)
-    sigma = sigma.numpy()
+    sigma = sigma.data.numpy()
     # set mu offsets
-    offsets = np.flip(mu.numpy(), 1)
+    offsets = np.flip(mu.data.numpy(), 1)
     # set sizes
     sigma = get_adjusted_sizes(ax, sigma)
     # set kwargs for scatter
@@ -299,11 +290,14 @@ def heatmap(model, layer_id, scores=None, input=None, rf_fn=scatter_rfs,
     else:
         ax = kwargs.pop('ax')
         fig = ax.get_figure()
-    # plot RF outlines in image space
-    if rf_fn:
-        rf_fn(model, layer_id, remove=False, ax=ax, fn_prefix='RF', **kwargs)
     # get heatmap
     heatmap = model.rf_heatmap(layer_id)
+    # plot RF outlines in image space
+    if rf_fn:
+        # get mu, sigma in image space
+        mu, sigma = model.rf_to_image_space(layer_id)
+        rf_fn(mu, sigma, heatmap.shape[1:], remove=False, ax=ax, fn_prefix='RF',
+              **kwargs)
     # set scores
     if scores is None:
         scores = torch.zeros(heatmap.shape[0])
@@ -323,7 +317,8 @@ def heatmap(model, layer_id, scores=None, input=None, rf_fn=scatter_rfs,
         fig.colorbar(ax.images[0], ax=ax)
         # update rf scatter plot
         if rf_fn:
-            rf_fn(model, layer_id, remove=True, ax=ax, fn_prefix='RF', **kwargs)
+            rf_fn(mu, sigma, heatmap.shape[1:], remove=True, ax=ax, fn_prefix='RF',
+                  **kwargs)
     # add input to image using masked array
     if input is not None:
         if type(input) is np.ma.core.MaskedArray:
