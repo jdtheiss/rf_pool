@@ -663,7 +663,8 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
     pool_fn = getattr(pool, pool_fn)
 
     # set kwargs
-    kwargs.setdefault('mask', rfs.data)
+    if rfs is not None:
+        kwargs.setdefault('mask', rfs.data)
     kwargs.setdefault('mask_indices', rf_indices)
     kwargs.setdefault('kernel_size', kernel_size)
     kwargs.setdefault('stride', stride)
@@ -725,7 +726,8 @@ def _apply_grad(grad_output, input, rfs, grad_fn, index_mask=None,
     grad_fn = getattr(pool, grad_fn, **kwargs)
 
     # set kwargs
-    kwargs.setdefault('mask', rfs.data)
+    if rfs is not None:
+        kwargs.setdefault('mask', rfs.data)
     kwargs.setdefault('mask_indices', index_mask)
     kwargs.setdefault('kernel_size', kernel_size)
     kwargs.setdefault('stride', stride)
@@ -738,10 +740,13 @@ def _apply_grad(grad_output, input, rfs, grad_fn, index_mask=None,
     grad_input = grad_input.reshape(output_shape)
 
     # set grad for rfs
-    grad_rfs = torch.zeros_like(rfs)
-    idx = torch.where(rfs)
-    g = torch.sum(torch.mul(grad_input, input), [0,1]).unsqueeze(0)
-    grad_rfs[idx] = g.repeat(rfs.shape)[idx]
+    if rfs is not None:
+        grad_rfs = torch.zeros_like(rfs)
+        idx = torch.where(rfs)
+        g = torch.sum(torch.mul(grad_input, input), [0,1]).unsqueeze(0)
+        grad_rfs[idx] = g.repeat(rfs.shape)[idx]
+    else:
+        grad_rfs = None
 
     return grad_input, grad_rfs
 
