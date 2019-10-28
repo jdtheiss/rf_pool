@@ -323,17 +323,22 @@ class Module(nn.Module):
             self.q = decay * self.q.detach() + (1. - decay) * q
         # switch based on type
         if type == 'cross_entropy':
+            q = torch.mean(self.q.transpose(0,1).flatten(1), -1)
+            assert torch.all(torch.gt(q, 0.)), (
+                'Type ''cross_entropy'': log(0.) is -inf'
+                )
             target = torch.tensor(target, dtype=self.q.dtype)
-            sparse_cost = torch.sub(-target * torch.log(self.q),
-                                    (1. - target) * torch.log(1. - self.q))
+            sparse_cost = torch.sub(-target * torch.log(q),
+                                    (1. - target) * torch.log(1. - q))
         elif type == 'log_sum':
             epsilon = torch.tensor(epsilon, dtype=self.q.dtype)
             sparse_cost = torch.log(1. + torch.abs(self.q) / epsilon)
         elif type == 'lasso':
             sparse_cost = torch.abs(self.q)
         elif type == 'group_lasso':
-            if q.ndimension() != 4:
-                raise Exception('Type ''group_lasso'' requires ndimension == 4')
+            assert q.ndimension() != 4, (
+                'Type ''group_lasso'' requires ndimension == 4'
+                )
             p = torch.prod(torch.tensor(kernel_size, dtype=self.q.dtype))
             g = torch.sqrt(F.lp_pool2d(torch.pow(self.q, 2.), 1, kernel_size))
             sparse_cost = torch.mul(torch.sqrt(p), g)
