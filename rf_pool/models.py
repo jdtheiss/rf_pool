@@ -20,69 +20,10 @@ class Model(nn.Module):
 
     Attributes
     ----------
-    loss_type : str or torch.nn.modules.loss
-        cost function choice
-    optimizer_type : str or torch.optim
-        optimizer choice
-
-    Methods
-    -------
-    n_layers()
-        return number of layers
-    output_shapes(input_shape)
-        return output_shape for each layer
-    append(layer)
-        append a new layer to the model
-    get_layers(layer_ids)
-        return list of layers with given layer_ids
-    apply_layers(input, layer_ids, forward=True)
-        return result from applying specific layers
-        Note: if forward=False, layer_ids will be reversed and reconstruct will
-        be called for each layer
-    forward(input)
-        return result of forward pass through layers
-    reconstruct(input)
-        return result of backward pass through layers
-        Note: requires that layers have reconstruct function
-    train(n_epochs, trainloader, lr=0.001, monitor=100, **kwargs)
-        trains the model with a given torch.utils.data.DataLoader and loss_fn
-    pre_layer_ids(layer_id)
-        return layer_ids before layer_id
-    post_layer_ids(layer_id)
-        return layer_ids after layer_id
-    save_model(filename, extras=[])
-        saves parameters from model and extras in pickle format
-        Note: first saves model parameters as dictionary (see download_weights)
-    load_model(filename)
-        loads a previously saved model from filename in pickle format
-        will load either a model instance or model dictionary
-        (see download_weights)
-    download_weights(pattern='')
-        return parameters as dictionary (i.e. {name: parameter})
-    load_weights(model_dict, param_dict={})
-        load parameters from a dictionary (see download_weights)
-        Note: use param_dict to associate keys in model_dict to parameter names
-        in the current model (e.g., {'layers.0.hidden_weight': 'W_0'})
-    init_weights(suffix='weight', fn=torch.randn_like)
-        initialze weights for parameter names that end with suffix using fn
-    get_trainable_params(pattern='')
-        return trainable parameters (requires_grad=True) that contains pattern
-    get_param_names():
-        return name for each parameter
-    set_requires_grad(pattern, requires_grad=True)
-        set requires_grad attribute for parameters that contains pattern
-    monitor_loss()
-        #TODO:WRITEME
-    get_prediction(input, crop=None)
-        return prediction (max across output layer) for given input
-        Note: if crop is given, max will be across cropped region of output
-        layer (i.e. output[:,:,crop[0],crop[1]])
-    get_accuracy(dataLoader)
-        return model accuracy given a torch.utils.data.DataLoader with labels
-    rf_index()
-        #TODO:WRITEME
-    rf_heatmap()
-        #TODO:WRITEME
+    data_shape : tuple
+        shape of input data
+    layers : torch.nn.ModuleDict
+        layers containing computations to be performed
     """
     def __init__(self):
         super(Model, self).__init__()
@@ -278,7 +219,8 @@ class Model(nn.Module):
 
         return 100 * correct / total
 
-    def train(self, n_epochs, trainloader, loss_fn, optimizer, monitor=100, **kwargs):
+    def train(self, n_epochs, trainloader, loss_fn, optimizer, monitor=100,
+              **kwargs):
         """
         #TODO:WRITEME
         Note
@@ -291,16 +233,22 @@ class Model(nn.Module):
                                                 default=False))
         # get options from kwargs
         options.update(functions.pop_attributes(kwargs,
-                                                ['add_loss','sparsity','scheduler',
-                                                 'label_params','show_negative',
-                                                 'show_lattice'],
+                                                ['add_loss','sparse_loss',
+                                                 'scheduler','label_params',
+                                                 'show_negative','show_lattice'],
                                                 default={}))
         # added loss
         if options.get('add_loss'):
             if type(options.get('add_loss')) is dict:
-                extra_loss = losses.LayerLoss(self, **dict)
+                add_loss = losses.LayerLoss(self, **options.get('add_loss'))
             else:
-                extra_loss = options.get('add_loss')
+                add_loss = options.get('add_loss')
+        # sparsity loss
+        if options.get('sparse_loss'):
+            if type(options.get('sparse_loss')) is dict:
+                sparse_loss = losses.SparseLoss(self, **options.get('sparse_loss'))
+            else:
+                sparse_loss = options.get('sparse_loss')
         # if layer-wise training, ensure layer_id str and get pre_layer_ids
         if options.get('layer_id') is not None:
             layer_id = str(options.get('layer_id'))
@@ -331,10 +279,11 @@ class Model(nn.Module):
                     # train
                     loss = self.layers[layer_id].train(layer_input,
                                                        optimizer=optimizer,
-                                                       sparsity=options.get('sparsity'),
                                                        **kwargs)
                     if options.get('add_loss'):
-                        loss = loss + extra_loss(*inputs)
+                        loss = loss + add_loss(*inputs)
+                    if options.get('sparse_loss'):
+                        loss = loss + sparse_loss(*inputs)
                 else: # normal training
                     # zero gradients
                     optimizer.zero_grad()
@@ -344,10 +293,10 @@ class Model(nn.Module):
                     loss = loss_fn(output, label)
                     # additional loss
                     if options.get('add_loss'):
-                        loss = loss + extra_loss(*inputs)
-                    # sparsity
-                    if options.get('sparsity'):
-                        self.sparsity(inputs[0], **options.get('sparsity'))
+                        loss = loss + add_loss(*inputs)
+                    # sparse_loss
+                    if options.get('sparse_loss'):
+                        loss = loss + sparse_loss(*inputs)
                     # backprop
                     loss.backward(retain_graph=options.get('retain_graph'))
                     loss = loss.item()
@@ -450,24 +399,6 @@ class Model(nn.Module):
                     self.set_requires_grad(label_params.get(label),
                                            requires_grad=requires_grad)
 
-    def sparsity(self, input, layer_ids, module_name, target, cost=1., l2_reg=0.):
-        for i, (name, layer) in enumerate(self.layers.named_children()):
-            if name in layer_ids:
-                if type(target) is list:
-                    target_i = target[i]
-                else:
-                    target_i = target
-                if type(cost) is list:
-                    cost_i = cost[i]
-                else:
-                    cost_i = cost
-                if type(l2_reg) is list:
-                    l2_reg_i = l2_reg[i]
-                else:
-                    l2_reg_i = l2_reg
-                layer.sparsity(input, module_name, target_i, cost_i, l2_reg_i)
-            input = layer.forward(input)
-
     def show_lattice(self, x=None, figsize=(5,5), cmap=None):
         # get rf_layers
         rf_layers = []
@@ -550,6 +481,21 @@ class Model(nn.Module):
             ax[r,1].imshow(neg[r], cmap=cmap)
         plt.show()
         return fig
+
+    def sparseness(self, input, layer_id, module_name=None, **kwargs):
+        # equation from Hoyer (2004) used in Ji et al. (2014)
+        with torch.no_grad():
+            pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
+            layer_input = self.apply_layers(input.detach(), pre_layer_ids)
+            activity = self.layers[layer_id].apply_modules(layer_input,
+                                                           'forward_layer',
+                                                           output_module=module_name,
+                                                           **kwargs)
+            n = torch.tensor(torch.numel(activity), dtype=activity.dtype)
+            l1_l2 = torch.div(torch.sum(torch.abs(activity)),
+                              torch.sqrt(torch.sum(torch.pow(activity, 2))))
+            sqrt_n = torch.sqrt(n)
+        return (sqrt_n - l1_l2) / (sqrt_n - 1)
 
     def rf_output(self, input, layer_id, **kwargs):
         rf_layer = self.layers[layer_id].forward_layer.pool

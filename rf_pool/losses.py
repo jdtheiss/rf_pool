@@ -31,7 +31,7 @@ class MultiLoss(Loss):
         for loss_fn, weight, args_i in zip(self.losses, self.weights, list_args):
             loss = loss + torch.mul(loss_fn(*args_i), weight)
         return loss
-    
+
 class VarLoss(Loss):
     """
     """
@@ -40,19 +40,19 @@ class VarLoss(Loss):
         self.loss_fn = loss_fn
         self.input = input
         self.target = target
-        
+
     def forward(self, *args):
         return self.loss_fn(self.input, self.target)
 
 class LayerLoss(Loss):
     """
     """
-    def __init__(self, model, loss_fn, layer_ids, module_name=None, cost=1.,
+    def __init__(self, model, layer_ids, loss_fn, module_name=None, cost=1.,
                  parameters=None, input_target=None, target=None, **kwargs):
         super(LayerLoss, self).__init__()
         self.model = model
-        self.loss_fn = loss_fn
         self.layer_ids = layer_ids
+        self.loss_fn = loss_fn
         self.module_name = functions.parse_list_args(len(layer_ids), module_name)[0]
         self.module_name = [m[0] for m in self.module_name]
         self.cost = functions.parse_list_args(len(layer_ids), cost)[0]
@@ -95,10 +95,10 @@ class LayerLoss(Loss):
         return feat
 
     def forward(self, *args):
-        # if self.target is None and self.input_target is None:
-        feat = self.get_features(*args)
-        # else:
-        #     feat = self.get_features(args[0])
+        if self.target is None and self.input_target is None:
+            feat = self.get_features(*args)
+        else:
+            feat = self.get_features(args[0])
         loss = torch.zeros(1, requires_grad=True)
         for i, feat_i in enumerate(feat):
             if self.input_target is not None:
@@ -108,4 +108,111 @@ class LayerLoss(Loss):
             else:
                 loss_i = self.loss_fn(*feat_i)
             loss = loss + loss_i * self.cost[i]
+        return loss / len(self.layer_ids)
+
+class SparseLoss(LayerLoss):
+    """
+    Encourage sparsity by taking gradient of constraint function
+
+    Parameters
+    ----------
+    model : rf_pool.models.Model
+        model used to compute features at layer_ids
+    layer_ids : list
+        layer ids corresponding to layers within model for which features will be
+        computed
+    loss_fn : string or function
+        type of sparsity constraint: 'cross_entropy' (Lee et al., 2008),
+        'log_sum' (Ji et al., 2014), 'lasso', 'group_lasso' (Yuan & Lin, 2006)
+        [default: 'cross_entropy']
+    module_name : string or None
+        output module for passing input through forward layer
+        [default: None, no modules are applied to the input]
+    cost : float
+        sparsity-cost determining how much the constraint is applied to weights
+        [default: 1.]
+    decay : float
+        decay of running average [default: 0., only current input is used]
+    target : float or None, optional
+        sparsity target for type='cross_entropy'
+    epsilon : float or None, optional
+        sparsity value for type='log_sum'
+    kernel_size : tuple or None, optional
+        kernel size for type='group_lasso'
+    **kwargs
+        keyword arguments for apply_modules method if module_name is not None
+
+    Returns
+    -------
+    loss : float
+        scalar value of sparsity constraint function
+
+    Notes
+    -----
+    The sparsity constraint function is applied to input (after optionally
+    applying modules) and multiplied by the sparsity-cost. This value is then
+    used to obtain the gradients with respect to all applicable parameters.
+
+    Functions used for different loss_fn (q is mean of input across batch dim):
+    'cross_entropy': sum(-target * log(q) - (1. - target) * log(1. - q))
+    'log_sum': sum(log(1. + abs(q) / epsilon))
+    'lasso': sum(abs(q))
+    'group_lasso': sum(sqrt(prod(kernel_size)) * sqrt(sum_kernel(q**2)))
+    Note: for 'cross_entropy', q is also averaged across image dimensions.
+    """
+    def __init__(self, model, layer_ids, loss_fn='cross_entropy', module_name=None,
+                 cost=1., decay=0., **kwargs):
+        if type(loss_fn) is str:
+            assert hasattr(self, loss_fn)
+            loss_fn = getattr(self, loss_fn)
+        self.decay = decay
+        self.options = functions.pop_attributes(kwargs, ['target','epsilon',
+                                                         'kernel_size'],
+                                                ignore_keys=True)
+        self.q = [None,] * len(layer_ids)
+        super(SparseLoss, self).__init__(model, layer_ids, loss_fn, module_name,
+                                         cost, **kwargs)
+
+    def cross_entropy(self, q, target):
+        q = torch.mean(q.transpose(0,1).flatten(1), -1)
+        assert torch.all(torch.gt(q, 0.)), (
+            'Type ''cross_entropy'': log(0.) is -inf'
+            )
+        target = torch.tensor(target, dtype=q.dtype)
+        return torch.sub(-target * torch.log(q), (1. - target) * torch.log(1. - q))
+
+    def log_sum(self, q, epsilon):
+        epsilon = torch.tensor(epsilon, dtype=q.dtype)
+        return torch.log(1. + torch.abs(q) / epsilon)
+
+    def lasso(self, q):
+        return torch.abs(q)
+
+    def group_lasso(self, q, kernel_size):
+        assert q.ndimension() != 4, (
+            'Type ''group_lasso'' requires ndimension == 4'
+            )
+        p = torch.prod(torch.tensor(kernel_size, dtype=q.dtype))
+        g = torch.sqrt(F.lp_pool2d(torch.pow(q, 2.), 1, kernel_size))
+        return torch.mul(torch.sqrt(p), g)
+
+    def get_mean_activity(self, activity, decay, i=0):
+        # get mean activity
+        q = torch.mean(activity, 0, keepdim=True)
+        # decay running average
+        if self.q[i] is None:
+            self.q[i] = q
+        else:
+            self.q[i] = decay * self.q[i].detach() + (1. - decay) * q
+        return self.q[i]
+
+    def forward(self, *args):
+        feat = self.get_features(args[0])
+        loss = torch.zeros(1, requires_grad=True)
+        for i, feat_i in enumerate(feat):
+            q = self.get_mean_activity(*feat_i, self.decay, i)
+            sparse_cost = self.loss_fn(q, **self.options)
+            if sparse_cost.ndimension() > 2:
+                sparse_cost = torch.mean(torch.flatten(sparse_cost, 2), -1)
+            loss = loss + torch.mul(self.cost[i], torch.sum(sparse_cost))
         return loss / len(self.layer_ids)

@@ -19,37 +19,6 @@ class Module(nn.Module):
         functions to apply in forward pass
     reconstruct_layer : torch.nn.Sequential or None
         functions to apply in reconstruct pass
-
-    Methods
-    -------
-    output_shape(input_shape)
-        return output_shape based on given input_shape
-    get_modules(names)
-        return modules from forward_layer or reconstruct_layer with given names
-    link_parameters(layer, layer_name)
-        register parameters from layer in self with appended layer_name
-    init_weights(pattern='weight', fn=torch.randn_like)
-        initialze weights for parameter names that end with pattern using fn
-    make_layer(**kwargs)
-        initialize forward_layer from keyword arguments (e.g.,
-        hidden=torch.nn.Conv2d(1, 24, 11), activation=torch.nn.ReLU)
-        Note: None is set to torch.nn.Sequential() by default.
-    update_layer(**kwargs)
-        update layer modules initialized by make_layer (see make_layer)
-    add_loss(inputs, loss_fn, module_name, **kwargs)
-        return loss from loss_fn(outputs, **kwargs) where outputs is a list of
-        outputs from passing each input in inputs through forward_layer until
-        module_name
-    apply_modules()
-        #TODO:WRITEME
-    forward()
-        #TODO:WRITEME
-    reconstruct()
-        #TODO:WRITEME
-    train()
-        #TODO:WRITEME
-    show_weights()
-        #TODO:WRITEME
     """
     def __init__(self, input_shape=None):
         super(Module, self).__init__()
@@ -235,134 +204,11 @@ class Module(nn.Module):
         # get output and loss
         output = self.forward(input)
         loss = loss_fn(output, label)
-        # additional loss
-        if 'add_loss' in kwargs.keys():
-            added_loss = self.add_loss(input, **kwargs.get('add_loss'))
-            loss = loss + added_loss
-        # sparsity
-        if 'sparsity' in kwargs.keys():
-            self.sparsity(input, **kwargs.get('sparsity'))
         # backprop
         loss.backward()
         if optimizer:
             optimizer.step()
         return loss.item()
-
-    def add_loss(self, inputs, loss_fn, module_name=None, cost=1., **kwargs):
-        """
-        #TODO:WRITEME
-        """
-        module_names = self.get_module_names('forward_layer', module_name)
-        outputs = []
-        for input in inputs:
-            output = self.apply_modules(input, 'forward_layer', module_names)
-            if type(output) is list:
-                output = torch.cat([torch.flatten(o) for o in output])
-            outputs.append(output)
-        return torch.mul(loss_fn(*outputs, **kwargs), cost)
-
-    def sparsity(self, input, module_name=None, type='cross_entropy', cost=1.,
-                 decay=0., target=None, epsilon=None, kernel_size=None, **kwargs):
-        """
-        Encourage sparsity by taking gradient of constraint function
-
-        Parameters
-        ----------
-        input : torch.Tensor
-            input tensor to apply sparsity constraint
-        module_name : string or None
-            output module for passing input through forward layer
-            [default: None, no modules are applied to the input]
-        type : string
-            type of sparsity constraint: 'cross_entropy' (Lee et al., 2008),
-            'log_sum' (Ji et al., 2014), 'lasso', 'group_lasso' (Yuan & Lin, 2006)
-            [default: 'cross_entropy']
-        cost : float
-            sparsity-cost determining how much the constraint is applied to weights
-            [default: 1.]
-        decay : float
-            decay of running average [default: 0., only current input is used]
-        target : float or None, optional
-            sparsity target for type='cross_entropy'
-        epsilon : float or None, optional
-            sparsity value for type='log_sum'
-        kernel_size : tuple or None, optional
-            kernel size for type='group_lasso'
-        **kwargs
-            keyword arguments for apply_modules method if module_name is not None
-
-        Returns
-        -------
-        sparse_cost : float
-            scalar value of sparsity constraint function
-
-        Notes
-        -----
-        The sparsity constraint function is applied to input (after optionally
-        applying modules) and multiplied by the sparsity-cost. This value is then
-        used to obtain the gradients with respect to all applicable parameters.
-
-        Functions used for different types (q is mean of input across batch dim):
-        'cross_entropy': sum(-target * log(q) - (1. - target) * log(1. - q))
-        'log_sum': sum(log(1. + abs(q) / epsilon))
-        'lasso': sum(abs(q))
-        'group_lasso': sum(sqrt(prod(kernel_size)) * sqrt(sum_kernel(q**2)))
-        """
-        # get activity
-        if module_name:
-            activity = self.apply_modules(input, 'forward_layer',
-                                          output_module=module_name, **kwargs)
-        else:
-            activity = input
-        # get mean activity
-        q = torch.mean(activity, 0, keepdim=True)
-        # decay running average
-        if not hasattr(self, 'q'):
-            self.q = q
-        else:
-            self.q = decay * self.q.detach() + (1. - decay) * q
-        # switch based on type
-        if type == 'cross_entropy':
-            q = torch.mean(self.q.transpose(0,1).flatten(1), -1)
-            assert torch.all(torch.gt(q, 0.)), (
-                'Type ''cross_entropy'': log(0.) is -inf'
-                )
-            target = torch.tensor(target, dtype=self.q.dtype)
-            sparse_cost = torch.sub(-target * torch.log(q),
-                                    (1. - target) * torch.log(1. - q))
-        elif type == 'log_sum':
-            epsilon = torch.tensor(epsilon, dtype=self.q.dtype)
-            sparse_cost = torch.log(1. + torch.abs(self.q) / epsilon)
-        elif type == 'lasso':
-            sparse_cost = torch.abs(self.q)
-        elif type == 'group_lasso':
-            assert q.ndimension() != 4, (
-                'Type ''group_lasso'' requires ndimension == 4'
-                )
-            p = torch.prod(torch.tensor(kernel_size, dtype=self.q.dtype))
-            g = torch.sqrt(F.lp_pool2d(torch.pow(self.q, 2.), 1, kernel_size))
-            sparse_cost = torch.mul(torch.sqrt(p), g)
-        else:
-            raise Exception('Unknown sparsity constraint type.')
-        if sparse_cost.ndimension() > 2:
-            sparse_cost = torch.mean(torch.flatten(sparse_cost, 2), -1)
-        sparse_cost = torch.mul(cost, torch.sum(sparse_cost))
-        sparse_cost.backward()
-        return sparse_cost.item()
-
-    def sparseness(self, input, module_name=None, **kwargs):
-        # equation from Hoyer (2004) used in Ji et al. (2014)
-        with torch.no_grad():
-            if module_name:
-                activity = self.apply_modules(input, 'forward_layer',
-                                              output_module=module_name, **kwargs)
-            else:
-                activity = input
-            n = torch.tensor(torch.numel(activity), dtype=activity.dtype)
-            l1_l2 = torch.div(torch.sum(torch.abs(activity)),
-                              torch.sqrt(torch.sum(torch.pow(activity, 2))))
-            sqrt_n = torch.sqrt(n)
-        return (sqrt_n - l1_l2) / (sqrt_n - 1)
 
     def show_weights(self, field='hidden_weight', img_shape=None,
                      figsize=(5, 5), cmap=None):
@@ -912,20 +758,6 @@ class RBM(Module):
                 self.persistent = nv_sample
                 self.persistent_weights.mul_(0.95)
                 self.persistent_weights.grad = self.hidden_weight.grad
-        # compute additional loss from add_loss
-        if kwargs.get('add_loss'):
-            if kwargs.get('add_loss').get('module_name'):
-                added_loss = self.add_loss(input, **kwargs.get('add_loss'))
-            else:
-                added_loss = self.add_loss(ph_mean, **kwargs.get('add_loss'))
-            added_loss.backward()
-        # sparsity
-        if kwargs.get('sparsity'):
-            if kwargs.get('sparsity').get('module_name'):
-                self.sparsity(input, **kwargs.get('sparsity'))
-            else:
-                ph_mean = self.sample_h_given_v(input)[1]
-                self.sparsity(ph_mean, **kwargs.get('sparsity'))
         # update parameters
         if optimizer:
             optimizer.step()
@@ -1098,20 +930,6 @@ class CRBM(RBM):
                 self.persistent = nh_sample
                 self.persistent_weights.mul_(0.95)
                 self.persistent_weights.grad = self.hidden_weight.grad
-        # compute additional loss from add_loss
-        if kwargs.get('add_loss'):
-            if kwargs.get('add_loss').get('module_name'):
-                added_loss = self.add_loss(input, **kwargs.get('add_loss'))
-            else:
-                added_loss = self.add_loss(ph_mean, **kwargs.get('add_loss'))
-            added_loss.backward()
-        # sparsity
-        if kwargs.get('sparsity'):
-            if kwargs.get('sparsity').get('module_name'):
-                self.sparsity(input, **kwargs.get('sparsity'))
-            else:
-                ph_mean = self.sample_h_given_v(input)[1]
-                self.sparsity(ph_mean, **kwargs.get('sparsity'))
         # update parameters
         if optimizer:
             optimizer.step()
