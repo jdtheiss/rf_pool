@@ -120,7 +120,7 @@ def gaussian_field(priority_map):
     # remove nonzero values
     keep_indices = map_sigma.nonzero()[:,0]
     if keep_indices.numel() == 0:
-        return mu, sigma
+        return
     map_mu = map_mu[keep_indices].type(priority_map.dtype)
     map_sigma = 1. / map_sigma[keep_indices].type(priority_map.dtype)
     field = exp_kernel_2d(map_mu, map_sigma, xy.unsqueeze(0).float())
