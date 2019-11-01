@@ -104,8 +104,8 @@ class Pool(torch.nn.Module):
         if sigma is not None:
             self.set(sigma=sigma)
         if lattice_fn is not None:
-            self.set(lattice_fn=lattice_fn, **kwargs)
-        self._update_rfs(mu, sigma, lattice_fn, **kwargs)
+            self.set(lattice_fn=lattice_fn)
+        self._update_rfs(mu, sigma, lattice_fn)
         return self.rfs
 
     def get_squeezed_coords(self, mu, sigma):
@@ -688,7 +688,8 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
         return outputs[0]
 
     # set grad args
-    grad_args = [u, rfs, grad_fn, *outputs, kernel_size, stride, apply_mask]
+    grad_args = [u, rfs, grad_fn, *outputs, kernel_size, stride, retain_shape,
+                 apply_mask]
 
     # return with indices
     if return_indices:
@@ -697,41 +698,59 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
     return _PoolGrad.apply(*grad_args)
 
 def _default_grad(grad_output, input, rfs, index_mask=None, index_kernel=None,
-                  kernel_size=None, stride=None, apply_mask=False):
+                  kernel_size=None, stride=None, retain_shape=False,
+                  apply_mask=False):
+    #TODO: deal with retain_shape in gradient
+    input_shape = list(input.shape)
+    if retain_shape:
+        img_dim = 3
+        input_shape.insert(2, grad_output.shape[2])
+        grad_input = torch.zeros(input_shape)
+    else:
+        img_dim = 2
+        grad_input = torch.zeros(input_shape)
+    # set output gradients to locations in input space
     if index_kernel is not None:
-        grad_input = torch.zeros_like(input)
-        grad_input.flatten(2).scatter_(2, index_kernel.flatten(2),
-                                       grad_output.flatten(2));
+        grad_input.flatten(img_dim).scatter_(img_dim, index_kernel.flatten(img_dim),
+                                             grad_output.flatten(img_dim));
+        grad_input = torch.reshape(grad_input, input_shape)
     else:
         grad_input = grad_output
+    # set gradients outside rf to 0
     if index_mask is not None:
         index_mask = torch.where(index_mask == 0)
         grad_input[index_mask] = 0.
+    # if multiplied with rfs, multiply with grad_input
+    if apply_mask:
+        if not retain_shape:
+            grad_input = torch.unsqueeze(grad_input, -3)
+        grad_input = torch.sum(torch.mul(grad_input, rfs), -3)
+    elif retain_shape:
+        grad_input = torch.sum(grad_input, -3)
+    # if rfs used, set grad_rfs
     if rfs is not None:
-        if apply_mask:
-            grad_input = torch.sum(torch.mul(grad_input.unsqueeze(-3), rfs), -3)
         grad_rfs = torch.zeros_like(rfs)
         idx = torch.where(rfs)
         g = torch.sum(torch.mul(grad_input, input), [0,1]).unsqueeze(0)
-        grad_rfs[idx] = g.repeat(rfs.shape)[idx]
+        grad_rfs[idx] = g.repeat(rfs.shape[0],1,1)[idx]
     else:
         grad_rfs = None
     return grad_input, grad_rfs
 
 def _apply_grad(grad_output, input, rfs, grad_fn, index_mask=None,
                 index_kernel=None, kernel_size=None, stride=None,
-                apply_mask=False, **kwargs):
+                retain_shape=False, apply_mask=False):
     # assert pool_fn in pool and get pool_grad
-    assert hasattr(pool, grad_fn, **kwargs)
-    grad_fn = getattr(pool, grad_fn, **kwargs)
+    assert hasattr(pool, grad_fn)
+    grad_fn = getattr(pool, grad_fn)
 
     # set kwargs
+    kwargs = {}
     if rfs is not None:
-        kwargs.setdefault('mask', rfs.data)
-    kwargs.setdefault('mask_indices', index_mask)
-    kwargs.setdefault('kernel_size', kernel_size)
-    kwargs.setdefault('stride', stride)
-    kwargs.setdefault('apply_mask', apply_mask)
+        kwargs.update({'mask': rfs.data})
+    kwargs.update({'mask_indices': index_mask, 'kernel_size': kernel_size,
+                   'stride': stride, 'retain_shape': retain_shape,
+                   'apply_mask': apply_mask})
 
     # apply grad function #TODO: make flexible using output tuple
     grad_input = grad_fn(grad_output.data.flatten(0,1), **kwargs)
@@ -768,7 +787,7 @@ class _PoolGrad(Function):
         else:
             grad_input, grad_rfs = _default_grad(grad_output, input, rfs,
                                                  *ctx.grad_args)
-        return grad_input, grad_rfs, None, None, None, None, None, None, None
+        return (grad_input, grad_rfs, *[None]*(len(ctx.grad_args) + 2))
 
 class _PoolGrad_with_indices(Function):
     @staticmethod
@@ -792,7 +811,7 @@ class _PoolGrad_with_indices(Function):
         else:
             grad_input, grad_rfs = _default_grad(grad_output, input, rfs,
                                                  *ctx.grad_args)
-        return grad_input, grad_rfs, None, None, None, None, None, None, None
+        return (grad_input, grad_rfs, *[None]*(len(ctx.grad_args) + 2))
 
 if __name__ == '__main__':
     import doctest
