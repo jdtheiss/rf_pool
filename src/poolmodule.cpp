@@ -283,9 +283,9 @@ static PyObject* probmax(PyObject* self, PyObject* args, PyObject* kwargs)
         if (check_kwargs(kwargs, "kernel_size")) {
             PyObject* local_args = PyTuple_GetSlice(output_tuple, 0, 1);
             Py_DECREF(output_tuple);
-            output_tuple = rf_pool<T, rf_fn>(local_args, kwargs, pool<T>::rf_probmax_pool);
+            output_tuple = rf_pool<T, rf_fn>(local_args, kwargs, pool<T>::rf_probmax);
         } else {
-            output_tuple = rf_pool<T, rf_fn>(args, kwargs, pool<T>::rf_probmax_pool);
+            output_tuple = rf_pool<T, rf_fn>(args, kwargs, pool<T>::rf_probmax);
         }
         index_mask = PyTuple_GetItem(output_tuple, 1);
     }

@@ -15,6 +15,20 @@ void pool<T>::rf_max_pool(const T* array, const T* mask, size_t size, const T* m
     }
     delete [] masked_array;
 }
+// probmax operation, set output to (1-prob all pixels off) across mask_indices at multinomial index
+template<typename T>
+void pool<T>::rf_probmax(const T* array, const T* mask, size_t size, const T* mask_indices, 
+                         T* output, size_t* indices, bool apply_mask) {
+    if (apply_mask) {
+        ops<T>::elem(array, mask, ops<T>::mul, size, mask_indices, output);
+        ops<T>::softmax(output, true, size, mask_indices, output);
+    } else {
+        ops<T>::softmax(array, true, size, mask_indices, output);
+    }
+    T* mult_output = new T[size];
+    distributions<T>::multinomial(output, size, mask_indices, mult_output, indices);
+    delete [] mult_output;
+}
 // probmax pool operation, set output to (1-prob all pixels off) across mask_indices at multinomial index
 template<typename T>
 void pool<T>::rf_probmax_pool(const T* array, const T* mask, size_t size, const T* mask_indices, 
@@ -71,16 +85,10 @@ void pool<T>::kernel_max_pool(const T* array, size_t kernel[2], size_t img_shape
 template<typename T>
 void pool<T>::kernel_probmax(const T* array, size_t kernel[2], size_t img_shape[2], 
                              size_t stride[2], size_t size, T* output, size_t* indices) {
-    T* p = new T[size];
-    ops<T>::softmax(array, true, kernel, img_shape, stride, size, p);
-    distributions<T>::multinomial(p, kernel, img_shape, stride, size, output, indices);
-    size_t block_size = ops<T>::output_size(kernel, img_shape, stride, size);
-    T* p_sum = new T[block_size];
-    ops<T>::zeros(block_size, p_sum);
-    ops<T>::kernel_fn(p, ops<T>::add, kernel, img_shape, stride, size, p_sum);
-    ops<T>::kernel_fn(output, p_sum, ops<T>::mul, kernel, img_shape, stride, size, output);
-    delete [] p;
-    delete [] p_sum;
+    ops<T>::softmax(array, true, kernel, img_shape, stride, size, output);
+    T* mult_output = new T[size];
+    distributions<T>::multinomial(output, kernel, img_shape, stride, size, mult_output, indices);
+    delete [] mult_output;
 }
 // probmax pool with kernel, set output to (1-prob all pixels off) across kernels
 template<typename T>

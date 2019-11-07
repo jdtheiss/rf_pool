@@ -4,6 +4,8 @@ template<typename T>
 struct pool {
     static void rf_max_pool(const T* array, const T* mask, size_t size, const T* mask_indices, 
                             T* output, size_t* indices, bool apply_mask = false);
+    static void rf_probmax(const T* array, const T* mask, size_t size, const T* mask_indices,
+                           T* output, size_t* indices, bool apply_mask = false);
     static void rf_probmax_pool(const T* array, const T* mask, size_t size, const T* mask_indices,
                                 T* output, size_t* indices, bool apply_mask = false);
     static void rf_stochastic_pool(const T* array, const T* mask, size_t size, const T* mask_indices,
