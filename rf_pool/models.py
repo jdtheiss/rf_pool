@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from . import losses
+from . import losses, ops
 from .modules import RBM
 from .utils import functions, visualize
 
@@ -75,16 +75,73 @@ class Model(nn.Module):
             output = input
             output_layer = []
         layers = self.get_layers(layer_ids)
+        if forward:
+            layer_name = 'forward_layer'
+        else:
+            layer_name = 'reconstruct_layer'
+        # apply each layer
         for layer_id, layer in zip(layer_ids, layers):
-            if forward:
-                input = layer.apply_modules(input, 'forward_layer', **kwargs)
+            # apply modules
+            if kwargs:
+                output_i = layer.apply_modules(input, layer_name, **kwargs)
+                input = layer.apply_modules(input, layer_name)
             else:
-                input = layer.apply_modules(input, 'reconstruct_layer', **kwargs)
+                output_i = layer.apply_modules(input, layer_name)
+                input = output_i
+            # set to output
             if layer_id in output_layer:
-                output.append(input)
+                output.append(output_i)
             else:
-                output = input
+                output = output_i
         return output
+
+    def update_modules(self, layer_ids, layer_name, module_name, op, overwrite=True,
+                       append=True):
+        """
+        Update self.layers[layer_ids].layer_name.module_name by appending,
+        prepending, or overwriting with op.
+
+        Parameters
+        ----------
+        layer_ids : list
+            string ids of layers to update module_name
+        layer_name : str
+            name of layer to update (e.g., 'forward_layer')
+        module_name : str
+            name of module to update (e.g., 'activation')
+        op : torch.nn.Module or list
+            module(s) set for each layer_id
+        overwrite : bool
+            Boolean whether to overwrite current module (overrides append below)
+            [default: True]
+        append : bool
+            If append=True, append as nn.Sequential(mod, op); otherwise,
+            prepend as nn.Sequential(op, mod) [default: True]
+
+        Returns
+        -------
+        mods : list
+            list of current modules (one per layer_id)
+        """
+        # get current modules
+        mods = [layer.get_modules(layer_name, [module_name])[0]
+                for layer in self.get_layers(layer_ids)]
+        # update modules
+        for i, layer_id in enumerate(layer_ids):
+            if type(op) is list and len(op) > i:
+                op_i = op[i]
+            elif type(op) is list:
+                op_i = op[-1]
+            else:
+                op_i = op
+            if overwrite:
+                new_mod = op_i
+            elif append:
+                new_mod = torch.nn.Sequential(mods[i], op_i)
+            else:
+                new_mod = torch.nn.Sequential(op_i, mods[i])
+            self.layers[layer_id].update_module(layer_name, module_name, new_mod)
+        return mods
 
     def forward(self, input):
         for name, layer in self.layers.named_children():
@@ -287,10 +344,12 @@ class Model(nn.Module):
                 else: # normal training
                     # zero gradients
                     optimizer.zero_grad()
-                    # get outputs
-                    output = self.forward(inputs[0])
                     # get loss
-                    loss = loss_fn(output, label)
+                    if torch.typename(loss_fn).find('losses') > -1:
+                        loss = loss_fn(*data)
+                    else: # get outputs then loss
+                        output = self.forward(inputs[0])
+                        loss = loss_fn(output, label)
                     # additional loss
                     if options.get('add_loss'):
                         loss = loss + add_loss(*inputs)
@@ -629,19 +688,16 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
 
     Attributes
     ----------
+    data_shape : shape of input data (optional, default: None)
     layers : torch.nn.ModuleDict
         RBM layers for forward/reconstruct pass (each layer is RBM class)
-    output_shapes : list of tuples
-        output shape for each layer
 
     Methods
     -------
-    forward(input)
-        perform forward pass with bottom-up input v through layer_ids
-    reconstruct(input)
-        perform reconstruction pass with top-down input t through layer_ids
-    train(trainloader, optimizer, **kwargs)
+    train_layer(layer_id, n_epochs, trainloader, optimizer, k=1, monitor=100,
+                **kwargs)
         train deep boltzmann machine with contrastive divergence
+    train_dbm()
 
     References
     ----------
@@ -649,3 +705,108 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
     """
     def __init__(self):
         super(DeepBoltzmannMachine, self).__init__()
+
+    def train_layer(self, layer_id, n_epochs, trainloader, optimizer, k=1,
+                    monitor=100, **kwargs):
+        # get layer_ids, layer_name if layer_id is first/last
+        layer_ids = self.get_layer_ids()
+        if layer_id == layer_ids[0]:
+            layer_name = 'forward_layer'
+        elif layer_id == layer_ids[-1]:
+            layer_name = 'reconstruct_layer'
+        else:
+            layer_name = None
+        # update activation
+        if layer_name is not None:
+            mul_op = ops.Op(lambda x: 2. * x)
+            act_op = self.update_modules([layer_id], layer_name, 'activation',
+                                         mul_op, append=False)
+        # train
+        try:
+            output = self.train(n_epochs, trainloader, None, optimizer,
+                                monitor=monitor, layer_id=layer_id, k=k, **kwargs)
+        finally:
+            if layer_name is not None:
+                self.update_modules([layer_id], layer_name, 'activation',
+                                    act_op, overwrite=True)
+        return output
+
+    def train_dbm(self, n_epochs, trainloader, optimizer, k=1, n_iter=10,
+                  monitor=100, **kwargs):
+        # set loss function
+        loss_fn = losses.KwargsLoss(self.contrastive_divergence, n_args=1,
+                                    k=k, n_iter=n_iter)
+        # train
+        return self.train(n_epochs, trainloader, loss_fn, optimizer,
+                          monitor=monitor, **kwargs)
+
+    def contrastive_divergence(self, input, k=1, n_iter=10):
+        #TODO: update mean_field to condition on output
+        # positive phase mean field
+        layer_ids = self.get_layer_ids()
+        layers = self.get_layers(layer_ids)
+        hids = None
+        for _ in range(n_iter):
+            v, hids = self.layer_gibbs(input, hids, sampled=False)
+        # get positive energies
+        pos_energy = []
+        for i, layer in enumerate(layers):
+            if i == 0:
+                pos_energy.append(layer.free_energy(input))
+            else:
+                h_n = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[0]
+                pos_energy.append(layer.free_energy(h_n))
+        # negative phase for each layer
+        for _ in range(k):
+            v, hids = self.layer_gibbs(v, hids, sampled=True)
+        # get negative energies
+        neg_energy = []
+        for i, layer in enumerate(layers):
+            if i == 0:
+                neg_energy.append(layer.free_energy(v))
+            else:
+                h_n = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[0]
+                neg_energy.append(layer.free_energy(h_n))
+        # return mean difference in energies
+        return torch.mean(torch.cat(pos_energy) - torch.cat(neg_energy))
+
+    def layer_gibbs(self, input, hids=None, sampled=False, pooled=False):
+        # get layer_ids
+        layer_ids = self.get_layer_ids()
+        layers = self.get_layers(layer_ids)
+        # get hids from forward pass with weights doubled
+        if hids is None:
+            mul_op = ops.Op(lambda x: 2. * x)
+            hid_ops = self.update_modules(layer_ids[:-1], 'forward_layer',
+                                          'hidden', mul_op, overwrite=False)
+            try: # forward pass with doubled weights
+                hids = self.apply_layers(input, layer_ids, output_layer=layer_ids)
+            finally:
+                self.update_modules(layer_ids[:-1], 'forward_layer', 'hidden',
+                                    hid_ops)
+            hids = [(h,) + layer.sample(h, 'forward_layer', pooled)
+                    for h, layer in zip(hids, layers)]
+        # get idx based on sampled bool
+        idx = np.int(sampled)
+        # update even layers
+        for i, layer in list(enumerate(layers))[::2]:
+            if i > 0:
+                v = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[idx]
+            else:
+                v = input
+            if i < (len(layers) - 1):
+                t = layers[i+1].sample_v_given_h(hids[i+1][idx+1])[idx+1]
+                hids[i] = layer.sample_h_given_vt(v, t, pooled)
+            else:
+                hids[i] = layer.sample_h_given_v(v, pooled)
+        # get v out
+        v_out = layers[0].sample_v_given_h(hids[0][idx+1])[idx+1]
+        # update odd layers
+        for i, layer in list(enumerate(layers))[1::2]:
+            v = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[idx]
+            if i < (len(layers) - 1):
+                t = layers[i+1].sample_v_given_h(hids[i+1][idx+1])[idx+1]
+                hids[i] = layer.sample_h_given_vt(v, t, pooled)
+            else:
+                hids[i] = layer.sample_h_given_v(v, pooled)
+        return v_out, hids
