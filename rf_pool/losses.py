@@ -44,6 +44,18 @@ class VarLoss(Loss):
     def forward(self, *args):
         return self.loss_fn(self.input, self.target)
 
+class KwargsLoss(Loss):
+    """
+    """
+    def __init__(self, loss_fn, n_args=2, **kwargs):
+        super(KwargsLoss, self).__init__()
+        self.loss_fn = loss_fn
+        self.n_args = n_args
+        self.kwargs = kwargs
+
+    def forward(self, *args):
+        return self.loss_fn(*args[:self.n_args], **self.kwargs)
+
 class LayerLoss(Loss):
     """
     """
