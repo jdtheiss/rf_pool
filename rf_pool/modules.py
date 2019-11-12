@@ -84,7 +84,18 @@ class Module(nn.Module):
         # set layer
         setattr(self, layer_name, layer)
 
-    def insert_layer(self, layer_name, idx, transpose=False, **kwargs):
+    def update_module(self, layer_name, module_name, value):
+        # get layer
+        if hasattr(self, layer_name):
+            layer = getattr(self, layer_name)
+        else:
+            layer = nn.Sequential()
+        # update op in layer
+        setattr(layer, module_name, value)
+        # set layer
+        setattr(self, layer_name, layer)
+
+    def insert_module(self, layer_name, idx, transpose=False, **kwargs):
         # get layer
         layer = nn.Sequential()
         if hasattr(self, layer_name):
@@ -110,7 +121,7 @@ class Module(nn.Module):
         # set layer
         setattr(self, layer_name, layer)
 
-    def remove_layer(self, layer_name, module_name):
+    def remove_module(self, layer_name, module_name):
         # get layer
         layer = nn.Sequential()
         if hasattr(self, layer_name):
@@ -429,35 +440,39 @@ class RBM(Module):
             hidden_shape = (input_shape[0], self.hidden_weight.shape[1])
         return hidden_shape
 
-    def sample(self, x, layer_name):
+    def sample(self, x, layer_name, pooled_output=False):
         # get activation
         x_mean = self.apply_modules(x, layer_name, ['activation'])
         # get pooling x_mean, x_sample if rf_pool
         pool_module = self.get_modules(layer_name, ['pool'])
         if len(pool_module) > 0 and hasattr(pool_module[0], 'rfs'):
-            pool_fn = pool_module[0].pool_fn.replace('_pool', '')
+            if not pooled_output:
+                pool_fn = pool_module[0].pool_fn.replace('_pool', '')
+            else:
+                pool_fn = pool_module[0].pool_fn
             x_mean = pool_module[0](x_mean, pool_fn=pool_fn)
         # sample from x_mean
         x_sample = self.apply_modules(x_mean, layer_name, ['sample'])
         return x_mean, x_sample
 
-    def sample_h_given_v(self, v):
+    def sample_h_given_v(self, v, pooled_output=False):
         # get hidden output
         pre_act_h = self.apply_modules(v, 'forward_layer', output_module='hidden')
-        return (pre_act_h,) + self.sample(pre_act_h, 'forward_layer')
+        return (pre_act_h,) + self.sample(pre_act_h, 'forward_layer', pooled_output)
 
     def sample_v_given_h(self, h):
         # get hidden_transpose output
         pre_act_v = self.apply_modules(h, 'reconstruct_layer', ['hidden_transpose'])
         return (pre_act_v,) + self.sample(pre_act_v, 'reconstruct_layer')
 
-    def sample_h_given_vt(self, v, t):
+    def sample_h_given_vt(self, v, t, pooled_output=False):
         # get hidden output
         pre_act_h = self.apply_modules(v, 'forward_layer', output_module='hidden')
         # repeat t to add to pre_act_h
         shape = [v_shp//t_shp for (v_shp,t_shp) in zip(pre_act_h.shape,t.shape)]
         t = functions.repeat(t, shape)
-        return (pre_act_h,) + self.sample(torch.add(pre_act_h, t), 'forward_layer')
+        ht = torch.add(pre_act_h, t)
+        return (pre_act_h,) + self.sample(ht, 'forward_layer', pooled_output)
 
     def gibbs_vhv(self, v_sample, k=1):
         for _ in range(k):
@@ -472,7 +487,7 @@ class RBM(Module):
         return pre_act_v, v_mean, v_sample, pre_act_h, h_mean, h_sample
 
     def energy(self, v, h):
-        #E(v,y,h) = −hTWv−bTv−cTh
+        #E(v,h) = −hTWv−bTv−cTh
         # reshape v_bias, hid_bias
         v_dims = tuple([1 for _ in range(v.ndimension()-2)])
         v_bias = torch.reshape(self.v_bias, (1,-1) + v_dims)
@@ -674,7 +689,7 @@ class RBM(Module):
         xi_flip[xi_idx, bit_idx] = 1. - xi_flip[xi_idx, bit_idx]
         xi_flip = torch.reshape(xi_flip, v.shape)
         fe_xi_flip = self.free_energy(xi_flip)
-        # return log(fe_xi_flip) - log(fe_xi)
+        # return pseudo-likelihood
         return torch.mean(n_visible * torch.log(torch.sigmoid(fe_xi_flip - fe_xi)))
 
     def show_negative(self, v, k=1, n_images=-1, img_shape=None, figsize=(5,5),
