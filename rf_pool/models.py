@@ -720,15 +720,14 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
         if layer_name is not None:
             mul_op = ops.Op(lambda x: 2. * x)
             act_op = self.update_modules([layer_id], layer_name, 'activation',
-                                         mul_op, append=False)
+                                         mul_op, append=False, overwrite=False)
         # train
         try:
             output = self.train(n_epochs, trainloader, None, optimizer,
                                 monitor=monitor, layer_id=layer_id, k=k, **kwargs)
         finally:
             if layer_name is not None:
-                self.update_modules([layer_id], layer_name, 'activation',
-                                    act_op, overwrite=True)
+                self.update_modules([layer_id], layer_name, 'activation', act_op)
         return output
 
     def train_dbm(self, n_epochs, trainloader, optimizer, k=1, n_iter=10,
