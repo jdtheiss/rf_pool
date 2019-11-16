@@ -734,12 +734,12 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
                   monitor=100, **kwargs):
         # set loss function
         loss_fn = losses.KwargsLoss(self.contrastive_divergence, n_args=1,
-                                    k=k, n_iter=n_iter)
+                                    k=k, n_iter=n_iter, **kwargs)
         # train
         return self.train(n_epochs, trainloader, loss_fn, optimizer,
                           monitor=monitor, **kwargs)
 
-    def contrastive_divergence(self, input, k=1, n_iter=10):
+    def contrastive_divergence(self, input, k=1, n_iter=10, **kwargs):
         #TODO: update mean_field to condition on output
         # positive phase mean field
         layer_ids = self.get_layer_ids()
@@ -751,21 +751,28 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
         pos_energy = []
         for i, layer in enumerate(layers):
             if i == 0:
-                pos_energy.append(layer.free_energy(input))
+                pos_energy.append(layer.energy(input, hids[i][1]))
             else:
                 h_n = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[0]
-                pos_energy.append(layer.free_energy(h_n))
+                pos_energy.append(layer.energy(h_n, hids[i][1]))
         # negative phase for each layer
+        if hasattr(self, 'persistent'):
+            v = self.persistent
+        elif kwargs.get('persistent') is not None:
+            self.persistent = kwargs.get('persistent')
+            v = self.persistent
         for _ in range(k):
             v, hids = self.layer_gibbs(v, hids, sampled=True)
+        if hasattr(self, 'persistent'):
+            self.persistent = v
         # get negative energies
         neg_energy = []
         for i, layer in enumerate(layers):
             if i == 0:
-                neg_energy.append(layer.free_energy(v))
+                neg_energy.append(layer.energy(v, hids[i][1]))
             else:
                 h_n = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[0]
-                neg_energy.append(layer.free_energy(h_n))
+                neg_energy.append(layer.energy(h_n, hids[i][1]))
         # return mean difference in energies
         return torch.mean(torch.cat(pos_energy) - torch.cat(neg_energy))
 
