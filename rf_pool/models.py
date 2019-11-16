@@ -745,8 +745,9 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
         layer_ids = self.get_layer_ids()
         layers = self.get_layers(layer_ids)
         hids = None
-        for _ in range(n_iter):
-            v, hids = self.layer_gibbs(input, hids, sampled=False)
+        with torch.no_grad():
+            for _ in range(n_iter):
+                v, hids = self.layer_gibbs(input, hids, sampled=False)
         # get positive energies
         pos_energy = []
         for i, layer in enumerate(layers):
@@ -761,8 +762,10 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
         elif kwargs.get('persistent') is not None:
             self.persistent = kwargs.get('persistent')
             v = self.persistent
-        for _ in range(k):
-            v, hids = self.layer_gibbs(v, hids, sampled=True)
+        hids = None
+        with torch.no_grad():
+            for _ in range(k):
+                v, hids = self.layer_gibbs(v, hids, sampled=True)
         if hasattr(self, 'persistent'):
             self.persistent = v
         # get negative energies
