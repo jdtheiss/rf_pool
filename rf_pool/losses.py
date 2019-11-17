@@ -47,7 +47,7 @@ class VarLoss(Loss):
 class KwargsLoss(Loss):
     """
     """
-    def __init__(self, loss_fn, n_args=2, **kwargs):
+    def __init__(self, loss_fn, n_args=1, **kwargs):
         super(KwargsLoss, self).__init__()
         self.loss_fn = loss_fn
         self.n_args = n_args

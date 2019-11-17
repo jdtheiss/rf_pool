@@ -292,7 +292,8 @@ class Model(nn.Module):
         options.update(functions.pop_attributes(kwargs,
                                                 ['add_loss','sparse_loss',
                                                  'scheduler','label_params',
-                                                 'show_negative','show_lattice'],
+                                                 'show_negative','show_lattice',
+                                                 'monitor_loss'],
                                                 default={}))
         # added loss
         if options.get('add_loss'):
@@ -306,6 +307,12 @@ class Model(nn.Module):
                 sparse_loss = losses.SparseLoss(self, **options.get('sparse_loss'))
             else:
                 sparse_loss = options.get('sparse_loss')
+        # monitor loss
+        if options.get('monitor_loss'):
+            if type(options.get('monitor_loss')) is dict:
+                monitor_loss = losses.KwargsLoss(**options.get('monitor_loss'))
+            else:
+                monitor_loss = options.get('monitor_loss')
         # if layer-wise training, ensure layer_id str and get pre_layer_ids
         if options.get('layer_id') is not None:
             layer_id = str(options.get('layer_id'))
@@ -367,8 +374,12 @@ class Model(nn.Module):
                 # set label_parameters
                 if options.get('label_params'):
                     self.set_grad_by_label([label], label_params, False)
-                # monitor
-                running_loss += loss
+                # monitor loss
+                with torch.no_grad():
+                    if options.get('monitor_loss'):
+                        running_loss += monitor_loss(*inputs)
+                    else:
+                        running_loss += loss
                 i += 1
                 if i % monitor == 0:
                     # display loss
