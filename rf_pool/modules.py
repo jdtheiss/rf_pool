@@ -586,7 +586,6 @@ class RBM(Module):
             estimate of the log of the partition function for the model
             (used in computing log probability of data)
 
-
         See also
         --------
         log_prob : estimate log probability of data
@@ -724,7 +723,7 @@ class RBM(Module):
         plt.show()
         return fig
 
-    def train(self, input, k=1, monitor_fn=nn.MSELoss(), optimizer=None, **kwargs):
+    def train(self, input, k=1, monitor_loss=nn.MSELoss(), optimizer=None, **kwargs):
         """
         #TODO:WRITEME
         """
@@ -778,15 +777,8 @@ class RBM(Module):
             optimizer.step()
         # monitor loss
         with torch.no_grad():
-            if type(monitor_fn) is dict:
-                monitor_args = []
-                monitor_kwargs = monitor_fn.copy()
-                fn = monitor_kwargs.pop('fn')
-                if 'input' not in monitor_kwargs:
-                    monitor_args = [input]
-                out = torch.mean(fn(*monitor_args, **monitor_kwargs))
-            elif monitor_fn is not None:
-                out = monitor_fn(input, nv_mean)
+            if monitor_loss is not None:
+                out = monitor_loss(input, nv_mean)
             else:
                 out = loss
         return out.item()
@@ -950,15 +942,8 @@ class CRBM(RBM):
             optimizer.step()
         # monitor loss
         with torch.no_grad():
-            if type(monitor_fn) is dict:
-                monitor_args = []
-                monitor_kwargs = monitor_fn.copy()
-                fn = monitor_kwargs.pop('fn')
-                if 'input' not in monitor_kwargs:
-                    monitor_args = [input]
-                out = torch.mean(fn(*monitor_args, **monitor_kwargs))
-            elif monitor_fn is not None:
-                out = monitor_fn(input, nv_mean)
+            if monitor_loss is not None:
+                out = monitor_loss(input, nv_mean)
             else:
                 out = loss
         return out.item()
