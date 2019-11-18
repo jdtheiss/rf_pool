@@ -763,10 +763,10 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
         pos_energy = []
         for i, layer in enumerate(layers):
             if i == 0:
-                pos_energy.append(layer.energy(input, hids[i][1]))
+                pos_energy.append(layer.free_energy(input))
             else:
                 h_n = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[0]
-                pos_energy.append(layer.energy(h_n, hids[i][1]))
+                pos_energy.append(layer.free_energy(h_n))
         # negative phase for each layer
         if hasattr(self, 'persistent'):
             v = self.persistent
@@ -783,10 +783,10 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
         neg_energy = []
         for i, layer in enumerate(layers):
             if i == 0:
-                neg_energy.append(layer.energy(v, hids[i][1]))
+                neg_energy.append(layer.free_energy(v))
             else:
                 h_n = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[0]
-                neg_energy.append(layer.energy(h_n, hids[i][1]))
+                neg_energy.append(layer.free_energy(h_n))
         # return mean difference in energies
         return torch.mean(torch.cat(pos_energy) - torch.cat(neg_energy))
 
