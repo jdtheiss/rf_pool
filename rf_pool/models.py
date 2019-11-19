@@ -350,12 +350,13 @@ class Model(nn.Module):
                         loss = loss + sparse_loss(*inputs)
                 else: # normal training
                     # zero gradients
+                    layer_input = inputs[0]
                     optimizer.zero_grad()
                     # get loss
                     if torch.typename(loss_fn).find('losses') > -1:
                         loss = loss_fn(*data)
                     else: # get outputs then loss
-                        output = self.forward(inputs[0])
+                        output = self.forward(layer_input)
                         loss = loss_fn(output, label)
                     # additional loss
                     if options.get('add_loss'):
@@ -377,7 +378,7 @@ class Model(nn.Module):
                 # monitor loss
                 with torch.no_grad():
                     if options.get('monitor_loss'):
-                        running_loss += monitor_loss(*inputs)
+                        running_loss += monitor_loss(layer_input)
                     else:
                         running_loss += loss
                 i += 1
@@ -402,7 +403,8 @@ class Model(nn.Module):
                         else:
                             self.show_lattice(**options.get('show_lattice'))
                     # call other monitoring functions
-                    functions.kwarg_fn([IPython.display, self], None, **kwargs)
+                    functions.kwarg_fn([IPython.display, self, visualize], None,
+                                       **kwargs)
         return loss_history
 
     def optimize_texture(self, n_steps, input, seed, loss_fn, optimizer,
@@ -453,7 +455,8 @@ class Model(nn.Module):
                 # monitor texture
                 if show_images:
                     visualize.show_images(*show_images, **kwargs)
-                functions.kwarg_fn([IPython.display, self], None, **kwargs)
+                functions.kwarg_fn([IPython.display, self, visualize], None,
+                                   **kwargs)
         # turn on model gradients
         self.set_requires_grad(on_parameters, requires_grad=True)
         return seed
@@ -750,7 +753,7 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
         return self.train(n_epochs, trainloader, loss_fn, optimizer,
                           monitor=monitor, **kwargs)
 
-    def contrastive_divergence(self, input, k=1, n_iter=10, **kwargs):
+    def contrastive_divergence(self, input, k=5, n_iter=10, **kwargs):
         #TODO: update mean_field to condition on output
         # positive phase mean field
         layer_ids = self.get_layer_ids()
@@ -763,10 +766,12 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
         pos_energy = []
         for i, layer in enumerate(layers):
             if i == 0:
-                pos_energy.append(layer.free_energy(input))
+                pos_energy_i = layer.energy(input, hids[i][1])
             else:
                 h_n = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[0]
-                pos_energy.append(layer.free_energy(h_n))
+                pos_energy_i = layer.energy(h_n, hids[i][1])
+            hidsize = torch.prod(torch.tensor(hids[i][1].shape[-2:]))
+            pos_energy.append(torch.div(pos_energy_i, hidsize))
         # negative phase for each layer
         if hasattr(self, 'persistent'):
             v = self.persistent
@@ -775,58 +780,68 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
             v = self.persistent
         hids = None
         with torch.no_grad():
-            for _ in range(k):
-                v, hids = self.layer_gibbs(v, hids, sampled=True)
+            for _ in range(k+1):
+                even = (hids is not None)
+                v, hids = self.layer_gibbs(v, hids, sampled=True, even=even)
         if hasattr(self, 'persistent'):
             self.persistent = v
         # get negative energies
         neg_energy = []
         for i, layer in enumerate(layers):
             if i == 0:
-                neg_energy.append(layer.free_energy(v))
+                neg_energy_i = layer.energy(v, hids[i][1])
             else:
                 h_n = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[0]
-                neg_energy.append(layer.free_energy(h_n))
+                neg_energy_i = layer.energy(h_n, hids[i][1])
+            hidsize = torch.prod(torch.tensor(hids[i][1].shape[-2:]))
+            neg_energy.append(torch.div(neg_energy_i, hidsize))
         # return mean difference in energies
-        return torch.mean(torch.cat(pos_energy) - torch.cat(neg_energy))
+        loss = torch.zeros(1, requires_grad=True)
+        for (p, n) in zip(pos_energy, neg_energy):
+            loss = torch.add(loss, torch.sub(torch.mean(p), torch.mean(n)))
+        return loss
 
-    def layer_gibbs(self, input, hids=None, sampled=False, pooled=False):
+    def layer_gibbs(self, input, hids=None, sampled=False, pooled=False,
+                    even=True, odd=True):
         # get layer_ids
         layer_ids = self.get_layer_ids()
         layers = self.get_layers(layer_ids)
+        # get idx based on sampled bool
+        idx = np.int(sampled)
         # get hids from forward pass with weights doubled
         if hids is None:
             mul_op = ops.Op(lambda x: 2. * x)
             hid_ops = self.update_modules(layer_ids[:-1], 'forward_layer',
                                           'hidden', mul_op, overwrite=False)
             try: # forward pass with doubled weights
-                hids = self.apply_layers(input, layer_ids, output_layer=layer_ids)
+                hids = self.apply_layers(input, layer_ids, output_layer=layer_ids,
+                                         output_module='hidden')
             finally:
                 self.update_modules(layer_ids[:-1], 'forward_layer', 'hidden',
                                     hid_ops)
             hids = [(h,) + layer.sample(h, 'forward_layer', pooled)
                     for h, layer in zip(hids, layers)]
-        # get idx based on sampled bool
-        idx = np.int(sampled)
-        # update even layers
-        for i, layer in list(enumerate(layers))[::2]:
-            if i > 0:
-                v = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[idx]
-            else:
-                v = input
-            if i < (len(layers) - 1):
-                t = layers[i+1].sample_v_given_h(hids[i+1][idx+1])[idx+1]
-                hids[i] = layer.sample_h_given_vt(v, t, pooled)
-            else:
-                hids[i] = layer.sample_h_given_v(v, pooled)
+        if even:
+            # update even layers
+            for i, layer in list(enumerate(layers))[::2]:
+                if i > 0:
+                    v = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[idx]
+                else:
+                    v = input
+                if i < (len(layers) - 1):
+                    t = layers[i+1].sample_v_given_h(hids[i+1][idx+1])[idx+1]
+                    hids[i] = layer.sample_h_given_vt(v, t, pooled)
+                else:
+                    hids[i] = layer.sample_h_given_v(v, pooled)
         # get v out
         v_out = layers[0].sample_v_given_h(hids[0][idx+1])[idx+1]
         # update odd layers
-        for i, layer in list(enumerate(layers))[1::2]:
-            v = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[idx]
-            if i < (len(layers) - 1):
-                t = layers[i+1].sample_v_given_h(hids[i+1][idx+1])[idx+1]
-                hids[i] = layer.sample_h_given_vt(v, t, pooled)
-            else:
-                hids[i] = layer.sample_h_given_v(v, pooled)
+        if odd:
+            for i, layer in list(enumerate(layers))[1::2]:
+                v = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[idx]
+                if i < (len(layers) - 1):
+                    t = layers[i+1].sample_v_given_h(hids[i+1][idx+1])[idx+1]
+                    hids[i] = layer.sample_h_given_vt(v, t, pooled)
+                else:
+                    hids[i] = layer.sample_h_given_v(v, pooled)
         return v_out, hids
