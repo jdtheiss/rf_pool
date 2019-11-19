@@ -209,7 +209,8 @@ class Module(nn.Module):
             output = torch.reshape(output, self.reconstruct_shape)
         return output
 
-    def train(self, input, label, loss_fn, optimizer=None, **kwargs):
+    def train(self, input, label, loss_fn, optimizer=None, monitor_loss=None,
+              **kwargs):
         if optimizer:
             optimizer.zero_grad()
         # get output and loss
@@ -219,7 +220,13 @@ class Module(nn.Module):
         loss.backward()
         if optimizer:
             optimizer.step()
-        return loss.item()
+        # monitor loss
+        with torch.no_grad():
+            if monitor_loss is not None:
+                out = monitor_loss(input, output)
+            else:
+                out = loss
+        return out.item()
 
     def show_weights(self, field='hidden_weight', img_shape=None,
                      figsize=(5, 5), cmap=None):
@@ -723,7 +730,8 @@ class RBM(Module):
         plt.show()
         return fig
 
-    def train(self, input, k=1, monitor_loss=nn.MSELoss(), optimizer=None, **kwargs):
+    def train(self, input, k=1, optimizer=None, monitor_loss=nn.MSELoss(),
+              **kwargs):
         """
         #TODO:WRITEME
         """
@@ -744,12 +752,10 @@ class RBM(Module):
                 self.persistent_weights = torch.zeros_like(self.hidden_weight,
                                                            requires_grad=True)
                 self.persistent_weights = nn.Parameter(self.persistent_weights)
-                if optimizer:
-                    optimizer.add_param_group({'params': self.persistent_weights})
-                    optimizer.param_groups[-1].update({'momentum': 0.})
-                    persistent_lr = kwargs.get('persistent_lr')
-                    if persistent_lr is not None:
-                        optimizer.param_groups[-1].update({'lr': persistent_lr})
+                if optimizer and kwargs.get('persistent_lr'):
+                    optimizer.add_param_group({'params': self.persistent_weights,
+                                               'momentum': 0.,
+                                               'lr': kwargs.get('persistent_lr')})
             # dropout
             ph_sample = self.apply_modules(ph_sample,'forward_layer',['dropout'])
             # negative phase
@@ -888,7 +894,7 @@ class CRBM(RBM):
         hidden_term = torch.sum(self.log_part_fn(Wv_Uy_b).flatten(1), 1)
         return -hidden_term - vbias_term
 
-    def train(self, inputs, k=1, monitor_fn=nn.MSELoss(), optimizer=None,
+    def train(self, inputs, k=1, optimizer=None, monitor_fn=nn.MSELoss(),
               **kwargs):
         """
         #TODO:WRITEME
@@ -910,9 +916,10 @@ class CRBM(RBM):
                 self.persistent_weights = torch.zeros_like(self.hidden_weight,
                                                            requires_grad=True)
                 self.persistent_weights = nn.Parameter(self.persistent_weights)
-                if optimizer:
-                    optimizer.add_param_group({'params': self.persistent_weights})
-                    optimizer.param_groups[-1].update({'momentum': 0.})
+                if optimizer and kwargs.get('persistent_lr'):
+                    optimizer.add_param_group({'params': self.persistent_weights,
+                                               'momentum': 0.,
+                                               'lr': kwargs.get('persistent_lr')})
             # dropout
             ph_sample = self.apply_modules(ph_sample, 'forward_layer', ['dropout'])
             # negative phase
