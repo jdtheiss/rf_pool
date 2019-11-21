@@ -170,10 +170,12 @@ def get_heatmaps(target_loader, crowd_loader, layer_id='1', batch_size=1, model=
             masked_output = masked_output[0].permute(1,0,2,3)
             # get flattened output of third layer (n_RF, n_ch, h * w)
             output = torch.flatten(model.apply_layers(masked_output, ['2']), -2)
+            output = torch.mul(output, mask_i.reshape(-1, 1, 1))
             # get max index in image space for target channel (after summing out RFs)
             max_idx = torch.max(torch.sum(output, 0)[label], -1)[1]
             # get relative contribution to max value across RFs
             max_output = output[:, label.item(), max_idx.item()]
+            max_output[torch.lt(max_output, 0.)] = 0.
             RF_acc += torch.div(max_output, torch.sum(max_output))
             cnt += 1.
     # update RF_acc as proportion correct
