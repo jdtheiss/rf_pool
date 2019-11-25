@@ -119,7 +119,7 @@ def get_accuracy(target_loader, crowd_loader, layer_id='1', batch_size=1, model=
             correct_i = torch.sum(torch.max(output, -1)[1] == labels).item()
             correct += correct_i
     # get pct correct, SNR
-    pct_correct = (correct / (batch_size * len(target_loader))).item()
+    pct_correct = (correct / (batch_size * len(target_loader)))
     return pct_correct
 
 def get_contribution(target_loader, crowd_loader, layer_id='1', model=None, RF_mask=None, acc=None,
