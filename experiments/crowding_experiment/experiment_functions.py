@@ -57,7 +57,7 @@ def create_crowd_set(dataset, n_images, img_size, n_flankers, axis, spacing, bas
                                             spacing=20*spacing, background_size=img_size, axis=axis)
     return crowd_set
 
-def apply_attention_field(model, layer_id, mu, sigma, loc, extent):
+def apply_attention_field(model, layer_id, mu, sigma, loc, extent, update_mu=True, update_sigma=True):
     """
     Updates the receptive fields of the model by applying an attentional field with a given extent
     """
@@ -69,13 +69,17 @@ def apply_attention_field(model, layer_id, mu, sigma, loc, extent):
         new_mu, new_sigma = lattice.apply_attentional_field(mu, sigma, attn_field)
     else:
         new_mu, new_sigma = mu, sigma
+    if not update_mu:
+        new_mu = mu
+    if not update_sigma:
+        new_sigma = sigma
     model.layers[layer_id].forward_layer.pool.update_rfs(mu=new_mu, sigma=new_sigma)
     return model
 
 def get_accuracy(target_loader, crowd_loader, layer_id='1', batch_size=1, model=None, RF_mask=None,
-                 extent=None, lattice_fn=None, lattice_kwargs=None):
+                 extent=None, lattice_fn=None, lattice_kwargs=None, update_mu=True, update_sigma=True):
     """
-    Gets the PSNR and accuracy scores for each receptive field for the whole set of stimuli 
+    Gets the accuracy over the whole set of stimuli by masking out non-target RFs
     """
     # parse lattice_kwargs
     if lattice_kwargs is not None:
@@ -87,10 +91,8 @@ def get_accuracy(target_loader, crowd_loader, layer_id='1', batch_size=1, model=
             rotate_fn = rotate
     else:
         rotate_fn = None
-    # init acc, counters
-    correct = torch.zeros(1)
-    acc_is = []
-    cnt = 0.
+    # init acc
+    correct = 0.
     # get accuracy for each image
     for i, ((target, labels), (crowd, _)) in enumerate(zip(target_loader, crowd_loader)):
         # reset RFs
@@ -107,7 +109,7 @@ def get_accuracy(target_loader, crowd_loader, layer_id='1', batch_size=1, model=
             mask_i = model.rf_index(target, layer_id, thr=0.1).float()
         # attention
         if extent:
-            model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
+            model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent, update_mu, update_sigma)
         # get target signal and noise (crowd)
         with torch.no_grad():
             crowd_output = model.rf_output(crowd, layer_id, retain_shape=True)
@@ -116,16 +118,14 @@ def get_accuracy(target_loader, crowd_loader, layer_id='1', batch_size=1, model=
             output = torch.max(model.apply_layers(masked_output, ['2']).flatten(-2), -1)[0]
             correct_i = torch.sum(torch.max(output, -1)[1] == labels).item()
             correct += correct_i
-        acc_is.append(correct_i)
-        cnt += torch.sum(mask_i).item()
     # get pct correct, SNR
-    pct_correct = (correct / len(target_loader)).item()
-    return (pct_correct, acc_is)
+    pct_correct = (correct / (batch_size * len(target_loader))).item()
+    return pct_correct
 
 def get_contribution(target_loader, crowd_loader, layer_id='1', model=None, RF_mask=None, acc=None,
                      extent=None, lattice_fn=None, lattice_kwargs=None):
     """
-    Gets the relative contribution for each receptive field to target channel output
+    Gets the contribution for each receptive field to target channel output
     """
     assert iter(target_loader).next()[0].shape[0] == 1, ('Batch size must be 1.')
     # parse lattice_kwargs
@@ -184,11 +184,9 @@ def get_contribution(target_loader, crowd_loader, layer_id='1', model=None, RF_m
             # remove control_output from output (to account for accidental target features from flankers)
             output = output - control_output
             output[torch.lt(output, 0.)] = 0.
-            # get max index in image space for target channel (after summing out RFs)
-            max_idx = torch.sum(torch.sum(output, 0)[label], -1)
-            # get relative contribution to max value across RFs
+            # get contribution to sum value across RFs
             max_output = torch.sum(output[:, label.item()], -1)
-            RF_acc += torch.div(max_output, torch.sum(max_output))
+            RF_acc += max_output
             cnt += 1.
     # update RF_acc as proportion correct
     RF_acc /= cnt
