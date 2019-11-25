@@ -278,8 +278,9 @@ def scatter_rfs(mu, sigma, img_shape, remove=False, updates={}, figsize=(5,5),
                     fn(scatter_kwargs.get(key))
     return fig
 
-def heatmap(model, layer_id, scores=None, input=None, rf_fn=scatter_rfs,
-            filename=None, figsize=(5,5), colorbar=False, **kwargs):
+def heatmap(model, layer_id, score_map=None, scores=None, input=None,
+            rf_fn=scatter_rfs, filename=None, figsize=(5,5), colorbar=False,
+            **kwargs):
     """
     #TODO:WRITEME
     """
@@ -301,14 +302,15 @@ def heatmap(model, layer_id, scores=None, input=None, rf_fn=scatter_rfs,
     # set scores
     if scores is None:
         scores = torch.zeros(heatmap.shape[0])
-    scores = scores.clone()
-    scores = scores.reshape(scores.shape[0],1,1)
-    mask = torch.isnan(scores).bitwise_not().float()
-    scores[torch.isnan(scores)] = 0.
-    score_map = scores * heatmap
-    score_map = torch.div(torch.sum(score_map, 0),
-                          torch.sum(mask * heatmap, 0))
-    score_map[torch.isnan(score_map)] = 0.
+    if score_map is None:
+        scores = scores.clone()
+        scores = scores.reshape(scores.shape[0],1,1)
+        mask = torch.isnan(scores).bitwise_not().float()
+        scores[torch.isnan(scores)] = 0.
+        score_map = scores * heatmap
+        score_map = torch.div(torch.sum(score_map, 0),
+                              torch.sum(mask * heatmap, 0))
+        score_map[torch.isnan(score_map)] = 0.
     # show score_map, update colorbar
     kwargs.setdefault('cmap', 'Greys')
     plot_with_kwargs(ax.imshow, [score_map], **kwargs)
