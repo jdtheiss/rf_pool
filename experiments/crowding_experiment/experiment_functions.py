@@ -93,6 +93,7 @@ def get_accuracy(target_loader, crowd_loader, layer_id='1', batch_size=1, model=
         rotate_fn = None
     # init acc
     correct = 0.
+    acc_i = []
     # get accuracy for each image
     for i, ((target, labels), (crowd, _)) in enumerate(zip(target_loader, crowd_loader)):
         # reset RFs
@@ -118,9 +119,10 @@ def get_accuracy(target_loader, crowd_loader, layer_id='1', batch_size=1, model=
             output = torch.max(model.apply_layers(masked_output, ['2']).flatten(-2), -1)[0]
             correct_i = torch.sum(torch.max(output, -1)[1] == labels).item()
             correct += correct_i
+            acc_i.append(correct_i)
     # get pct correct, SNR
     pct_correct = (correct / (batch_size * len(target_loader)))
-    return pct_correct
+    return pct_correct, acc_i
 
 def get_contribution(target_loader, crowd_loader, layer_id='1', model=None, RF_mask=None, acc=None,
                      extent=None, lattice_fn=None, lattice_kwargs=None):
@@ -170,8 +172,7 @@ def get_contribution(target_loader, crowd_loader, layer_id='1', model=None, RF_m
             # permute dimensions to (n_RF, n_ch, h, w)
             masked_output = masked_output[0].permute(1,0,2,3)
             # get flattened output of third layer (n_RF, n_ch, h * w)
-            output = torch.flatten(model.apply_layers(masked_output, ['2']), -2)
-            output = torch.mul(output, mask_i.reshape(-1, 1, 1))
+            output = model.apply_layers(masked_output, ['2'])
             # get control output to account for target-flanker feature coincidences
             crowd_control_output = model.rf_output(crowd, layer_id, retain_shape=True)
             # mask crowd_output and pass forward to get accuracy
@@ -179,13 +180,15 @@ def get_contribution(target_loader, crowd_loader, layer_id='1', model=None, RF_m
             # permute dimensions to (n_RF, n_ch, h, w)
             masked_control_output = masked_control_output[0].permute(1,0,2,3)
             # get flattened output of third layer (n_RF, n_ch, h * w)
-            control_output = torch.flatten(model.apply_layers(masked_control_output, ['2']), -2)
-            control_output = torch.mul(control_output, mask_i.reshape(-1, 1, 1))
+            control_output = model.apply_layers(masked_control_output, ['2'])
             # remove control_output from output (to account for accidental target features from flankers)
             output = output - control_output
-            output[torch.lt(output, 0.)] = 0.
             # get contribution to sum value across RFs
-            max_output = torch.sum(output[:, label.item()], -1)
+            max_output = torch.max(torch.flatten(output, -2), -1)[0] #[:, label.item()], -1)
+            # softmax across channels
+            max_output = torch.softmax(max_output, -1)[:, label.item()]
+            # re-mask RFs
+            max_output = torch.mul(max_output, mask_i.reshape(-1))
             RF_acc += max_output
             cnt += 1.
     # update RF_acc as proportion correct
