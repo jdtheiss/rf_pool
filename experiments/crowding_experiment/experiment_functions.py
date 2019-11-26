@@ -124,10 +124,10 @@ def get_accuracy(target_loader, crowd_loader, layer_id='1', batch_size=1, model=
     pct_correct = (correct / (batch_size * len(target_loader)))
     return pct_correct, acc_i
 
-def get_contribution(target_loader, crowd_loader, layer_id='1', model=None, RF_mask=None, acc=None,
-                     extent=None, lattice_fn=None, lattice_kwargs=None):
+def get_mse(target_loader, crowd_loader, mse_layer_id, layer_id='1', model=None, RF_mask=None, acc=None,
+            extent=None, lattice_fn=None, lattice_kwargs=None):
     """
-    Gets the contribution for each receptive field to target channel output
+    Gets the MSE for each receptive field
     """
     assert iter(target_loader).next()[0].shape[0] == 1, ('Batch size must be 1.')
     # parse lattice_kwargs
@@ -143,7 +143,78 @@ def get_contribution(target_loader, crowd_loader, layer_id='1', model=None, RF_m
     # counter
     cnt = 0.
     n_kernels = model.layers[layer_id].forward_layer.pool.mu.shape[0]
-    RF_acc = torch.zeros(n_kernels)
+    RF_mse = torch.zeros(n_kernels)
+    # get SNR, accuracy for each image
+    for i, ((target, label), (crowd, _)) in enumerate(zip(target_loader, crowd_loader)):
+        # skip wrong trials
+        if acc is not None and acc[i] == 0:
+            continue
+        # reset RFs
+        if lattice_fn is not None and lattice_kwargs is not None:
+            if rotate_fn is not None:
+                mu, sigma = lattice_fn(**lattice_kwargs, rotate=rotate_fn())
+            else:
+                mu, sigma = lattice_fn(**lattice_kwargs) 
+            model.layers[layer_id].forward_layer.pool.update_rfs(mu=mu, sigma=sigma)
+        # get mask
+        if RF_mask is not None:
+            mask_i = RF_mask.clone()
+        else:
+            mask_i = model.rf_index(target, layer_id, thr=0.1).float()
+        # attention
+        if extent:
+            model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
+        # get output for each RF
+        with torch.no_grad():
+            crowd_output = model.rf_output(crowd, layer_id, retain_shape=True)
+            # mask crowd_output and pass forward to get accuracy
+            masked_output = torch.mul(crowd_output, mask_i.reshape(1, 1, -1, 1, 1))
+            # permute dimensions to (n_RF, n_ch, h, w)
+            masked_output = masked_output[0].permute(1,0,2,3)
+            # get flattened output of third layer (n_RF, n_ch, h * w)
+            if mse_layer_id != layer_id:
+                output = model.apply_layers(masked_output, [mse_layer_id])
+            else:
+                output = masked_output
+            # get target output
+            rf_target_output = model.rf_output(target, layer_id, retain_shape=True)
+            # mask crowd_output and pass forward to get accuracy
+            masked_target_output = torch.mul(rf_target_output, mask_i.reshape(1, 1, -1, 1, 1))
+            # permute dimensions to (n_RF, n_ch, h, w)
+            masked_target_output = masked_target_output[0].permute(1,0,2,3)
+            # get flattened output of third layer (n_RF, n_ch, h, w)
+            if mse_layer_id != layer_id:
+                target_output = model.apply_layers(masked_target_output, [mse_layer_id])
+            else:
+                target_output = masked_target_output
+            # remove control_output from output (to account for accidental target features from flankers)
+            mse_output = torch.mean(torch.pow(target_output - output, 2), [1,2,3])
+            RF_mse += mse_output
+            cnt += 1.
+    # update RF_acc as proportion correct
+    RF_mse /= cnt
+    return RF_mse
+
+def get_confidence(target_loader, crowd_loader, layer_id='1', model=None, RF_mask=None, acc=None,
+                   extent=None, lattice_fn=None, lattice_kwargs=None):
+    """
+    Gets the target confidence for each receptive field
+    """
+    assert iter(target_loader).next()[0].shape[0] == 1, ('Batch size must be 1.')
+    # parse lattice_kwargs
+    if lattice_kwargs is not None:
+        lattice_kwargs.setdefault('rotate', 0.)
+        rotate = lattice_kwargs.pop('rotate')
+        if type(rotate) is not type(lambda : 0.):
+            rotate_fn = lambda : rotate
+        else:
+            rotate_fn = rotate
+    else:
+        rotate_fn = None
+    # init RF confidences and counter
+    n_kernels = model.layers[layer_id].forward_layer.pool.mu.shape[0]
+    RF_con = torch.zeros(n_kernels)
+    cnt = torch.zeros(n_kernels)
     # get SNR, accuracy for each image
     for i, ((target, label), (crowd, _)) in enumerate(zip(target_loader, crowd_loader)):
         # skip wrong trials
@@ -181,19 +252,19 @@ def get_contribution(target_loader, crowd_loader, layer_id='1', model=None, RF_m
             masked_control_output = masked_control_output[0].permute(1,0,2,3)
             # get flattened output of third layer (n_RF, n_ch, h * w)
             control_output = model.apply_layers(masked_control_output, ['2'])
-            # remove control_output from output (to account for accidental target features from flankers)
+            # remove control_output from output
             output = output - control_output
-            # get contribution to sum value across RFs
-            max_output = torch.max(torch.flatten(output, -2), -1)[0] #[:, label.item()], -1)
+            # get max across image space
+            max_output = torch.max(torch.flatten(output, -2), -1)[0]
             # softmax across channels
             max_output = torch.softmax(max_output, -1)[:, label.item()]
             # re-mask RFs
             max_output = torch.mul(max_output, mask_i.reshape(-1))
-            RF_acc += max_output
-            cnt += 1.
+            RF_con += max_output
+            cnt += mask_i.reshape(-1)
     # update RF_acc as proportion correct
-    RF_acc /= cnt
-    return RF_acc
+    RF_con = torch.div(RF_con, cnt)
+    return RF_con
 
 def get_ablated(target_loader, crowd_loader, layer_id='1', model=None, RF_mask=None,
                 extent=None, lattice_fn=None, lattice_kwargs=None):
