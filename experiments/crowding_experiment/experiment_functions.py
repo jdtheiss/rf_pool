@@ -262,7 +262,7 @@ def get_confidence(target_loader, crowd_loader, layer_id='1', model=None, RF_mas
             max_output = torch.mul(max_output, mask_i.reshape(-1))
             RF_con += max_output
             cnt += mask_i.reshape(-1)
-    # update RF_acc as proportion correct
+    # average RF_con across trials
     RF_con = torch.div(RF_con, cnt)
     return RF_con
 
@@ -328,3 +328,76 @@ def get_ablated(target_loader, crowd_loader, layer_id='1', model=None, RF_mask=N
     RF_acc = (correct - RF_acc) / cnt
     correct /= cnt
     return RF_acc, correct
+
+def get_redundancy(target_loader, crowd_loader, square_loader, layer_id='1', model=None, RF_mask=None, acc=None,
+                   extent=None, lattice_fn=None, lattice_kwargs=None):
+    """
+    Gets the average confidence-weighted overlap of receptive fields within 20x20 target region
+    """
+    assert iter(target_loader).next()[0].shape[0] == 1, ('Batch size must be 1.')
+    # parse lattice_kwargs
+    if lattice_kwargs is not None:
+        lattice_kwargs.setdefault('rotate', 0.)
+        rotate = lattice_kwargs.pop('rotate')
+        if type(rotate) is not type(lambda : 0.):
+            rotate_fn = lambda : rotate
+        else:
+            rotate_fn = rotate
+    else:
+        rotate_fn = None
+    # init RF redundancy and counter
+    RF_red = 0.
+    cnt = 0.
+    # get SNR, accuracy for each image
+    for i, ((target, label), (crowd, _), (square, _)) in enumerate(zip(target_loader, crowd_loader, square_loader)):
+        # skip wrong trials
+        if acc is not None and acc[i] == 0:
+            continue
+        # reset RFs
+        if lattice_fn is not None and lattice_kwargs is not None:
+            if rotate_fn is not None:
+                mu, sigma = lattice_fn(**lattice_kwargs, rotate=rotate_fn())
+            else:
+                mu, sigma = lattice_fn(**lattice_kwargs) 
+            model.layers[layer_id].forward_layer.pool.update_rfs(mu=mu, sigma=sigma)
+        # get mask
+        if RF_mask is not None:
+            mask_i = RF_mask.clone()
+        else:
+            mask_i = model.rf_index(target, layer_id, thr=0.1).float()
+        # attention
+        if extent:
+            model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
+        # get output for each RF
+        with torch.no_grad():
+            crowd_output = model.rf_output(target + crowd, layer_id, retain_shape=True)
+            # mask crowd_output and pass forward to get accuracy
+            masked_output = torch.mul(crowd_output, mask_i.reshape(1, 1, -1, 1, 1))
+            # permute dimensions to (n_RF, n_ch, h, w)
+            masked_output = masked_output[0].permute(1,0,2,3)
+            # get output of third layer (n_RF, n_ch, h, w)
+            output = model.apply_layers(masked_output, ['2'])
+            # get control output to account for target-flanker feature coincidences
+            crowd_control_output = model.rf_output(crowd, layer_id, retain_shape=True)
+            # mask crowd_output and pass forward to get accuracy
+            masked_control_output = torch.mul(crowd_control_output, mask_i.reshape(1, 1, -1, 1, 1))
+            # permute dimensions to (n_RF, n_ch, h, w)
+            masked_control_output = masked_control_output[0].permute(1,0,2,3)
+            # get output of third layer (n_RF, n_ch, h, w)
+            control_output = model.apply_layers(masked_control_output, ['2'])
+            # remove control_output from output
+            output = output - control_output
+            output = torch.mul(output, mask_i.reshape(-1, 1, 1, 1))
+            # get heatmap of RFs in image space
+            heatmap = model.rf_heatmap(layer_id)
+            # multiply heatmap with mask and average across RFs
+            redundancy = torch.sum(torch.mul(heatmap, mask_i.reshape(-1, 1, 1)), 0)
+            redundancy = torch.div(redundancy, torch.sum(mask_i))
+            # multiply with target square and sum across image space
+            redundancy = torch.sum(torch.mul(redundancy, square[0,0]))
+            # average based on number of pixels in square
+            RF_red += torch.div(redundancy, torch.sum(square)).item()
+            cnt += 1.
+    # average RF_red across trials
+    RF_red = torch.div(RF_red, cnt).item()
+    return RF_red
