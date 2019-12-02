@@ -401,3 +401,48 @@ def get_redundancy(target_loader, crowd_loader, square_loader, layer_id='1', mod
     # average RF_red across trials
     RF_red = torch.div(RF_red, cnt).item()
     return RF_red
+
+def get_importance_map(flanker_loader, crowd_loader, layer_id='1', batch_size=1, model=None,
+                        extent=None, lattice_fn=None, lattice_kwargs=None):
+    """
+    Gets importance map (target channel in the output layer)
+    """
+    # parse lattice_kwargs
+    if lattice_kwargs is not None:
+        lattice_kwargs.setdefault('rotate', 0.)
+        rotate = lattice_kwargs.pop('rotate')
+        if type(rotate) is not type(lambda : 0.):
+            rotate_fn = lambda : rotate
+        else:
+            rotate_fn = rotate
+    else:
+        rotate_fn = None
+    # init acc, counters
+    correct = torch.zeros(1)
+    importance_maps = []
+    cnt = 0.
+    # get accuracy for each image
+    for i, ((flank, _), (crowd, labels)) in enumerate(zip(flanker_loader, crowd_loader)):
+        # reset RFs
+        if lattice_fn is not None and lattice_kwargs is not None:
+            if rotate_fn is not None:
+                mu, sigma = lattice_fn(**lattice_kwargs, rotate=rotate_fn())
+            else:
+                mu, sigma = lattice_fn(**lattice_kwargs) 
+            model.layers[layer_id].forward_layer.pool.update_rfs(mu=mu, sigma=sigma)
+        # attention
+        if extent:
+            model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
+        # get importnace map in target channel
+        with torch.no_grad():
+            crowd_output = model(crowd)
+            flank_output = model(flank)
+#             output = crowd_output - flank_output
+#             max_value = torch.max(output)
+#             importance_map = torch.div(output[:, labels, :, :],max_value)
+            softmax_output = torch.softmax(crowd_output - flank_output, 1)
+            importance_map = softmax_output[:,labels,:,:]
+
+        importance_maps.append(importance_map)
+
+    return (importance_maps)
