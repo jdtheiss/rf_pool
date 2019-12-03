@@ -195,7 +195,7 @@ def get_mse(target_loader, crowd_loader, mse_layer_id, layer_id='1', model=None,
     RF_mse /= cnt
     return RF_mse
 
-def get_confidence(target_loader, crowd_loader, layer_id='1', model=None, RF_mask=None, acc=None,
+def get_confidence(target_loader, flank_loader, layer_id='1', model=None, RF_mask=None, acc=None,
                    extent=None, lattice_fn=None, lattice_kwargs=None):
     """
     Gets the target confidence for each receptive field
@@ -216,7 +216,7 @@ def get_confidence(target_loader, crowd_loader, layer_id='1', model=None, RF_mas
     RF_con = torch.zeros(n_kernels)
     cnt = torch.zeros(n_kernels)
     # get SNR, accuracy for each image
-    for i, ((target, label), (crowd, _)) in enumerate(zip(target_loader, crowd_loader)):
+    for i, ((target, label), (flank, _)) in enumerate(zip(target_loader, flank_loader)):
         # skip wrong trials
         if acc is not None and acc[i] == 0:
             continue
@@ -237,23 +237,23 @@ def get_confidence(target_loader, crowd_loader, layer_id='1', model=None, RF_mas
             model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
         # get output for each RF
         with torch.no_grad():
-            crowd_output = model.rf_output(target + crowd, layer_id, retain_shape=True)
+            crowd_output = model.rf_output(target + flank, layer_id, retain_shape=True)
             # mask crowd_output and pass forward to get accuracy
             masked_output = torch.mul(crowd_output, mask_i.reshape(1, 1, -1, 1, 1))
             # permute dimensions to (n_RF, n_ch, h, w)
             masked_output = masked_output[0].permute(1,0,2,3)
             # get flattened output of third layer (n_RF, n_ch, h * w)
             output = model.apply_layers(masked_output, ['2'])
-            # get control output to account for target-flanker feature coincidences
-            crowd_control_output = model.rf_output(crowd, layer_id, retain_shape=True)
-            # mask crowd_output and pass forward to get accuracy
-            masked_control_output = torch.mul(crowd_control_output, mask_i.reshape(1, 1, -1, 1, 1))
+            # get flank output to account for target-flanker feature coincidences
+            flank_output = model.rf_output(flank, layer_id, retain_shape=True)
+            # mask flank_output and pass forward to get accuracy
+            masked_flank_output = torch.mul(flank_output, mask_i.reshape(1, 1, -1, 1, 1))
             # permute dimensions to (n_RF, n_ch, h, w)
-            masked_control_output = masked_control_output[0].permute(1,0,2,3)
-            # get flattened output of third layer (n_RF, n_ch, h * w)
-            control_output = model.apply_layers(masked_control_output, ['2'])
-            # remove control_output from output
-            output = output - control_output
+            masked_flank_output = masked_flank_output[0].permute(1,0,2,3)
+            # get output of third layer (n_RF, n_ch, h, w)
+            flank_output = model.apply_layers(masked_flank_output, ['2'])
+            # remove flank_output from output
+            output = output - flank_output
             # get max across image space
             max_output = torch.max(torch.flatten(output, -2), -1)[0]
             # softmax across channels
@@ -266,7 +266,7 @@ def get_confidence(target_loader, crowd_loader, layer_id='1', model=None, RF_mas
     RF_con = torch.div(RF_con, cnt)
     return RF_con
 
-def get_ablated(target_loader, crowd_loader, layer_id='1', model=None, RF_mask=None,
+def get_ablated(target_loader, flank_loader, layer_id='1', model=None, RF_mask=None,
                 extent=None, lattice_fn=None, lattice_kwargs=None):
     """
     Gets the change in accuracy due to each receptive field
@@ -288,7 +288,7 @@ def get_ablated(target_loader, crowd_loader, layer_id='1', model=None, RF_mask=N
     RF_acc = torch.zeros(n_kernels)
     correct = 0.
     # get SNR, accuracy for each image
-    for i, ((target, label), (crowd, _)) in enumerate(zip(target_loader, crowd_loader)):
+    for i, ((target, label), (flank, _)) in enumerate(zip(target_loader, flank_loader)):
         # reset RFs
         if lattice_fn is not None and lattice_kwargs is not None:
             if rotate_fn is not None:
@@ -306,13 +306,23 @@ def get_ablated(target_loader, crowd_loader, layer_id='1', model=None, RF_mask=N
             model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
         # get output for each RF
         with torch.no_grad():
-            crowd_output = model.rf_output(target + crowd, layer_id, retain_shape=True)
+            crowd_output = model.rf_output(target + flank, layer_id, retain_shape=True)
             # mask crowd_output and pass forward to get accuracy
             masked_output = torch.mul(crowd_output, mask_i.reshape(1, 1, -1, 1, 1))
             # permute dimensions to (n_RF, n_ch, h, w)
             masked_output = masked_output[0].permute(1,0,2,3)
             # get flattened output of third layer (n_RF, n_ch, h * w)
             output = torch.flatten(model.apply_layers(masked_output, ['2']), -2)
+            # get flank output to account for target-flanker feature coincidences
+            flank_output = model.rf_output(flank, layer_id, retain_shape=True)
+            # mask flank_output and pass forward to get accuracy
+            masked_flank_output = torch.mul(flank_output, mask_i.reshape(1, 1, -1, 1, 1))
+            # permute dimensions to (n_RF, n_ch, h, w)
+            masked_flank_output = masked_flank_output[0].permute(1,0,2,3)
+            # get output of third layer (n_RF, n_ch, h, w)
+            flank_output = model.apply_layers(masked_flank_output, ['2'])
+            # remove flank_output from output
+            output = output - flank_output
             output = torch.mul(output, mask_i.reshape(-1, 1, 1))
             # get prediction and accuracy
             pred = torch.max(torch.max(torch.sum(output, 0), -1)[0], 0)[1]
@@ -329,7 +339,7 @@ def get_ablated(target_loader, crowd_loader, layer_id='1', model=None, RF_mask=N
     correct /= cnt
     return RF_acc, correct
 
-def get_redundancy(target_loader, crowd_loader, square_loader, layer_id='1', model=None, RF_mask=None, acc=None,
+def get_redundancy(target_loader, flank_loader, square_loader, layer_id='1', model=None, RF_mask=None, acc=None,
                    extent=None, lattice_fn=None, lattice_kwargs=None):
     """
     Gets the average confidence-weighted overlap of receptive fields within 20x20 target region
@@ -349,7 +359,7 @@ def get_redundancy(target_loader, crowd_loader, square_loader, layer_id='1', mod
     RF_red = 0.
     cnt = 0.
     # get SNR, accuracy for each image
-    for i, ((target, label), (crowd, _), (square, _)) in enumerate(zip(target_loader, crowd_loader, square_loader)):
+    for i, ((target, label), (flank, _), (square, _)) in enumerate(zip(target_loader, flank_loader, square_loader)):
         # skip wrong trials
         if acc is not None and acc[i] == 0:
             continue
@@ -370,23 +380,23 @@ def get_redundancy(target_loader, crowd_loader, square_loader, layer_id='1', mod
             model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
         # get output for each RF
         with torch.no_grad():
-            crowd_output = model.rf_output(target + crowd, layer_id, retain_shape=True)
+            crowd_output = model.rf_output(target + flank, layer_id, retain_shape=True)
             # mask crowd_output and pass forward to get accuracy
             masked_output = torch.mul(crowd_output, mask_i.reshape(1, 1, -1, 1, 1))
             # permute dimensions to (n_RF, n_ch, h, w)
             masked_output = masked_output[0].permute(1,0,2,3)
             # get output of third layer (n_RF, n_ch, h, w)
             output = model.apply_layers(masked_output, ['2'])
-            # get control output to account for target-flanker feature coincidences
-            crowd_control_output = model.rf_output(crowd, layer_id, retain_shape=True)
-            # mask crowd_output and pass forward to get accuracy
-            masked_control_output = torch.mul(crowd_control_output, mask_i.reshape(1, 1, -1, 1, 1))
+            # get flank output to account for target-flanker feature coincidences
+            flank_output = model.rf_output(flank, layer_id, retain_shape=True)
+            # mask flank_output and pass forward to get accuracy
+            masked_flank_output = torch.mul(flank_output, mask_i.reshape(1, 1, -1, 1, 1))
             # permute dimensions to (n_RF, n_ch, h, w)
-            masked_control_output = masked_control_output[0].permute(1,0,2,3)
+            masked_flank_output = masked_flank_output[0].permute(1,0,2,3)
             # get output of third layer (n_RF, n_ch, h, w)
-            control_output = model.apply_layers(masked_control_output, ['2'])
-            # remove control_output from output
-            output = output - control_output
+            flank_output = model.apply_layers(masked_flank_output, ['2'])
+            # remove flank_output from output
+            output = output - flank_output
             output = torch.mul(output, mask_i.reshape(-1, 1, 1, 1))
             # get heatmap of RFs in image space
             heatmap = model.rf_heatmap(layer_id)
@@ -442,7 +452,6 @@ def get_importance_map(flanker_loader, crowd_loader, layer_id='1', batch_size=1,
 #             importance_map = torch.div(output[:, labels, :, :],max_value)
             softmax_output = torch.softmax(crowd_output - flank_output, 1)
             importance_map = softmax_output[:,labels,:,:]
-
         importance_maps.append(importance_map)
 
-    return (importance_maps)
+    return importance_maps
