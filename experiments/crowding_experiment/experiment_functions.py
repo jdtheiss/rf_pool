@@ -24,6 +24,8 @@ def get_crowd_params(crowd_type, ref_axis=0.):
     # number of flankers
     if crowd_type in ['outer','inner']:
         n_flankers = 1
+    elif crowd_type == 'cross':
+        n_flankers = 4
     else:
         n_flankers = 2
     
