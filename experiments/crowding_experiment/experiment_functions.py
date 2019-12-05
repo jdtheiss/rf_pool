@@ -372,34 +372,16 @@ def get_redundancy(target_loader, flank_loader, square_loader, layer_id='1', mod
             else:
                 mu, sigma = lattice_fn(**lattice_kwargs) 
             model.layers[layer_id].forward_layer.pool.update_rfs(mu=mu, sigma=sigma)
+        # attention
+        if extent:
+            model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
         # get mask
         if RF_mask is not None:
             mask_i = RF_mask.clone()
         else:
             mask_i = model.rf_index(target, layer_id, thr=0.1).float()
-        # attention
-        if extent:
-            model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
         # get output for each RF
         with torch.no_grad():
-            crowd_output = model.rf_output(target + flank, layer_id, retain_shape=True)
-            # mask crowd_output and pass forward to get accuracy
-            masked_output = torch.mul(crowd_output, mask_i.reshape(1, 1, -1, 1, 1))
-            # permute dimensions to (n_RF, n_ch, h, w)
-            masked_output = masked_output[0].permute(1,0,2,3)
-            # get output of third layer (n_RF, n_ch, h, w)
-            output = model.apply_layers(masked_output, ['2'])
-            # get flank output to account for target-flanker feature coincidences
-            flank_output = model.rf_output(flank, layer_id, retain_shape=True)
-            # mask flank_output and pass forward to get accuracy
-            masked_flank_output = torch.mul(flank_output, mask_i.reshape(1, 1, -1, 1, 1))
-            # permute dimensions to (n_RF, n_ch, h, w)
-            masked_flank_output = masked_flank_output[0].permute(1,0,2,3)
-            # get output of third layer (n_RF, n_ch, h, w)
-            flank_output = model.apply_layers(masked_flank_output, ['2'])
-            # remove flank_output from output
-            output = output - flank_output
-            output = torch.mul(output, mask_i.reshape(-1, 1, 1, 1))
             # get heatmap of RFs in image space
             heatmap = model.rf_heatmap(layer_id)
             # multiply heatmap with mask and average across RFs
@@ -414,10 +396,10 @@ def get_redundancy(target_loader, flank_loader, square_loader, layer_id='1', mod
     RF_red = torch.div(RF_red, cnt).item()
     return RF_red
 
-def get_importance_map(flanker_loader, crowd_loader, layer_id='1', batch_size=1, model=None,
-                        extent=None, lattice_fn=None, lattice_kwargs=None):
+def get_representation_map(flanker_loader, crowd_loader, layer_id='1', batch_size=1, model=None,
+                           extent=None, lattice_fn=None, lattice_kwargs=None):
     """
-    Gets importance map (target channel in the output layer)
+    Gets representation map (target channel in the output layer)
     """
     # parse lattice_kwargs
     if lattice_kwargs is not None:
@@ -429,11 +411,9 @@ def get_importance_map(flanker_loader, crowd_loader, layer_id='1', batch_size=1,
             rotate_fn = rotate
     else:
         rotate_fn = None
-    # init acc, counters
-    correct = torch.zeros(1)
-    importance_maps = []
-    cnt = 0.
-    # get accuracy for each image
+    # init importance maps
+    representation_maps = []
+    # get target representation for each image
     for i, ((flank, _), (crowd, labels)) in enumerate(zip(flanker_loader, crowd_loader)):
         # reset RFs
         if lattice_fn is not None and lattice_kwargs is not None:
@@ -449,11 +429,51 @@ def get_importance_map(flanker_loader, crowd_loader, layer_id='1', batch_size=1,
         with torch.no_grad():
             crowd_output = model(crowd)
             flank_output = model(flank)
-#             output = crowd_output - flank_output
-#             max_value = torch.max(output)
-#             importance_map = torch.div(output[:, labels, :, :],max_value)
             softmax_output = torch.softmax(crowd_output - flank_output, 1)
-            importance_map = softmax_output[:,labels,:,:]
-        importance_maps.append(importance_map)
+            representation_map = softmax_output[:,labels,:,:]
+        representation_maps.append(representation_map)
 
-    return importance_maps
+    return representation_maps
+
+def get_confidence_map(target_loader, crowd_loader, layer_id='1', batch_size=1, model=None,
+                       extent=None, lattice_fn=None, lattice_kwargs=None):
+    """
+    Gets confidence map (target channel in the output layer)
+    """
+    # parse lattice_kwargs
+    if lattice_kwargs is not None:
+        lattice_kwargs.setdefault('rotate', 0.)
+        rotate = lattice_kwargs.pop('rotate')
+        if type(rotate) is not type(lambda : 0.):
+            rotate_fn = lambda : rotate
+        else:
+            rotate_fn = rotate
+    else:
+        rotate_fn = None
+    # init confidence_maps
+    confidence_maps = []
+    # get target confidence for each image
+    for i, ((target, _), (crowd, labels)) in enumerate(zip(target_loader, crowd_loader)):
+        # reset RFs
+        if lattice_fn is not None and lattice_kwargs is not None:
+            if rotate_fn is not None:
+                mu, sigma = lattice_fn(**lattice_kwargs, rotate=rotate_fn())
+            else:
+                mu, sigma = lattice_fn(**lattice_kwargs) 
+            model.layers[layer_id].forward_layer.pool.update_rfs(mu=mu, sigma=sigma)
+        # attention
+        if extent:
+            model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
+        # get mask of RFs covering target
+        mask_i = model.rf_index(target, layer_id, thr=0.1).float()
+        # get importnace map in target channel
+        with torch.no_grad():
+            crowd_output = model.rf_output(crowd, layer_id, retain_shape=True)
+            # mask crowd_output and pass forward to get accuracy
+            masked_output = torch.max(torch.mul(crowd_output, mask_i.reshape(1, 1, -1, 1, 1)), 2)[0]
+            output = model.apply_layers(masked_output, ['2'])
+            softmax_output = torch.softmax(output, 1)
+            confidence_map = softmax_output[:,labels,:,:]
+        confidence_maps.append(confidence_map)
+
+    return confidence_maps
