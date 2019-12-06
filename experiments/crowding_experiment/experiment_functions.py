@@ -197,8 +197,8 @@ def get_mse(target_loader, crowd_loader, mse_layer_id, layer_id='1', model=None,
     RF_mse /= cnt
     return RF_mse
 
-def get_confidence(target_loader, flank_loader, layer_id='1', model=None, RF_mask=None, acc=None,
-                   extent=None, lattice_fn=None, lattice_kwargs=None):
+def get_rf_confidence(target_loader, flank_loader, layer_id='1', model=None, RF_mask=None, acc=None,
+                      extent=None, lattice_fn=None, lattice_kwargs=None):
     """
     Gets the target confidence for each receptive field
     """
@@ -267,6 +267,52 @@ def get_confidence(target_loader, flank_loader, layer_id='1', model=None, RF_mas
     # average RF_con across trials
     RF_con = torch.div(RF_con, cnt)
     return RF_con
+
+def get_confidence(target_loader, crowd_loader, layer_id='1', batch_size=1, model=None, RF_mask=None,
+                   extent=None, lattice_fn=None, lattice_kwargs=None):
+    """
+    Gets confidence map (target channel in the output layer)
+    """
+    # parse lattice_kwargs
+    if lattice_kwargs is not None:
+        lattice_kwargs.setdefault('rotate', 0.)
+        rotate = lattice_kwargs.pop('rotate')
+        if type(rotate) is not type(lambda : 0.):
+            rotate_fn = lambda : rotate
+        else:
+            rotate_fn = rotate
+    else:
+        rotate_fn = None
+    # init confidence_maps
+    confidence_maps = []
+    # get target confidence for each image
+    for i, ((target, _), (crowd, labels)) in enumerate(zip(target_loader, crowd_loader)):
+        # reset RFs
+        if lattice_fn is not None and lattice_kwargs is not None:
+            if rotate_fn is not None:
+                mu, sigma = lattice_fn(**lattice_kwargs, rotate=rotate_fn())
+            else:
+                mu, sigma = lattice_fn(**lattice_kwargs) 
+            model.layers[layer_id].forward_layer.pool.update_rfs(mu=mu, sigma=sigma)
+        # get mask
+        if RF_mask is not None:
+            mask_i = RF_mask.clone()
+        else:
+            mask_i = model.rf_index(target, layer_id, thr=0.1).float()
+        # attention
+        if extent:
+            model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
+        # get importnace map in target channel
+        with torch.no_grad():
+            crowd_output = model.rf_output(crowd, layer_id, retain_shape=True)
+            # mask crowd_output and pass forward to get accuracy
+            masked_output = torch.max(torch.mul(crowd_output, mask_i.reshape(1, 1, -1, 1, 1)), 2)[0]
+            output = model.apply_layers(masked_output, ['2'])
+            softmax_output = torch.softmax(output, 1)
+            confidence_map = softmax_output[:,labels,:,:]
+        confidence_maps.append(confidence_map)
+
+    return confidence_maps
 
 def get_ablated(target_loader, flank_loader, layer_id='1', model=None, RF_mask=None,
                 extent=None, lattice_fn=None, lattice_kwargs=None):
@@ -372,14 +418,14 @@ def get_redundancy(target_loader, flank_loader, square_loader, layer_id='1', mod
             else:
                 mu, sigma = lattice_fn(**lattice_kwargs) 
             model.layers[layer_id].forward_layer.pool.update_rfs(mu=mu, sigma=sigma)
-        # attention
-        if extent:
-            model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
         # get mask
         if RF_mask is not None:
             mask_i = RF_mask.clone()
         else:
             mask_i = model.rf_index(target, layer_id, thr=0.1).float()
+        # attention
+        if extent:
+            model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
         # get output for each RF
         with torch.no_grad():
             # get heatmap of RFs in image space
@@ -435,7 +481,7 @@ def get_representation_map(flanker_loader, crowd_loader, layer_id='1', batch_siz
 
     return representation_maps
 
-def get_confidence_map(target_loader, crowd_loader, layer_id='1', batch_size=1, model=None,
+def get_confidence_map(target_loader, crowd_loader, layer_id='1', batch_size=1, model=None, RF_mask=None,
                        extent=None, lattice_fn=None, lattice_kwargs=None):
     """
     Gets confidence map (target channel in the output layer)
@@ -461,11 +507,14 @@ def get_confidence_map(target_loader, crowd_loader, layer_id='1', batch_size=1, 
             else:
                 mu, sigma = lattice_fn(**lattice_kwargs) 
             model.layers[layer_id].forward_layer.pool.update_rfs(mu=mu, sigma=sigma)
+        # get mask
+        if RF_mask is not None:
+            mask_i = RF_mask.clone()
+        else:
+            mask_i = model.rf_index(target, layer_id, thr=0.1).float()
         # attention
         if extent:
             model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
-        # get mask of RFs covering target
-        mask_i = model.rf_index(target, layer_id, thr=0.1).float()
         # get importnace map in target channel
         with torch.no_grad():
             crowd_output = model.rf_output(crowd, layer_id, retain_shape=True)
