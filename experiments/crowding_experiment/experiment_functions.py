@@ -79,7 +79,7 @@ def apply_attention_field(model, layer_id, mu, sigma, loc, extent, update_mu=Tru
     return model
 
 def get_accuracy(target_loader, crowd_loader, layer_id='1', batch_size=1, model=None, RF_mask=None,
-                 extent=None, lattice_fn=None, lattice_kwargs=None, update_mu=True, update_sigma=True):
+                 extent=None, lattice_fn=None, lattice_kwargs=None, update_mu=True, update_sigma=True, **kwargs):
     """
     Gets the accuracy over the whole set of stimuli by masking out non-target RFs
     """
@@ -108,6 +108,16 @@ def get_accuracy(target_loader, crowd_loader, layer_id='1', batch_size=1, model=
         # get mask
         if RF_mask is not None:
             mask_i = RF_mask.clone()
+        elif kwargs.get('mask_mu') is not None and kwargs.get('mask_sigma') is not None:
+            cortical_mu = lattice.cortical_xy(kwargs.get('mask_mu') - kwargs.get('fovea_mu'), 
+                                              kwargs.get('scale_rate'), kwargs.get('rot_angle'),
+                                              kwargs.get('beta'))
+            cortical_sigma = kwargs.get('mask_sigma')
+            cortical_RFs = lattice.cortical_xy(mu - kwargs.get('fovea_mu'),
+                                               kwargs.get('scale_rate'), kwargs.get('rot_angle'),
+                                               kwargs.get('beta'))
+            mask_i = lattice.exp_kernel_2d(cortical_mu, cortical_sigma, 
+                                           cortical_RFs.t().reshape(1,2,-1,1)).squeeze(-1)
         else:
             mask_i = model.rf_index(target, layer_id, thr=0.1).float()
         # attention
@@ -126,8 +136,63 @@ def get_accuracy(target_loader, crowd_loader, layer_id='1', batch_size=1, model=
     pct_correct = (correct / (batch_size * len(target_loader)))
     return pct_correct, acc_i
 
-def get_mse(target_loader, crowd_loader, mse_layer_id, layer_id='1', model=None, RF_mask=None, acc=None,
-            extent=None, lattice_fn=None, lattice_kwargs=None):
+def get_cosine_similarity(target_loader, flanker_loader, layer_id='1', model=None, RF_mask=None,
+                          extent=None, lattice_fn=None, lattice_kwargs=None, update_mu=True, update_sigma=True):
+    """
+    Gets the cosine similarity for (target alone signal, crowded target signal)
+    """
+    assert iter(target_loader).next()[0].shape[0] == 1, ('Batch size must be 1.')
+    # parse lattice_kwargs
+    if lattice_kwargs is not None:
+        lattice_kwargs.setdefault('rotate', 0.)
+        rotate = lattice_kwargs.pop('rotate')
+        if type(rotate) is not type(lambda : 0.):
+            rotate_fn = lambda : rotate
+        else:
+            rotate_fn = rotate
+    else:
+        rotate_fn = None
+    # init cos_i
+    cos_i = []
+    # get accuracy for each image
+    for i, ((target, labels), (flanker, _)) in enumerate(zip(target_loader, flanker_loader)):
+        # reset RFs
+        if lattice_fn is not None and lattice_kwargs is not None:
+            if rotate_fn is not None:
+                mu, sigma = lattice_fn(**lattice_kwargs, rotate=rotate_fn())
+            else:
+                mu, sigma = lattice_fn(**lattice_kwargs) 
+            model.layers[layer_id].forward_layer.pool.update_rfs(mu=mu, sigma=sigma)
+        # get mask
+        if RF_mask is not None:
+            mask_i = RF_mask.clone()
+        else:
+            mask_i = model.rf_index(target, layer_id, thr=0.1).float()
+        # attention
+        if extent:
+            model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent, update_mu, update_sigma)
+        # get target alone signal and crowded target signal
+        with torch.no_grad():
+            target_output = model.rf_output(target, layer_id, retain_shape=True)
+            crowd_output = model.rf_output(target+flanker, layer_id, retain_shape=True)
+            flanker_output = model.rf_output(flanker, layer_id, retain_shape=True)
+            # subtract flanker features from crowd
+            crowd_output = torch.sub(crowd_output, flanker_output)
+            # index based on mask_i
+            masked_target = target_output.transpose(1,2)[mask_i.bool()]
+            masked_crowd = crowd_output.transpose(1,2)[mask_i.bool()]
+            # get max across image space
+            target_alone_signal = torch.max(masked_target.flatten(-2), -1)[0]
+            target_crowd_signal = torch.max(masked_crowd.flatten(-2), -1)[0]
+            # get cosine simiarity
+            cos_i.append(functions.pairwise_cosine_similarity(target_alone_signal.flatten(),
+                                                              target_crowd_signal.flatten()).float())
+    # get avg cosine similarity
+    avg_cos = torch.mean(torch.stack(cos_i))
+    return avg_cos, cos_i
+
+def get_rf_mse(target_loader, crowd_loader, mse_layer_id, layer_id='1', model=None, RF_mask=None, acc=None,
+               extent=None, lattice_fn=None, lattice_kwargs=None):
     """
     Gets the MSE for each receptive field
     """
@@ -189,13 +254,83 @@ def get_mse(target_loader, crowd_loader, mse_layer_id, layer_id='1', model=None,
                 target_output = model.apply_layers(masked_target_output, [mse_layer_id])
             else:
                 target_output = masked_target_output
-            # remove control_output from output (to account for accidental target features from flankers)
+            # get mse between target and crowd features
             mse_output = torch.mean(torch.pow(target_output - output, 2), [1,2,3])
             RF_mse += mse_output
             cnt += 1.
     # update RF_acc as proportion correct
     RF_mse /= cnt
     return RF_mse
+
+def get_mse(target_loader, crowd_loader, mse_layer_id, layer_id='1', model=None, RF_mask=None, acc=None,
+            extent=None, lattice_fn=None, lattice_kwargs=None):
+    """
+    Gets the MSE for each receptive field
+    """
+    assert iter(target_loader).next()[0].shape[0] == 1, ('Batch size must be 1.')
+    # parse lattice_kwargs
+    if lattice_kwargs is not None:
+        lattice_kwargs.setdefault('rotate', 0.)
+        rotate = lattice_kwargs.pop('rotate')
+        if type(rotate) is not type(lambda : 0.):
+            rotate_fn = lambda : rotate
+        else:
+            rotate_fn = rotate
+    else:
+        rotate_fn = None
+    # counter
+    cnt = 0.
+    mse = 0.
+    # get SNR, accuracy for each image
+    for i, ((target, label), (crowd, _)) in enumerate(zip(target_loader, crowd_loader)):
+        # skip wrong trials
+        if acc is not None and acc[i] == 0:
+            continue
+        # reset RFs
+        if lattice_fn is not None and lattice_kwargs is not None:
+            if rotate_fn is not None:
+                mu, sigma = lattice_fn(**lattice_kwargs, rotate=rotate_fn())
+            else:
+                mu, sigma = lattice_fn(**lattice_kwargs) 
+            model.layers[layer_id].forward_layer.pool.update_rfs(mu=mu, sigma=sigma)
+        # get mask
+        if RF_mask is not None:
+            mask_i = RF_mask.clone()
+        else:
+            mask_i = model.rf_index(target, layer_id, thr=0.1).float()
+        # attention
+        if extent:
+            model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
+        # get output for each RF
+        with torch.no_grad():
+            crowd_output = model.rf_output(crowd, layer_id, retain_shape=True)
+            # mask crowd_output and pass forward to get accuracy
+            masked_output = torch.mul(crowd_output, mask_i.reshape(1, 1, -1, 1, 1))
+            # permute dimensions to (n_RF, n_ch, h, w)
+            masked_output = masked_output[0].permute(1,0,2,3)
+            # get flattened output of third layer (n_RF, n_ch, h * w)
+            if mse_layer_id != layer_id:
+                output = model.apply_layers(masked_output, [mse_layer_id])
+            else:
+                output = masked_output
+            # get target output
+            rf_target_output = model.rf_output(target, layer_id, retain_shape=True)
+            # mask crowd_output and pass forward to get accuracy
+            masked_target_output = torch.mul(rf_target_output, mask_i.reshape(1, 1, -1, 1, 1))
+            # permute dimensions to (n_RF, n_ch, h, w)
+            masked_target_output = masked_target_output[0].permute(1,0,2,3)
+            # get flattened output of third layer (n_RF, n_ch, h, w)
+            if mse_layer_id != layer_id:
+                target_output = model.apply_layers(masked_target_output, [mse_layer_id])
+            else:
+                target_output = masked_target_output
+            # get mse between target and crowd features
+            mse_output = torch.mean(torch.pow(target_output - output, 2), [1,2,3])
+            mse += torch.div(torch.sum(mse_output), torch.sum(mask_i))
+            cnt += 1.
+    # update RF_acc as proportion correct
+    mse /= cnt
+    return mse
 
 def get_rf_confidence(target_loader, flank_loader, layer_id='1', model=None, RF_mask=None, acc=None,
                       extent=None, lattice_fn=None, lattice_kwargs=None):
@@ -388,7 +523,7 @@ def get_ablated(target_loader, flank_loader, layer_id='1', model=None, RF_mask=N
     return RF_acc, correct
 
 def get_redundancy(target_loader, flank_loader, square_loader, layer_id='1', model=None, RF_mask=None, acc=None,
-                   extent=None, lattice_fn=None, lattice_kwargs=None):
+                   extent=None, lattice_fn=None, lattice_kwargs=None, update_mu=True, update_sigma=True):
     """
     Gets the average confidence-weighted overlap of receptive fields within 20x20 target region
     """
@@ -425,14 +560,14 @@ def get_redundancy(target_loader, flank_loader, square_loader, layer_id='1', mod
             mask_i = model.rf_index(target, layer_id, thr=0.1).float()
         # attention
         if extent:
-            model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
+            model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent, update_mu, update_sigma)
         # get output for each RF
         with torch.no_grad():
             # get heatmap of RFs in image space
             heatmap = model.rf_heatmap(layer_id)
             # multiply heatmap with mask and average across RFs
-            redundancy = torch.sum(torch.mul(heatmap, mask_i.reshape(-1, 1, 1)), 0)
-            redundancy = torch.div(redundancy, torch.sum(mask_i))
+            redundancy = torch.mean(heatmap, 0) #torch.sum(torch.mul(heatmap, mask_i.reshape(-1, 1, 1)), 0)
+#             redundancy = torch.div(redundancy, torch.sum(mask_i))
             # multiply with target square and sum across image space
             redundancy = torch.sum(torch.mul(redundancy, square[0,0]))
             # average based on number of pixels in square
