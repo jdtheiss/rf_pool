@@ -69,6 +69,18 @@ def multiply_gaussians(mu0, sigma0, mu1, sigma1):
     sigma = torch.matmul(sigma, w).squeeze(-1)
     return mu, sigma
 
+def cortical_dist(mu, scale_rate, beta=0.):
+    r = torch.sqrt(torch.pow(mu[:,0], 2) + torch.pow(mu[:,1], 2))
+    alpha = 1./torch.log((1. + scale_rate) / (1. - scale_rate))
+    return alpha * torch.log(r) + beta
+
+def cortical_xy(mu, scale_rate, rot_angle, beta=0.):
+    theta = torch.atan(mu[:,0]/mu[:,1])
+    r = cortical_dist(mu, scale_rate, beta=beta)
+    y = r * torch.sin((theta / rot_angle) / r)
+    x = r * torch.cos((theta / rot_angle) / r)
+    return torch.stack([y, x], -1)
+
 def exp_kernel_2d(mu, sigma, xy):
     mu = mu.reshape(mu.shape + (1,1)).float()
     sigma = sigma.unsqueeze(-1).float()
@@ -88,9 +100,6 @@ def mask_kernel_2d(mu, sigma, xy):
     kernels = exp_kernel_2d(mu, sigma, xy)
     output = torch.as_tensor(torch.ge(kernels, np.exp(-0.5)), dtype=kernels.dtype)
     return _MaskGrad.apply(kernels, output)
-    # kernels = exp_kernel_2d(mu, sigma, xy)
-    # # threshold at 1 std
-    # return torch.as_tensor(torch.ge(kernels, np.exp(-0.5)), dtype=kernels.dtype)
 
 class _MaskGrad(Function):
     @staticmethod
@@ -434,7 +443,7 @@ def init_foveated_lattice(img_shape, scale, spacing=0., std=1., n_rf=None,
     sigma = torch.mul(sigma, std)
     sigma = torch.max(sigma, 0.5 * torch.ones_like(sigma))
     # remove mu, sigma outside image frame
-    remove_idx = np.where(torch.sum(torch.lt(mu + 2 * sigma, 0.), -1))[0]
+    remove_idx = np.where(torch.sum(torch.lt(mu + 2. * sigma, 0.), -1))[0]
     mu = torch.as_tensor([m for i, m in enumerate(mu.tolist()) if i not in remove_idx])
     sigma = torch.as_tensor([s for i, s in enumerate(sigma.tolist()) if i not in remove_idx])
     return mu, sigma
