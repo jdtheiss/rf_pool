@@ -111,11 +111,11 @@ def get_accuracy(target_loader, crowd_loader, layer_id='1', batch_size=1, model=
         elif kwargs.get('mask_mu') is not None and kwargs.get('mask_sigma') is not None:
             cortical_mu = lattice.cortical_xy(kwargs.get('mask_mu') - kwargs.get('fovea_mu'), 
                                               kwargs.get('scale_rate'), kwargs.get('rot_angle'),
-                                              kwargs.get('beta'))
+                                              kwargs.get('beta'), kwargs.get('ref_axis'))
             cortical_sigma = kwargs.get('mask_sigma')
             cortical_RFs = lattice.cortical_xy(mu - kwargs.get('fovea_mu'),
                                                kwargs.get('scale_rate'), kwargs.get('rot_angle'),
-                                               kwargs.get('beta'))
+                                               kwargs.get('beta'), kwargs.get('ref_axis'))
             mask_i = lattice.exp_kernel_2d(cortical_mu, cortical_sigma, 
                                            cortical_RFs.t().reshape(1,2,-1,1)).squeeze(-1)
         else:
