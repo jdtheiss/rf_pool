@@ -74,8 +74,8 @@ def cortical_dist(mu, scale_rate, beta=0.):
     alpha = 1./torch.log((1. + scale_rate) / (1. - scale_rate))
     return alpha * torch.log(r) + beta
 
-def cortical_xy(mu, scale_rate, rot_angle, beta=0.):
-    theta = torch.atan(mu[:,0]/mu[:,1])
+def cortical_xy(mu, scale_rate, rot_angle, beta=0., ref_axis=0.):
+    theta = torch.atan2(mu[:,0], mu[:,1]) - ref_axis
     r = cortical_dist(mu, scale_rate, beta=beta)
     y = r * torch.sin((theta / rot_angle) / r)
     x = r * torch.cos((theta / rot_angle) / r)
