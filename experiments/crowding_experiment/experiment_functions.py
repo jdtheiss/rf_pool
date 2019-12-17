@@ -26,6 +26,8 @@ def get_crowd_params(crowd_type, ref_axis=0.):
         n_flankers = 1
     elif crowd_type == 'cross':
         n_flankers = 4
+    elif crowd_type == 'none':
+        n_flankers = 0
     else:
         n_flankers = 2
     
@@ -566,8 +568,8 @@ def get_redundancy(target_loader, flank_loader, square_loader, layer_id='1', mod
             # get heatmap of RFs in image space
             heatmap = model.rf_heatmap(layer_id)
             # multiply heatmap with mask and average across RFs
-            redundancy = torch.mean(heatmap, 0) #torch.sum(torch.mul(heatmap, mask_i.reshape(-1, 1, 1)), 0)
-#             redundancy = torch.div(redundancy, torch.sum(mask_i))
+            redundancy = torch.sum(torch.mul(heatmap, mask_i.reshape(-1, 1, 1)), 0)
+            redundancy = torch.div(redundancy, torch.sum(mask_i))
             # multiply with target square and sum across image space
             redundancy = torch.sum(torch.mul(redundancy, square[0,0]))
             # average based on number of pixels in square
