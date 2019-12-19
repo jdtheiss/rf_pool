@@ -540,9 +540,8 @@ def get_redundancy(target_loader, flank_loader, square_loader, layer_id='1', mod
             rotate_fn = rotate
     else:
         rotate_fn = None
-    # init RF redundancy and counter
-    RF_red = 0.
-    cnt = 0.
+    # init RF redundancy
+    RF_red = []
     # get SNR, accuracy for each image
     for i, ((target, label), (flank, _), (square, _)) in enumerate(zip(target_loader, flank_loader, square_loader)):
         # skip wrong trials
@@ -573,11 +572,9 @@ def get_redundancy(target_loader, flank_loader, square_loader, layer_id='1', mod
             # multiply with target square and sum across image space
             redundancy = torch.sum(torch.mul(redundancy, square[0,0]))
             # average based on number of pixels in square
-            RF_red += torch.div(redundancy, torch.sum(square)).item()
-            cnt += 1.
+            RF_red.append(torch.div(redundancy, torch.sum(square)).item())
     # average RF_red across trials
-    RF_red = torch.div(RF_red, cnt).item()
-    return RF_red
+    return torch.mean(torch.tensor(RF_red)), RF_red
 
 def get_representation_map(flanker_loader, crowd_loader, layer_id='1', batch_size=1, model=None,
                            extent=None, lattice_fn=None, lattice_kwargs=None):
