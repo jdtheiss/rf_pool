@@ -583,13 +583,15 @@ class Model(nn.Module):
         return self.layers[layer_id].apply_modules(layer_input, 'forward_layer',
                                                    output_module='pool', **kwargs)
 
-    def rf_index(self, input, layer_id, thr=0.):
+    def rf_index(self, input, layer_id):
         pool_output = self.rf_output(input, layer_id, retain_shape=True)
-        # sum across channels
-        rf_outputs = torch.sum(pool_output, 1)
-        # find rf_outputs with var > thr
-        rf_var = torch.var(rf_outputs.flatten(-2), -1)
-        return torch.gt(rf_var, thr)
+        # get none_output
+        none_output = self.rf_output(torch.zeros_like(input), layer_id,
+                                     retain_shape=True)
+        # find nonzero features
+        rf_outputs = torch.gt(pool_output, none_output).float()
+        # sum across image space, max across channels
+        return torch.max(torch.sum(rf_outputs, [-2,-1]), 1)[0]
 
     def rf_heatmap(self, layer_id):
         rf_layer = self.layers[layer_id].forward_layer.pool
