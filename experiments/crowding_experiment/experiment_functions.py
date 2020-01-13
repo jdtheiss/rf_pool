@@ -121,7 +121,7 @@ def get_accuracy(target_loader, crowd_loader, layer_id='1', batch_size=1, model=
             mask_i = lattice.exp_kernel_2d(cortical_mu, cortical_sigma, 
                                            cortical_RFs.t().reshape(1,2,-1,1)).squeeze(-1)
         else:
-            mask_i = model.rf_index(target, layer_id, thr=0.1).float()
+            mask_i = model.rf_index(target, layer_id).float()
         # attention
         if extent:
             model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent, update_mu, update_sigma)
@@ -169,7 +169,7 @@ def get_cosine_similarity(target_loader, flanker_loader, layer_id='1', model=Non
         if RF_mask is not None:
             mask_i = RF_mask.clone()
         else:
-            mask_i = model.rf_index(target, layer_id, thr=0.1).float()
+            mask_i = model.rf_index(target, layer_id).float()
         # attention
         if extent:
             model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent, update_mu, update_sigma)
@@ -192,6 +192,58 @@ def get_cosine_similarity(target_loader, flanker_loader, layer_id='1', model=Non
     # get avg cosine similarity
     avg_cos = torch.mean(torch.stack(cos_i))
     return avg_cos, cos_i
+
+def get_feat_redundancy(target_loader, flanker_loader, layer_id='1', model=None, RF_mask=None,
+                        extent=None, lattice_fn=None, lattice_kwargs=None, update_mu=True, update_sigma=True):
+    """
+    Gets the feature redundancy for target alone
+    """
+    assert iter(target_loader).next()[0].shape[0] == 1, ('Batch size must be 1.')
+    # parse lattice_kwargs
+    if lattice_kwargs is not None:
+        lattice_kwargs.setdefault('rotate', 0.)
+        rotate = lattice_kwargs.pop('rotate')
+        if type(rotate) is not type(lambda : 0.):
+            rotate_fn = lambda : rotate
+        else:
+            rotate_fn = rotate
+    else:
+        rotate_fn = None
+    # init red_i
+    red_i = []
+    # get accuracy for each image
+    for i, ((target, labels), (flanker, _)) in enumerate(zip(target_loader, flanker_loader)):
+        # reset RFs
+        if lattice_fn is not None and lattice_kwargs is not None:
+            if rotate_fn is not None:
+                mu, sigma = lattice_fn(**lattice_kwargs, rotate=rotate_fn())
+            else:
+                mu, sigma = lattice_fn(**lattice_kwargs) 
+            model.layers[layer_id].forward_layer.pool.update_rfs(mu=mu, sigma=sigma)
+        # get mask
+        if RF_mask is not None:
+            mask_i = RF_mask.clone()
+        else:
+            mask_i = model.rf_index(target, layer_id).float()
+        # attention
+        if extent:
+            model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent, update_mu, update_sigma)
+        # get target alone signal and crowded target signal
+        with torch.no_grad():
+            # get max across image space of RF pool layer
+            crowd_output = torch.max(model.rf_output(target+flanker, layer_id, retain_shape=True).flatten(-2), -1)[0]
+            flanker_output = torch.max(model.rf_output(flanker, layer_id, retain_shape=True).flatten(-2), -1)[0]
+            target_output = torch.sub(crowd_output, flanker_output)
+            # get none_output
+            none_output = torch.max(model.rf_output(torch.zeros_like(target), layer_id, retain_shape=True).flatten(-2), -1)[0]
+            # get number of rfs per feature
+            n_rf_feat = torch.sum(torch.mul(torch.gt(target_output, none_output).float(), mask_i), -1)
+            n_feat = torch.gt(n_rf_feat, 0.).float()
+            # binarize and get number RFs per non-zero feature
+            red_i.append(torch.div(torch.sum(n_rf_feat), torch.sum(n_feat)))
+    # get avg cosine similarity
+    avg_red = torch.mean(torch.stack(red_i))
+    return avg_red, red_i
 
 def get_rf_mse(target_loader, crowd_loader, mse_layer_id, layer_id='1', model=None, RF_mask=None, acc=None,
                extent=None, lattice_fn=None, lattice_kwargs=None):
@@ -229,7 +281,7 @@ def get_rf_mse(target_loader, crowd_loader, mse_layer_id, layer_id='1', model=No
         if RF_mask is not None:
             mask_i = RF_mask.clone()
         else:
-            mask_i = model.rf_index(target, layer_id, thr=0.1).float()
+            mask_i = model.rf_index(target, layer_id).float()
         # attention
         if extent:
             model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
@@ -299,7 +351,7 @@ def get_mse(target_loader, crowd_loader, mse_layer_id, layer_id='1', model=None,
         if RF_mask is not None:
             mask_i = RF_mask.clone()
         else:
-            mask_i = model.rf_index(target, layer_id, thr=0.1).float()
+            mask_i = model.rf_index(target, layer_id).float()
         # attention
         if extent:
             model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
@@ -370,7 +422,7 @@ def get_rf_confidence(target_loader, flank_loader, layer_id='1', model=None, RF_
         if RF_mask is not None:
             mask_i = RF_mask.clone()
         else:
-            mask_i = model.rf_index(target, layer_id, thr=0.1).float()
+            mask_i = model.rf_index(target, layer_id).float()
         # attention
         if extent:
             model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
@@ -435,7 +487,7 @@ def get_confidence(target_loader, crowd_loader, layer_id='1', batch_size=1, mode
         if RF_mask is not None:
             mask_i = RF_mask.clone()
         else:
-            mask_i = model.rf_index(target, layer_id, thr=0.1).float()
+            mask_i = model.rf_index(target, layer_id).float()
         # attention
         if extent:
             model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
@@ -485,7 +537,7 @@ def get_ablated(target_loader, flank_loader, layer_id='1', model=None, RF_mask=N
         if RF_mask is not None:
             mask_i = RF_mask.clone()
         else:
-            mask_i = model.rf_index(target, layer_id, thr=0.1).float()
+            mask_i = model.rf_index(target, layer_id).float()
         # attention
         if extent:
             model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
@@ -558,7 +610,7 @@ def get_redundancy(target_loader, flank_loader, square_loader, layer_id='1', mod
         if RF_mask is not None:
             mask_i = RF_mask.clone()
         else:
-            mask_i = model.rf_index(target, layer_id, thr=0.1).float()
+            mask_i = model.rf_index(target, layer_id).float()
         # attention
         if extent:
             model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent, update_mu, update_sigma)
@@ -645,7 +697,7 @@ def get_confidence_map(target_loader, crowd_loader, layer_id='1', batch_size=1, 
         if RF_mask is not None:
             mask_i = RF_mask.clone()
         else:
-            mask_i = model.rf_index(target, layer_id, thr=0.1).float()
+            mask_i = model.rf_index(target, layer_id).float()
         # attention
         if extent:
             model = apply_attention_field(model, layer_id, mu, sigma, [26,26], extent)
