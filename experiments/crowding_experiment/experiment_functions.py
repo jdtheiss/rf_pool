@@ -233,14 +233,12 @@ def get_feat_redundancy(target_loader, flanker_loader, layer_id='1', model=None,
             # get max across image space of RF pool layer
             crowd_output = torch.max(model.rf_output(target+flanker, layer_id, retain_shape=True).flatten(-2), -1)[0]
             flanker_output = torch.max(model.rf_output(flanker, layer_id, retain_shape=True).flatten(-2), -1)[0]
-            target_output = torch.sub(crowd_output, flanker_output)
-            # get none_output
-            none_output = torch.max(model.rf_output(torch.zeros_like(target), layer_id, retain_shape=True).flatten(-2), -1)[0]
+            target_output = torch.gt(crowd_output, flanker_output).float()
             # get number of rfs per feature
-            n_rf_feat = torch.sum(torch.mul(torch.gt(target_output, none_output).float(), mask_i), -1)
-            n_feat = torch.gt(n_rf_feat, 0.).float()
+            n_rf_feat = torch.sum(torch.mul(target_output, mask_i), -1)
+            n_feat = torch.sum(torch.gt(n_rf_feat, 0.).float())
             # binarize and get number RFs per non-zero feature
-            red_i.append(torch.div(torch.sum(n_rf_feat), torch.sum(n_feat)))
+            red_i.append(torch.div(torch.sum(n_rf_feat), n_feat))
     # get avg cosine similarity
     avg_red = torch.mean(torch.stack(red_i))
     return avg_red, red_i
