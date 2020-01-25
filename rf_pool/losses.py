@@ -32,11 +32,11 @@ class MultiLoss(Loss):
             loss = loss + torch.mul(loss_fn(*args_i), weight)
         return loss
 
-class VarLoss(Loss):
+class ArgLoss(Loss):
     """
     """
     def __init__(self, loss_fn, input, target):
-        super(VarLoss, self).__init__()
+        super(ArgLoss, self).__init__()
         self.loss_fn = loss_fn
         self.input = input
         self.target = target
@@ -55,6 +55,83 @@ class KwargsLoss(Loss):
 
     def forward(self, *args):
         return self.loss_fn(*args[:self.n_args], **self.kwargs)
+
+class VarKernelLoss(Loss):
+    """
+    """
+    def __init__(self, kernel_size=2, stride=1, **kwargs):
+        super(VarKernelLoss, self).__init__()
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.kwargs = kwargs
+        self.loss_fn = self.var_kernel_loss
+
+    def var_kernel_loss(self, x):
+        m = torch.nn.functional.avg_pool2d(x, self.kernel_size,
+                                           stride=self.stride,
+                                           **self.kwargs)
+        m = torch.nn.functional.interpolate(m, size=x.shape[-2:])
+        d = torch.sub(x, m)
+        return torch.nn.functional.lp_pool2d(d, 2, self.kernel_size,
+                                             stride=self.stride,
+                                             **self.kwargs).mean()
+
+    def forward(self, *args):
+        return self.loss_fn(*args)
+
+class FeatureLoss(Loss):
+    """
+    """
+    def __init__(self, model, layer_id, feature_indices, loss_fn, cost=1.,
+                 parameters=None, input_target=None, target=None, **kwargs):
+        super(FeatureLoss, self).__init__()
+        self.model = model
+        self.layer_id = layer_id
+        self.feature_indices = feature_indices
+        self.loss_fn = loss_fn
+        self.cost = cost
+        self.parameters = parameters
+        self.input_target = input_target
+        self.target = target
+        self.kwargs = kwargs
+        if self.input_target is not None:
+            self.input_target = self.get_features(self.input_target)
+
+    def get_features(self, input):
+        # turn on parameters
+        if self.parameters:
+            on_parameters = self.model.get_trainable_params()
+            self.model.set_requires_grad(pattern='', requires_grad=False)
+            self.model.set_requires_grad(self.parameters, requires_grad=True)
+        # get features for layer_id
+        layer_ids = self.model.get_layer_ids(self.layer_id)
+        output = self.model.apply_layers(input, layer_ids,
+                                         **self.kwargs)
+        # sum across image space
+        output = torch.mean(output, [-2,-1])
+        # turn off parameters
+        if self.parameters:
+            self.model.set_requires_grad(self.parameters, requires_grad=False)
+            self.model.set_requires_grad(on_parameters, requires_grad=True)
+        return output
+
+    def forward(self, *args):
+        if self.target is None and self.input_target is None:
+            feat = self.get_features(*args)
+        else:
+            feat = self.get_features(args[0])
+        loss = torch.zeros(1, requires_grad=True)
+        for i, feat_i in enumerate(feat.t()):
+            if i not in self.feature_indices:
+                continue
+            if self.input_target is not None:
+                loss_i = self.loss_fn(feat_i, self.input_target)
+            elif self.target is not None:
+                loss_i = self.loss_fn(feat_i, self.target)
+            else:
+                loss_i = self.loss_fn(*feat_i)
+            loss = loss + loss_i * self.cost
+        return loss
 
 class LayerLoss(Loss):
     """
