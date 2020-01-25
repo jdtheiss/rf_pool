@@ -91,7 +91,7 @@ class Model(nn.Module):
             # set to output
             if layer_id in output_layer:
                 output.append(output_i)
-            else:
+            elif layer_id == layer_ids[-1]:
                 output = output_i
         return output
 
