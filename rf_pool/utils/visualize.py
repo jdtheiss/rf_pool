@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from . import functions
+from .. import losses
 
 def plot_with_kwargs(fn, args, fn_prefix=None, **kwargs):
     # .Collection kwargs
@@ -122,6 +123,34 @@ def show_images(*args, img_shape=None, figsize=(5, 5), **kwargs):
             cnt += 1
     plt.show()
     return fig
+
+def visualize_features(model, layer_id, feature_indices, lr=0.05, iter=1000,
+                       optim_fn=torch.optim.Adam, optim_kwargs={},
+                       add_loss=[losses.VarKernelLoss()], loss_weights=[1.],
+                       seed=None, img_shape=None, **kwargs):
+    # create seed
+    if img_shape is None:
+        img_shape = [s * 2 for s in model.rf_to_image_space(layer_id, 1) * 2]
+    if seed is None:
+        seed = torch.rand(1, 1, *img_shape, requires_grad=True)
+    # set feature loss
+    if type(feature_indices) is not list:
+        feature_indices = [feature_indices]
+    feat_loss = losses.FeatureLoss(model, layer_id, feature_indices,
+                                   lambda x: -x, output_module='hidden')
+    # set additional losses
+    if type(add_loss) is not list:
+        add_loss = [add_loss]
+    if type(loss_weights) is not list:
+        loss_weights = [loss_weights]
+    # set combined loss_fn
+    loss_fn = losses.MultiLoss([feat_loss] + add_loss, [1.] + loss_weights)
+    # set optimizer
+    optim = optim_fn([seed], lr=lr, **optim_kwargs)
+    # optimize texture
+    model.optimize_texture(iter, [], seed, loss_fn, optim, show_images=[seed],
+                           **kwargs);
+    return seed
 
 def show_confusion_matrix(data, labels, cmap=plt.cm.afmhot):
     """
