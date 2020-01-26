@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -56,17 +57,40 @@ class KwargsLoss(Loss):
     def forward(self, *args):
         return self.loss_fn(*args[:self.n_args], **self.kwargs)
 
-class VarKernelLoss(Loss):
+class KernelLoss(Loss):
+    """
+    """
+    def __init__(self, weight, **kwargs):
+        super(KernelLoss, self).__init__()
+        self.weight = weight
+        self.kwargs = kwargs
+
+    def forward(self, *args):
+        return torch.abs(torch.conv2d(args[0], self.weight, **self.kwargs)).mean()
+
+class SpatialFreqLoss(KernelLoss):
+    """
+    """
+    def __init__(self, sigma, wavelength, filter_shape,
+                 theta=np.linspace(0., 135., 4), gamma=0.3, psi=0., **kwargs):
+        # get gabors
+        list_args = functions.parse_list_args(len(theta), theta, gamma, psi)[0]
+        gabors = [functions.gabor_filter(t, sigma, wavelength, filter_shape, g, p)
+                  for (t, g, p) in list_args]
+        weight = torch.stack(gabors).unsqueeze(1)
+        super(SpatialFreqLoss, self).__init__(weight, **kwargs)
+
+class KernelVarLoss(Loss):
     """
     """
     def __init__(self, kernel_size=2, stride=1, **kwargs):
-        super(VarKernelLoss, self).__init__()
+        super(KernelVarLoss, self).__init__()
         self.kernel_size = kernel_size
         self.stride = stride
         self.kwargs = kwargs
-        self.loss_fn = self.var_kernel_loss
+        self.loss_fn = self.kernel_var_loss
 
-    def var_kernel_loss(self, x):
+    def kernel_var_loss(self, x):
         m = torch.nn.functional.avg_pool2d(x, self.kernel_size,
                                            stride=self.stride,
                                            **self.kwargs)

@@ -28,7 +28,7 @@ def parse_list_args(n_iter, *args, **kwargs):
                 list_kwargs[-1].update({k: v})
     return list_args, list_kwargs
 
-def gabor_filter(theta, sigma, wavelength, filter_shape, gamma=0.3):
+def gabor_filter(theta, sigma, wavelength, filter_shape, gamma=0.3, psi=0.):
     """
     Create gabor filter
 
@@ -44,6 +44,8 @@ def gabor_filter(theta, sigma, wavelength, filter_shape, gamma=0.3):
         image shape of filter
     gamma : float
         aspect ratio [default: 0.3]
+    psi : float
+        offset [default: 0.]
 
     Returns
     -------
@@ -70,8 +72,8 @@ def gabor_filter(theta, sigma, wavelength, filter_shape, gamma=0.3):
     x_0 = x * torch.cos(theta) + y * torch.sin(theta)
     y_0 = -x * torch.sin(theta) + y * torch.cos(theta)
     # create weight for filter
-    weight = torch.mul(torch.exp(-(x_0**2 + gamma**2 * y**2)/(2. * sigma**2)),
-                       torch.cos((2. * np.pi / wavelength) * x_0))
+    weight = torch.mul(torch.exp(-(x_0**2 + gamma**2 * y_0**2)/(2. * sigma**2)),
+                       torch.cos(2. * np.pi * x_0 / wavelength + psi))
     return weight
 
 
