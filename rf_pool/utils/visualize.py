@@ -143,6 +143,7 @@ def visualize_features(model, layer_id, feature_indices, lr=0.05, iter=1000,
         add_loss = [add_loss]
     if type(loss_weights) is not list:
         loss_weights = [loss_weights]
+    assert len(add_loss) == len(loss_weights)
     # set combined loss_fn
     loss_fn = losses.MultiLoss([feat_loss] + add_loss, [1.] + loss_weights)
     # set optimizer
