@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 from . import losses, ops
-from .modules import RBM
+from .modules import Module, FeedForward, RBM
 from .utils import functions, visualize
 
 class Model(nn.Module):
@@ -25,10 +25,13 @@ class Model(nn.Module):
     layers : torch.nn.ModuleDict
         layers containing computations to be performed
     """
-    def __init__(self):
+    def __init__(self, model=None):
         super(Model, self).__init__()
         self.data_shape = None
         self.layers = nn.ModuleDict({})
+        # import model if given
+        if model is not None:
+            self.load_architecture(model)
 
     def n_layers(self):
         return len(self.layers)
@@ -173,6 +176,27 @@ class Model(nn.Module):
         extras.update({'model_weights': self.download_weights()})
         with open(filename, 'wb') as f:
             pickle.dump(extras, f)
+
+    def load_architecture(self, model, pattern='^.+$'):
+        # function to get typename
+        get_typename = lambda v: torch.typename(v).split('.')[-1].lower()
+        # for each child, append to layers
+        for layer_id, layer in model.named_children():
+            layer_id = re.findall(pattern, layer_id)
+            if len(layer_id) == 0:
+                continue
+            # get alphanumeric layer_id, and typename
+            layer_id = re.sub('[^a-zA-Z0-9_]*', '', layer_id[0])
+            if len(layer_id) == 0:
+                continue
+            # append to layers if is Module
+            if isinstance(layer, Module):
+                self.append(layer_id, layer)
+            else: # get inputs for FeedForward
+                inputs = dict([('%s%s' % (get_typename(v), k), v)
+                               for k, v in layer.named_modules()
+                               if type(v) is not torch.nn.Sequential])
+                self.append(layer_id, FeedForward(**inputs))
 
     def load_model(self, filename, param_dict={}):
         extras = pickle.load(open(filename, 'rb'))
@@ -353,7 +377,7 @@ class Model(nn.Module):
                     layer_input = inputs[0]
                     optimizer.zero_grad()
                     # get loss
-                    if torch.typename(loss_fn).find('losses') > -1:
+                    if isinstance(loss_fn, losses.Loss):
                         loss = loss_fn(*data)
                     else: # get outputs then loss
                         output = self.forward(layer_input)
@@ -415,22 +439,19 @@ class Model(nn.Module):
         # turn off model gradients
         on_parameters = self.get_trainable_params()
         self.set_requires_grad(pattern='', requires_grad=False)
-        # transform input
-        loss_input = input
-        if transform:
-            if type(input) is list:
-                loss_input = [transform(input_i.squeeze(1)).reshape(seed.shape)
-                              for input_i in input]
-            else:
-                loss_input = transform(input.squeeze(1)).reshape(seed.shape)
-        # set loss_fn to LayerLoss if not
-        if torch.typename(loss_fn).find('losses') == -1:
-            loss_fn = losses.LayerLoss(self, loss_fn, target=loss_input, **kwargs)
-            loss_input = [] # set to empty since target set in loss_fn
+        if type(input) is not list:
+            input = [input]
         # optimize texture
         loss_history = []
         running_loss = 0.
         for i in range(n_steps):
+            # apply transformation to seed, input
+            if transform:
+                seed.data = transform(seed)
+                loss_input = [transform(input_n) for input_n in input]
+            else:
+                loss_input = input
+            # zero gradients
             optimizer.zero_grad()
             # get loss
             if len(loss_input) > 0:
@@ -453,8 +474,7 @@ class Model(nn.Module):
                 plt.show()
                 running_loss = 0.
                 # monitor texture
-                if show_images:
-                    visualize.show_images(*show_images, **kwargs)
+                visualize.show_images(seed, *show_images, **kwargs)
                 functions.kwarg_fn([IPython.display, self, visualize], None,
                                    **kwargs)
         # turn on model gradients
@@ -643,8 +663,8 @@ class FeedForwardNetwork(Model):
     """
     #TODO:WRITEME
     """
-    def __init__(self):
-        super(FeedForwardNetwork, self).__init__()
+    def __init__(self, model=None):
+        super(FeedForwardNetwork, self).__init__(model)
 
 class DeepBeliefNetwork(Model):
     """
@@ -666,8 +686,8 @@ class DeepBeliefNetwork(Model):
     ----------
     #TODO:WRITEME
     """
-    def __init__(self):
-        super(DeepBeliefNetwork, self).__init__()
+    def __init__(self, model=None):
+        super(DeepBeliefNetwork, self).__init__(model)
 
     def posterior(self, layer_id, input, top_down_input=None, k=1):
         # get layer_ids
@@ -715,8 +735,8 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
     ----------
     #TODO:WRITEME
     """
-    def __init__(self):
-        super(DeepBoltzmannMachine, self).__init__()
+    def __init__(self, model=None):
+        super(DeepBoltzmannMachine, self).__init__(model)
 
     def train_layer(self, layer_id, n_epochs, trainloader, optimizer, k=1,
                     monitor=100, **kwargs):
