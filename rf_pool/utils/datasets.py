@@ -145,13 +145,14 @@ class Dataset(torch.utils.data.Dataset):
         return torch.utils.data.dataloader.default_collate(batch)
 
     def __getitem__(self, index):
-        if (type(self.data) is dict or type(self.data) is OrderedDict) \
-           and type(index) is int:
+        if isinstance(self.data, (dict, OrderedDict)) and type(index) is int:
             img = list(self.data.values())[index]
         else:
             img = self.data[index]
-        if (type(self.labels) is dict or type(self.labels) is OrderedDict) \
-           and type(index) is int:
+        if isinstance(self.labels, (dict, OrderedDict)) \
+           and self.labels.get(img) is not None:
+            label = self.labels.get(img)
+        elif isinstance(self.labels, (dict, OrderedDict)) and type(index) is int:
             label = list(self.labels.values())[index]
         elif self.labels is not None:
             label = self.labels[index]
