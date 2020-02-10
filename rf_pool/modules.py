@@ -79,6 +79,10 @@ class Module(nn.Module):
             if transpose:
                 key = key + '_transpose'
                 value = self.transposed_fn(value)
+            # add reshape op if linear
+            if self.input_shape is None and isinstance(value, torch.nn.Linear):
+                reshape_op = ops.Op(lambda x: x.flatten(1))
+                layer.add_module('reshape_%s' % key, reshape_op)
             if value is not None:
                 layer.add_module(key, value)
         # set layer
