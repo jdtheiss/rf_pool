@@ -69,6 +69,7 @@ class Model(nn.Module):
 
     def apply_layers(self, input, layer_ids=[], output_layer=None, forward=True,
                      **kwargs):
+        # init output, get layers
         output = []
         if len(layer_ids) == 0 and output_layer is not None:
             if type(output_layer) is not list:
@@ -82,11 +83,16 @@ class Model(nn.Module):
             layer_name = 'forward_layer'
         else:
             layer_name = 'reconstruct_layer'
+        # parse kwargs
+        if len(output_layer) > 0:
+            kwargs = functions.parse_list_args(len(output_layer), **kwargs)[1]
+        else:
+            kwargs = functions.parse_list_args(len(layer_ids), **kwargs)[1]
         # apply each layer
-        for layer_id, layer in zip(layer_ids, layers):
+        for i, (layer_id, layer) in enumerate(zip(layer_ids, layers)):
             # apply modules
-            if kwargs:
-                output_i = layer.apply_modules(input, layer_name, **kwargs)
+            if i < len(kwargs):
+                output_i = layer.apply_modules(input, layer_name, **kwargs[i])
                 input = layer.apply_modules(input, layer_name)
             else:
                 output_i = layer.apply_modules(input, layer_name)
