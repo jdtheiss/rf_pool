@@ -10,6 +10,25 @@ class Loss(nn.Module):
     def __init__(self):
         super(Loss, self).__init__()
 
+    def L2(self, x):
+        return torch.sqrt(torch.sum(torch.pow(x, 2)))
+
+    def set_params(self, on_parameters=None, set='on'):
+        if self.parameters is None:
+            return None
+        assert set in ['on','off']
+        # set requires grad True for self.parameters
+        if set == 'on':
+            on_parameters = self.model.get_trainable_params()
+            self.model.set_requires_grad(pattern='', requires_grad=False)
+            self.model.set_requires_grad(self.parameters, requires_grad=True)
+            return on_parameters
+        # set requires_grad True for on_parameters
+        elif set == 'off':
+            self.model.set_requires_grad(self.parameters, requires_grad=False)
+            self.model.set_requires_grad(on_parameters, requires_grad=True)
+        return None
+
 class MultiLoss(Loss):
     """
     """
@@ -36,14 +55,17 @@ class MultiLoss(Loss):
 class ArgLoss(Loss):
     """
     """
-    def __init__(self, loss_fn, input, target):
+    def __init__(self, loss_fn, input=None, target=None):
         super(ArgLoss, self).__init__()
         self.loss_fn = loss_fn
         self.input = input
         self.target = target
 
     def forward(self, *args):
-        return self.loss_fn(self.input, self.target)
+        args *= 2
+        inputs = [a if v is None else v
+                  for a, v in zip(args[:2], [self.input,self.target])]
+        return self.loss_fn(*inputs)
 
 class KwargsLoss(Loss):
     """
@@ -60,35 +82,53 @@ class KwargsLoss(Loss):
 class KernelLoss(Loss):
     """
     """
-    def __init__(self, weight, **kwargs):
+    def __init__(self, weight, reduce='mean', **kwargs):
         super(KernelLoss, self).__init__()
         self.weight = weight
         self.kwargs = kwargs
+        if reduce is None:
+            self.reduce_fn = lambda x: x
+        elif hasattr(self, reduce):
+            self.reduce_fn = getattr(self, reduce)
+        elif hasattr(torch, reduce):
+            self.reduce_fn = getattr(torch, reduce)
+        else:
+            raise Exception('Unknown reduce type')
 
     def forward(self, *args):
-        return torch.abs(torch.conv2d(args[0], self.weight, **self.kwargs)).mean()
+        output = torch.conv2d(args[0], self.weight, **self.kwargs)
+        return self.reduce_fn(output)
 
 class SpatialFreqLoss(KernelLoss):
     """
     """
-    def __init__(self, sigma, wavelength, filter_shape,
-                 theta=np.linspace(0., 135., 4), gamma=0.3, psi=0., **kwargs):
+    def __init__(self, n_gabors, theta, sigma, wavelength, filter_shape,
+                 gamma=0.3, psi=0., reduce='mean', **kwargs):
         # get gabors
-        list_args = functions.parse_list_args(len(theta), theta, gamma, psi)[0]
-        gabors = [functions.gabor_filter(t, sigma, wavelength, filter_shape, g, p)
-                  for (t, g, p) in list_args]
+        list_args = functions.parse_list_args(n_gabors, theta, sigma, wavelength,
+                                              filter_shape, gamma, psi)[0]
+        gabors = [functions.gabor_filter(t, s, w, f_s, g, p)
+                  for (t, s, w, f_s, g, p) in list_args]
         weight = torch.stack(gabors).unsqueeze(1)
-        super(SpatialFreqLoss, self).__init__(weight, **kwargs)
+        super(SpatialFreqLoss, self).__init__(weight, reduce, **kwargs)
 
 class KernelVarLoss(Loss):
     """
     """
-    def __init__(self, kernel_size=2, stride=1, **kwargs):
+    def __init__(self, kernel_size=2, stride=1, reduce='mean', **kwargs):
         super(KernelVarLoss, self).__init__()
         self.kernel_size = kernel_size
         self.stride = stride
         self.kwargs = kwargs
         self.loss_fn = self.kernel_var_loss
+        if reduce is None:
+            self.reduce_fn = lambda x: x
+        elif hasattr(self, reduce):
+            self.reduce_fn = getattr(self, reduce)
+        elif hasattr(torch, reduce):
+            self.reduce_fn = getattr(torch, reduce)
+        else:
+            raise Exception('Unknown reduce type')
 
     def kernel_var_loss(self, x):
         m = torch.nn.functional.avg_pool2d(x, self.kernel_size,
@@ -96,9 +136,10 @@ class KernelVarLoss(Loss):
                                            **self.kwargs)
         m = torch.nn.functional.interpolate(m, size=x.shape[-2:])
         d = torch.sub(x, m)
-        return torch.nn.functional.lp_pool2d(d, 2, self.kernel_size,
-                                             stride=self.stride,
-                                             **self.kwargs).mean()
+        output = torch.nn.functional.lp_pool2d(d, 2, self.kernel_size,
+                                               stride=self.stride,
+                                               **self.kwargs)
+        return self.reduce_fn(output)
 
     def forward(self, *args):
         return self.loss_fn(*args)
@@ -123,20 +164,15 @@ class FeatureLoss(Loss):
 
     def get_features(self, input):
         # turn on parameters
-        if self.parameters:
-            on_parameters = self.model.get_trainable_params()
-            self.model.set_requires_grad(pattern='', requires_grad=False)
-            self.model.set_requires_grad(self.parameters, requires_grad=True)
+        on_parameters = self.set_params(set='on')
         # get features for layer_id
         layer_ids = self.model.get_layer_ids(self.layer_id)
         output = self.model.apply_layers(input, layer_ids,
                                          **self.kwargs)
-        # sum across image space
+        # mean across image space
         output = torch.mean(output, [-2,-1])
         # turn off parameters
-        if self.parameters:
-            self.model.set_requires_grad(self.parameters, requires_grad=False)
-            self.model.set_requires_grad(on_parameters, requires_grad=True)
+        self.set_params(on_parameters, set='off')
         return output
 
     def forward(self, *args):
@@ -153,21 +189,19 @@ class FeatureLoss(Loss):
             elif self.target is not None:
                 loss_i = self.loss_fn(feat_i, self.target)
             else:
-                loss_i = self.loss_fn(*feat_i)
+                loss_i = self.loss_fn(feat_i)
             loss = loss + loss_i * self.cost
         return loss
 
 class LayerLoss(Loss):
     """
     """
-    def __init__(self, model, layer_ids, loss_fn, module_name=None, cost=1.,
+    def __init__(self, model, layer_ids, loss_fn, cost=1.,
                  parameters=None, input_target=None, target=None, **kwargs):
         super(LayerLoss, self).__init__()
         self.model = model
         self.layer_ids = layer_ids
         self.loss_fn = loss_fn
-        self.module_name = functions.parse_list_args(len(layer_ids), module_name)[0]
-        self.module_name = [m[0] for m in self.module_name]
         self.cost = functions.parse_list_args(len(layer_ids), cost)[0]
         self.cost = [c[0] for c in self.cost]
         self.parameters = parameters
@@ -181,10 +215,7 @@ class LayerLoss(Loss):
     def get_features(self, *args):
         args = list(args)
         # turn on parameters
-        if self.parameters:
-            on_parameters = self.model.get_trainable_params()
-            self.model.set_requires_grad(pattern='', requires_grad=False)
-            self.model.set_requires_grad(self.parameters, requires_grad=True)
+        on_parameters = self.set_params(set='on')
         # get features
         feat = []
         i = 0
@@ -193,31 +224,32 @@ class LayerLoss(Loss):
                 feat.append([])
                 for arg in args:
                     output = layer.apply_modules(arg, 'forward_layer',
-                                                 output_module=self.module_name[i],
                                                  **self.kwargs[i])
-                    if type(output) is list:
-                        output = torch.cat([torch.flatten(o) for o in output])
                     feat[-1].append(output)
                 i += 1
             for ii, arg in enumerate(args):
                 args[ii] = layer.forward(arg)
         # turn off parameters
-        if self.parameters:
-            self.model.set_requires_grad(self.parameters, requires_grad=False)
-            self.model.set_requires_grad(on_parameters, requires_grad=True)
+        self.set_params(on_parameters, set='off')
         return feat
 
     def forward(self, *args):
-        if self.target is None and self.input_target is None:
+        # get features
+        if len(args) > 1 and args[0].ndimension() != args[1].ndimension():
+            feat = self.get_features(args[0])
+        elif self.target is None and self.input_target is None:
             feat = self.get_features(*args)
         else:
             feat = self.get_features(args[0])
+        # get losses
         loss = torch.zeros(1, requires_grad=True)
         for i, feat_i in enumerate(feat):
             if self.input_target is not None:
                 loss_i = self.loss_fn(*feat_i, *self.input_target[i])
             elif self.target is not None:
                 loss_i = self.loss_fn(*feat_i, self.target)
+            elif len(args) > 1 and args[0].ndimension() != args[1].ndimension():
+                loss_i = self.loss_fn(*feat_i, *args[1:])
             else:
                 loss_i = self.loss_fn(*feat_i)
             loss = loss + loss_i * self.cost[i]
