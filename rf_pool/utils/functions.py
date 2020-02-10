@@ -76,7 +76,6 @@ def gabor_filter(theta, sigma, wavelength, filter_shape, gamma=0.3, psi=0.):
                        torch.cos(2. * np.pi * x_0 / wavelength + psi))
     return weight
 
-
 def param_search(fn, args, kwargs, param_name, bounds, Ns=None, verbose=True,
                  xscale='linear', show_cost=True):
     """
