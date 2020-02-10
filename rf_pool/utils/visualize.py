@@ -124,9 +124,9 @@ def show_images(*args, img_shape=None, figsize=(5, 5), **kwargs):
     plt.show()
     return fig
 
-def visualize_features(model, layer_id, feature_indices, lr=0.05, iter=1000,
+def visualize_features(model, layer_id, feature_indices, lr=0.05, n_iter=1000,
                        optim_fn=torch.optim.Adam, optim_kwargs={},
-                       add_loss=[losses.VarKernelLoss()], loss_weights=[1.],
+                       add_loss=[losses.KernelVarLoss()], loss_weights=[1.],
                        seed=None, img_shape=None, **kwargs):
     # create seed
     if img_shape is None:
@@ -149,8 +149,7 @@ def visualize_features(model, layer_id, feature_indices, lr=0.05, iter=1000,
     # set optimizer
     optim = optim_fn([seed], lr=lr, **optim_kwargs)
     # optimize texture
-    model.optimize_texture(iter, [], seed, loss_fn, optim, show_images=[seed],
-                           **kwargs);
+    model.optimize_texture(n_iter, [], seed, loss_fn, optim, **kwargs);
     return seed
 
 def show_confusion_matrix(data, labels, cmap=plt.cm.afmhot):
@@ -356,9 +355,8 @@ def heatmap(model, layer_id, score_map=None, scores=None, input=None,
         if type(input) is np.ma.core.MaskedArray:
             ma_input = input
         else: # binary image masking out zeros
-            ma_input = np.ma.masked_array(torch.gt(input, 0.).bitwise_not(),
-                                          input==0.)
-        kwargs.setdefault('input_cmap', 'gray')
+            ma_input = np.ma.masked_array(torch.gt(input, 0.), input==0.)
+        kwargs.setdefault('input_cmap', 'gray_r')
         kwargs.setdefault('input_alpha', 1.)
         plot_with_kwargs(ax.imshow, [ma_input], fn_prefix='input', **kwargs)
     # remove xticks, yticks
