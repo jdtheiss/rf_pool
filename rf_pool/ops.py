@@ -11,7 +11,7 @@ class Op(torch.nn.Module):
     ----------
     fn : function
         operation to be applied to input when Op is called
-    **kwargs : keyword argumes used in fn call
+    **kwargs : keyword arguments used in fn call
 
     Examples
     --------
