@@ -58,7 +58,7 @@ class Dataset(torch.utils.data.Dataset):
 
     def set_data_info(self, keys, labels):
         for i, key in enumerate(keys):
-            if labels is not None and i < len(labels):
+            if hasattr(labels, '__len__') and i < len(labels):
                 label = labels[i]
             else:
                 label = labels
