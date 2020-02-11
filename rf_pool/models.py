@@ -199,7 +199,7 @@ class Model(nn.Module):
             if isinstance(layer, Module):
                 self.append(layer_id, layer)
             else: # get inputs for FeedForward
-                inputs = dict([('%s%s' % (get_typename(v), k), v)
+                inputs = dict([('%s%s' % (get_typename(v), k.replace('.','_')), v)
                                for k, v in layer.named_modules()
                                if type(v) is not torch.nn.Sequential])
                 self.append(layer_id, FeedForward(**inputs))
