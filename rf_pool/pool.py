@@ -9,7 +9,42 @@ from .utils import functions, lattice, visualize
 class Pool(torch.nn.Module):
     """
     Base class for receptive field pooling layers
+
+    Parameters
+    ----------
+    mu : torch.Tensor
+        receptive field centers (in x-y coordinate space) with shape
+        (n_kernels, 2) [default: None]
+    sigma : torch.Tensor
+        receptive field standard deviations with shape
+        (n_kernels, 1) [default: None]
+    img_shape : tuple
+        receptive field/detection layer shape [default: None]
+    lattice_fn : utils.lattice function
+        function used to update receptive field kernels given delta_mu and
+        delta_sigma [default: lattice.gaussian_kernel_lattice]
+    **kwargs : dict
+        kwargs passed to pool.apply (see pool.apply, other ops pooling
+        functions)
+
+    Methods
+    -------
+    apply(input, **kwargs) : apply pooling function only
+    forward(*args, **kwargs) : apply forward pass through pool layer
+    set(**kwargs) : set attributes for pool layer
+    get(keys, default=None) : get attributes from pool layer
+    show_lattice(x=None, figsize=(5,5), cmap=None, **kwargs) : show pool lattice
+    update_mu_sigma(delta_mu, delta_sigma, fn) : update mu/sigma with shifts
+        or function
+    apply_attentional_field(attention_mu, attention_sigma) : update mu/sigma via
+        gaussian multiplication with a gaussian attentional field
+    crop_img(input, coords) : crop input with bounding box coordinates
+
+    See Also
+    --------
+    pool.apply
     """
+    __methodsdoc__ = functions.get_doc(__doc__, 'Methods', end_field='See Also')
     def __init__(self, mu, sigma, img_shape, lattice_fn, **kwargs):
         super(Pool, self).__init__()
         # input parameters
@@ -18,7 +53,8 @@ class Pool(torch.nn.Module):
         self.img_shape = img_shape
         self.lattice_fn = lattice_fn
         # check for optional kwargs
-        options = functions.pop_attributes(kwargs, ['delta_mu', 'delta_sigma'])
+        options = functions.pop_attributes(kwargs, ['delta_mu', 'delta_sigma',
+                                                    'attention_mu','attention_sigma'])
         functions.set_attributes(self, **options)
         # set inputs for rf_pool
         self.rfs = None
@@ -46,13 +82,16 @@ class Pool(torch.nn.Module):
     def set(self, **kwargs):
         functions.set_attributes(self, **kwargs)
 
-    def get(self, keys):
+    def get(self, keys, default=None):
+        default = functions.parse_list_args(len(keys), default)[0]
+        if type(keys) is not list:
+            keys = [keys]
         output = []
-        for key in keys:
+        for i, key in enumerate(keys):
             if hasattr(self, key):
                 output.append(getattr(self, key))
             else:
-                output.append(None)
+                output.append(*default[i])
         return output
 
     def update_mu_sigma(self, delta_mu=None, delta_sigma=None, fn=None, **kwargs):
@@ -84,7 +123,7 @@ class Pool(torch.nn.Module):
             sigma = self.sigma
         if lattice_fn is None:
             lattice_fn = self.lattice_fn
-        if (mu is None and sigma is None):
+        if mu is None or sigma is None:
             return
         assert self.lattice_fn is not None
         assert self.img_shape is not None
@@ -123,11 +162,11 @@ class Pool(torch.nn.Module):
 
     def show_lattice(self, x=None, figsize=(5,5), cmap=None, **kwargs):
         # get mu, sigma
-        if hasattr(self, 'tmp_mu') and self.tmp_mu is not None:
+        if self.get('tmp_mu')[0]:
             mu = self.tmp_mu
         else:
             mu = self.mu
-        if hasattr(self, 'tmp_sigma') and self.tmp_sigma is not None:
+        if self.get('tmp_sigma')[0]:
             sigma = self.tmp_sigma
         else:
             sigma = self.sigma
@@ -144,50 +183,41 @@ class Pool(torch.nn.Module):
             visualize.scatter_rfs(mu, sigma, self.img_shape, figsize=figsize,
                                   **kwargs)
 
-    def forward(self):
-        raise NotImplementedError
+    def apply_attentional_field(self, attention_mu=None, attention_sigma=None,
+                                **kwargs):
+        if attention_mu is None:
+            attention_mu = self.get('attention_mu')[0]
+        if attention_sigma is None:
+            attention_sigma = self.get('attention_sigma')[0]
+        if attention_mu is None or attention_sigma is None:
+            return self.mu, self.sigma
+        return lattice.multiply_gaussians(self.mu, self.sigma,
+                                          attention_mu, attention_sigma)
+
+    def forward(self, u, **kwargs):
+        """
+        #TODO:WRITEME
+        """
+        # set img_shape
+        self.img_shape = u.shape[-2:]
+        # update rfs, mu, sigma
+        if any([self.get(k, kwargs.get(k)) for k in ['delta_mu','delta_sigma','fn']]):
+            mu, sigma = self.update_mu_sigma(**kwargs)
+            self._update_rfs(mu, sigma)
+        # apply attentional field
+        if any([self.get(k, kwargs.get(k)) for k in ['attention_mu','attention_sigma']]):
+            mu, sigma = self.apply_attentional_field(**kwargs)
+            self._update_rfs(mu, sigma)
+        # return pooling outputs
+        return self.apply(u, **kwargs)
 
 class RF_Pool(Pool):
-    """
-    Receptive field pooling layer
-
-    Parameters
-    ----------
-    mu : torch.Tensor
-        receptive field centers (in x-y coordinate space) with shape
-        (n_kernels, 2) [default: None]
-    sigma : torch.Tensor
-        receptive field standard deviations with shape
-        (n_kernels, 1) [default: None]
-    img_shape : tuple
-        receptive field/detection layer shape [default: None]
-    lattice_fn : utils.lattice function
-        function used to update receptive field kernels given delta_mu and
-        delta_sigma [default: lattice.gaussian_kernel_lattice]
-    **kwargs : dict
-        kwargs passed to pool.apply (see pool.apply, other ops pooling
-        functions)
-
-    See Also
-    --------
-    pool.apply
-    """
+    __doc__ = functions.update_doc(Pool.__doc__, lines=[1],
+                                   updates=['Receptive field pooling layer'])
     def __init__(self, mu=None, sigma=None, img_shape=None,
                  lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         super(RF_Pool, self).__init__(mu, sigma, img_shape, lattice_fn,
                                       **kwargs)
-
-    def forward(self, u, delta_mu=None, delta_sigma=None, fn=None,
-                **kwargs):
-        # set img_shape
-        self.img_shape = u.shape[-2:]
-        # update rfs, mu, sigma
-        if delta_mu is not None or delta_sigma is not None or \
-        fn is not None:
-            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, fn, **kwargs)
-            self._update_rfs(mu, sigma)
-        # return pooling outputs
-        return self.apply(u, **kwargs)
 
 class RF_Uniform(Pool):
     """
@@ -219,6 +249,8 @@ class RF_Uniform(Pool):
     pool.apply
     lattice.init_uniform_lattice
     """
+    __doc__ = functions.update_doc(__doc__, 'See Also', [-1],
+                                   [['',Pool.__methodsdoc__]])
     def __init__(self, n_kernels, img_shape, spacing, sigma_init=1., rotate=0.,
                 lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         # set mu, sigma
@@ -227,18 +259,46 @@ class RF_Uniform(Pool):
                                                  sigma_init, rotate)
         super(RF_Uniform, self).__init__(mu, sigma, img_shape, lattice_fn,
                                          **kwargs)
+class RF_Hexagon(Pool):
+    """
+    Receptive field pooling layer with RFs initated using
+    lattice.init_hexagon_lattice
 
-    def forward(self, u, delta_mu=None, delta_sigma=None, fn=None,
-                **kwargs):
-       # set img_shape
-       self.img_shape = u.shape[-2:]
-       # update rfs, mu, sigma
-       if delta_mu is not None or delta_sigma is not None or \
-       fn is not None:
-           mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, fn, **kwargs)
-           self._update_rfs(mu, sigma)
-       # return pooling outputs
-       return self.apply(u, **kwargs)
+    Parameters
+    ----------
+    n_kernels : tuple or int
+        number of kernels along height/width of the lattice. if type(n_kernels)
+        is int, n_kernels will be set to (n_kernels,)*2
+    img_shape : tuple
+        receptive field/detection layer shape [default: None]
+    spacing : float
+        spacing between receptive field centers
+    sigma_init : float
+        standard deviation initialization [default: 1.]
+    rotate : float
+        rotation (in radians, counterclockwise) to apply to the entire array
+    lattice_fn : utils.lattice function
+        function used to update receptive field kernels given delta_mu and
+        delta_sigma [default: lattice.gaussian_kernel_lattice]
+    **kwargs : dict
+        kwargs passed to pool.apply (see pool.apply, other ops pooling
+        functions)
+
+    See Also
+    --------
+    pool.apply
+    lattice.init_hexagon_lattice
+    """
+    __doc__ = functions.update_doc(__doc__, 'See Also', [-1],
+                                   [['',Pool.__methodsdoc__]])
+    def __init__(self, n_kernels, img_shape, spacing, sigma_init=1., rotate=0.,
+                lattice_fn=lattice.mask_kernel_lattice, **kwargs):
+        # set mu, sigma
+        centers = torch.as_tensor(img_shape)/2.
+        mu, sigma = lattice.init_uniform_lattice(centers, n_kernels, spacing,
+                                                 sigma_init, rotate)
+        super(RF_Hexagon, self).__init__(mu, sigma, img_shape, lattice_fn,
+                                         **kwargs)
 
 class RF_Random(Pool):
     """
@@ -257,15 +317,17 @@ class RF_Random(Pool):
         kwargs passed to pool.apply (see pool.apply, other ops pooling
         functions)
 
+    See Also
+    --------
+    pool.apply
+
     Notes
     -----
     If 'mu' or 'sigma' are not provided, they are set to random locations within
     the image shape and random sizes less than half the image shape, respectively.
-
-    See Also
-    --------
-    pool.apply
     """
+    __doc__ = functions.update_doc(__doc__, 'See Also', [-1],
+                                   [['',Pool.__methodsdoc__]])
     def __init__(self, n_kernels, img_shape,
                 lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         # set mu, sigma
@@ -280,62 +342,21 @@ class RF_Random(Pool):
         super(RF_Random, self).__init__(mu, sigma, img_shape, lattice_fn,
                                         **kwargs)
 
-    def forward(self, u, delta_mu=None, delta_sigma=None, fn=None,
-                **kwargs):
-       # set img_shape
-       self.img_shape = u.shape[-2:]
-       # update rfs, mu, sigma
-       if delta_mu is not None or delta_sigma is not None or \
-       fn is not None:
-           mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, fn, **kwargs)
-           self._update_rfs(mu, sigma)
-       # return pooling outputs
-       return self.apply(u, **kwargs)
-
 class RF_Squeeze(Pool):
-    """
-    Receptive field pooling layer with output image size squeezed to extent of
-    receptive field lattice
-
-    Parameters
-    ----------
-    mu : torch.Tensor
-        receptive field centers (in x-y coordinate space) with shape
-        (n_kernels, 2) [default: None
-    sigma : torch.Tensor
-        receptive field standard deviations with shape
-        (n_kernels, 1) [default: None]
-    img_shape : tuple
-        receptive field/detection layer shape [default: None]
-    lattice_fn : utils.lattice function
-        function used to update receptive field kernels given delta_mu and
-        delta_sigma [default: lattice.gaussian_kernel_lattice]
-    **kwargs : dict
-        kwargs passed to pool.apply (see pool.apply, other ops pooling
-        functions)
-
-    See Also
-    --------
-    pool.apply
-    """
+    __doc__ = functions.update_doc(Pool.__doc__, lines=[1],
+                                   updates=[['Receptive field pooling layer',
+                                            'with output image size squeezed ',
+                                            'to extent of RF lattice']])
     def __init__(self, mu=None, sigma=None, img_shape=None,
                  lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         super(RF_Squeeze, self).__init__(mu, sigma, img_shape, lattice_fn,
                                          **kwargs)
 
-    def forward(self, u, delta_mu=None, delta_sigma=None, fn=None,
-                **kwargs):
-        # set img_shape
-        self.img_shape = u.shape[-2:]
-        # update rfs, mu, sigma
-        if delta_mu is not None or delta_sigma is not None or \
-        fn is not None:
-            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, fn, **kwargs)
-            self._update_rfs(mu, sigma)
-        # apply pooling function
-        output = self.apply(u, **kwargs)
+    def forward(self, u, **kwargs):
+        # apply forward function
+        output = Pool.forward(self, u, **kwargs)
         # get squeezed coordinates
-        coords = self.get_squeezed_coords(mu, sigma)
+        coords = self.get_squeezed_coords(self.mu, self.sigma)
         # crop
         return self.crop_img(output, coords)
 
@@ -366,23 +387,17 @@ class RF_CenterCrop(Pool):
     --------
     pool.apply
     """
+    __doc__ = functions.update_doc(__doc__, 'See Also', [-1],
+                                   [['',Pool.__methodsdoc__]])
     def __init__(self, crop_size, mu=None, sigma=None, img_shape=None,
                  lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         self.crop_size = torch.tensor(crop_size)
         super(RF_CenterCrop, self).__init__(mu, sigma, img_shape, lattice_fn,
                                             **kwargs)
 
-    def forward(self, u, delta_mu=None, delta_sigma=None, fn=None,
-                **kwargs):
-        # set img_shape
-        self.img_shape = u.shape[-2:]
-        # update rfs, mu, sigma
-        if delta_mu is not None or delta_sigma is not None or \
-        fn is not None:
-            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, fn, **kwargs)
-            self._update_rfs(mu, sigma)
-        # apply pooling function
-        output = self.apply(u, **kwargs)
+    def forward(self, u, **kwargs):
+        # apply forward function
+        output = Pool.forward(self, u, **kwargs)
         # get coordinates of center size
         center = torch.max(torch.tensor(self.img_shape) // 2 - 1,
                            torch.tensor([0,0]))
@@ -424,6 +439,8 @@ class RF_Cortical(Pool):
     lattice.init_foveated_lattice
     lattice.cortical_xy
     """
+    __doc__ = functions.update_doc(__doc__, 'See Also', [-1],
+                                   [['',Pool.__methodsdoc__]])
     def __init__(self, cortical_mu=None, cortical_sigma=None,
                  cortical_kernel_fn=lattice.exp_kernel_2d,
                  img_shape=None, scale=None, n_rings=None,
@@ -469,31 +486,26 @@ class RF_Cortical(Pool):
                                           cortical_RFs.t().reshape(1,2,-1,1))
         return weights.reshape(1, 1, -1, 1, 1)
 
-    def forward(self, u, delta_mu=None, delta_sigma=None, fn=None,
-                **kwargs):
+    def forward(self, u, **kwargs):
+        # set img_shape
+        self.img_shape = u.shape[-2:]
         # get cortical_kwargs from kwargs
         cortical_kwargs = functions.pop_attributes(kwargs,
                                                    ['cortical_mu',
                                                     'cortical_sigma',
                                                     'beta'],
                                                    ignore_keys=True)
-        # set img_shape
-        self.img_shape = u.shape[-2:]
-        # update rfs, mu, sigma
-        if delta_mu is not None or delta_sigma is not None or \
-        fn is not None:
-            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, fn, **kwargs)
-            self._update_rfs(mu, sigma)
+        # weight output by cortical locations relative to cortical_mu
+        self.get_cortical_vars(self.lattice_kwargs)
+        weights = self.get_cortical_weights(**cortical_kwargs)
         # get retain_shape from kwargs
         if kwargs.get('retain_shape') is None:
             retain_shape = False
         else:
             retain_shape = kwargs.pop('retain_shape')
-        # get pooling outputs
-        output = self.apply(u, retain_shape=True, **kwargs)
-        # weight output by cortical locations relative to cortical_mu
-        self.get_cortical_vars(self.lattice_kwargs)
-        weights = self.get_cortical_weights(**cortical_kwargs)
+        # apply forward function
+        output = Pool.forward(self, u, retain_shape=True, **kwargs)
+        # apply weights
         if weights is not None:
             output = torch.mul(output, weights)
         if not retain_shape:
@@ -527,23 +539,13 @@ class MaxPool(Pool):
     --------
     pool.apply
     """
+    __doc__ = functions.update_doc(__doc__, 'See Also', [-1],
+                                   [['',Pool.__methodsdoc__]])
     def __init__(self, kernel_size, mu=None, sigma=None, img_shape=None,
                  lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         super(MaxPool, self).__init__(mu, sigma, img_shape, lattice_fn,
                                       kernel_size=kernel_size,
                                       pool_fn='max_pool', **kwargs)
-
-    def forward(self, u, delta_mu=None, delta_sigma=None, fn=None,
-                **kwargs):
-        # set img_shape
-        self.img_shape = u.shape[-2:]
-        # update rfs, mu, sigma
-        if delta_mu is not None or delta_sigma is not None or \
-        fn is not None:
-            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, fn, **kwargs)
-            self._update_rfs(mu, sigma)
-        # apply pooling function
-        return self.apply(u, **kwargs)
 
 class ProbmaxPool(Pool):
     """
@@ -579,23 +581,13 @@ class ProbmaxPool(Pool):
     representations. In Proceedings of the 26th annual international conference
     on machine learning (pp. 609-616). ACM.
     """
+    __doc__ = functions.update_doc(__doc__, 'See Also', [-1],
+                                   [['',Pool.__methodsdoc__]])
     def __init__(self, kernel_size, mu=None, sigma=None, img_shape=None,
                  lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         super(ProbmaxPool, self).__init__(mu, sigma, img_shape, lattice_fn,
                                           kernel_size=kernel_size,
                                           pool_fn='probmax_pool', **kwargs)
-
-    def forward(self, u, delta_mu=None, delta_sigma=None, fn=None,
-                **kwargs):
-        # set img_shape
-        self.img_shape = u.shape[-2:]
-        # update rfs, mu, sigma
-        if delta_mu is not None or delta_sigma is not None or \
-        fn is not None:
-            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, fn, **kwargs)
-            self._update_rfs(mu, sigma)
-        # apply pooling function
-        return self.apply(u, **kwargs)
 
 class StochasticPool(Pool):
     """
@@ -629,23 +621,13 @@ class StochasticPool(Pool):
     Zeiler, M. D., & Fergus, R. (2013). Stochastic pooling for regularization
     of deep convolutional neural networks. arXiv preprint arXiv:1301.3557.
     """
+    __doc__ = functions.update_doc(__doc__, 'See Also', [-1],
+                                   [['',Pool.__methodsdoc__]])
     def __init__(self, kernel_size, mu=None, sigma=None, img_shape=None,
                  lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         super(StochasticPool, self).__init__(mu, sigma, img_shape, lattice_fn,
                                              kernel_size=kernel_size,
                                              pool_fn='stochastic_pool', **kwargs)
-
-    def forward(self, u, delta_mu=None, delta_sigma=None, fn=None,
-                **kwargs):
-        # set img_shape
-        self.img_shape = u.shape[-2:]
-        # update rfs, mu, sigma
-        if delta_mu is not None or delta_sigma is not None or \
-        fn is not None:
-            mu, sigma = self.update_mu_sigma(delta_mu, delta_sigma, fn, **kwargs)
-            self._update_rfs(mu, sigma)
-        # apply pooling function
-        return self.apply(u, **kwargs)
 
 def rf_to_indices(rfs):
     """

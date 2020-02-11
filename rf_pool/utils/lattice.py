@@ -363,7 +363,7 @@ def init_foveated_lattice(img_shape, scale, n_rings, spacing=0., std=1.,
     n_rf : int
         number of RFs per ring [default: None, set to np.pi / scale]
     offset : list of floats
-        (x,y) offset for fovea [default: [0.,0.]]
+        (x,y) offset from center of image [default: [0.,0.]]
     min_ecc : float
         minimum eccentricity for gaussian rings [default: 1.]
     rotate_rings : bool
@@ -454,22 +454,24 @@ def init_foveated_lattice(img_shape, scale, n_rings, spacing=0., std=1.,
     sigma = torch.as_tensor([s for i, s in enumerate(sigma.tolist()) if i not in remove_idx])
     return mu, sigma
 
-def init_uniform_lattice(center, n_kernel_side, spacing, sigma_init=1.,
-                         rotate=0.):
+def init_uniform_lattice(img_shape, n_kernel_side, spacing, sigma_init=1.,
+                         offset=[0.,0.], rotate=0.):
     """
     Creates a uniform lattice of kernel centers (mu)
     and standard deviations (sigma)
 
     Parameters
     ----------
-    center : tuple
-        x-y coordinate for center of lattice
+    img_shape : tuple
+        shape of image
     n_kernel_side : tuple or int
         number of kernels along height/width of the lattice
     spacing : float
         spacing between receptive field centers
     sigma_init : float
         standard deviation initialization [default: 1.]
+    offset : list of floats
+        (x,y) offset from center of image [default: [0.,0.]]
     rotate : float
         rotation (in radians, counterclockwise) to apply to the entire array
 
@@ -485,16 +487,16 @@ def init_uniform_lattice(center, n_kernel_side, spacing, sigma_init=1.,
     --------
     # Generate lattice of size 8x8 with 12 pixel spacing centered on a
     # 200x200 image
-    >>> center = (100,100)
+    >>> img_shape = (200,200)
     >>> n_kernel_side = 8
     >>> spacing = 12
     >>> sigma_init = 3.
-    >>> mu, sigma = init_uniform_lattice(center, n_kernel_side, spacing, sigma_init)
+    >>> mu, sigma = init_uniform_lattice(img_shape, n_kernel_side, spacing,
+                                         sigma_init)
     """
-
     if sigma_init < 1.:
         warnings.warn('sigma < 1 will result in sum(pdf) > 1.')
-    cx, cy = center
+    cx, cy = np.array(img_shape) / 2. + np.array(offset)
     if type(n_kernel_side) is int:
         n_kernel_side = (n_kernel_side,)*2
     lattice_coord_x = torch.arange(n_kernel_side[0]) - np.floor(n_kernel_side[0]/2)
@@ -504,9 +506,9 @@ def init_uniform_lattice(center, n_kernel_side, spacing, sigma_init=1.,
     y = spacing * lattice_coord_y.float()
     # update based on kernel side
     if n_kernel_side[0] % 2 == 0:
-        x = x + np.floor(spacing/2)
+        x = x + spacing / 2.
     if n_kernel_side[1] % 2 == 0:
-        y = y + np.floor(spacing/2)
+        y = y + spacing / 2.
     # repeat
     x = x.repeat(n_kernel_side[1]).reshape(n_kernel_side).flatten()
     y = y.repeat(n_kernel_side[0]).reshape(n_kernel_side).t().flatten()
@@ -520,6 +522,72 @@ def init_uniform_lattice(center, n_kernel_side, spacing, sigma_init=1.,
     mu = torch.stack([x,y], dim=-1)
     mu = torch.as_tensor(mu, dtype=torch.float32)
     sigma = torch.ones((mu.shape[0],1), dtype=torch.float32) * sigma_init
+
+    return mu, sigma
+
+def init_hexagon_lattice(img_shape, n_kernel_side, spacing, sigma_init=1.,
+                         offset=[0.,0.], rotate=0.):
+    """
+    Creates a uniform hexagon lattice of kernel centers (mu)
+    and standard deviations (sigma)
+
+    Parameters
+    ----------
+    img_shape : tuple
+        shape of image
+    n_kernel_side : tuple or int
+        number of kernels along height/width of the lattice
+    spacing : float
+        spacing between receptive field centers
+    sigma_init : float
+        standard deviation initialization [default: 1.]
+    offset : list of floats
+        (x,y) offset from center of image [default: [0.,0.]]
+    rotate : float
+        rotation (in radians, counterclockwise) to apply to the entire array
+
+    Returns
+    -------
+    mu : torch.Tensor
+        kernel x-y coordinate centers with shape (n_kernels, 2) and dtype
+        torch.int32
+    sigma : torch.Tensor
+        kernel standard deviations with shape (n_kernels, 1)
+
+    Examples
+    --------
+    # Generate lattice of size 8x8 with 12 pixel spacing centered on a
+    # 200x200 image
+    >>> img_shape = (200,200)
+    >>> n_kernel_side = 8
+    >>> spacing = 12
+    >>> sigma_init = 3.
+    >>> mu, sigma = init_hexagon_lattice(img_shape, n_kernel_side, spacing,
+                                         sigma_init)
+    """
+    if sigma_init < 1.:
+        warnings.warn('sigma < 1 will result in sum(pdf) > 1.')
+    cx, cy = np.array(img_shape) / 2. + np.array(offset)
+    if type(n_kernel_side) is int:
+        n_kernel_side = (n_kernel_side,)*2
+    # get uniform lattice
+    mu, sigma = init_uniform_lattice((0.,0.), n_kernel_side, 1., sigma_init)
+    # update based on kernel side
+    if n_kernel_side[0] % 2 == 1:
+        mu[:,0] -= 0.5
+    if n_kernel_side[1] % 2 == 0:
+        mu[:,1] += 0.5
+    # scale based on hexagon distances
+    mu[:,1] *= np.sqrt(3.) * spacing
+    mu[:,0] *= 2. * spacing
+    for n in range(n_kernel_side[0]):
+        mu[n::n_kernel_side[0]*2,0] += spacing
+    # rotate
+    rx = np.cos(rotate) * mu[:,1] - np.sin(rotate) * mu[:,0]
+    ry = np.sin(rotate) * mu[:,1] + np.cos(rotate) * mu[:,0]
+    # center
+    mu[:,1] = rx + cx
+    mu[:,0] = ry + cy
 
     return mu, sigma
 
