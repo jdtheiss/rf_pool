@@ -341,8 +341,8 @@ def mask_kernel_lattice(mu, sigma, kernel_shape):
 
     return mask_kernel_2d(mu, sigma, xy)
 
-def init_foveated_lattice(img_shape, scale, spacing=0., std=1., n_rf=None,
-                          n_rings=None, min_ecc=1., offset=[0.,0.],
+def init_foveated_lattice(img_shape, scale, n_rings, spacing=0., std=1.,
+                          n_rf=None, offset=[0.,0.], min_ecc=1.,
                           rotate_rings=True, rotate=0.):
     """
     Creates a foveated lattice of kernel centers (mu) and
@@ -354,10 +354,16 @@ def init_foveated_lattice(img_shape, scale, spacing=0., std=1., n_rf=None,
         shape of image
     scale : float
         rate at which receptive field radius scales with eccentricity
+    n_rings : int
+        number of concentric rings in foveated array
     spacing : float
         spacing between receptive field centers (as fraction of radius)
     std : float
         standard deviation multiplier [default: 1.]
+    n_rf : int
+        number of RFs per ring [default: None, set to np.pi / scale]
+    offset : list of floats
+        (x,y) offset for fovea [default: [0.,0.]]
     min_ecc : float
         minimum eccentricity for gaussian rings [default: 1.]
     rotate_rings : bool
