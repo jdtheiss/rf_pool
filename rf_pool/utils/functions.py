@@ -8,6 +8,31 @@ import scipy
 from scipy.io import loadmat
 import torch
 
+def get_doc(docstr, field='', lines=[], end_field=None):
+    start = docstr[:docstr.find(field)].count('\n')
+    if end_field:
+        end = docstr[:docstr.find(end_field)].count('\n')
+        return '\n'.join(docstr.splitlines()[start:end])
+    if len(lines) == 0:
+        return '\n'.join(docstr.splitlines()[start:])
+    lines = [start + idx for idx in lines]
+    docstr = docstr.splitlines()
+    return '\n'.join([docstr[idx] for idx in lines])
+
+def update_doc(docstr, field='', lines=[], updates=[], replace=['','']):
+    docstr = docstr.replace(*replace)
+    if len(lines) == 0:
+        return docstr
+    assert len(lines) == len(updates)
+    start = docstr[:docstr.find(field)].count('\n')
+    lines = [start + idx for idx in lines]
+    docstr = docstr.splitlines()
+    for n, idx in enumerate(lines):
+        if type(updates[n]) is list:
+            updates[n] = '\n'.join(updates[n])
+        docstr[idx] = '    %s' % updates[n]
+    return '\n'.join(docstr)
+
 def parse_list_args(n_iter, *args, **kwargs):
     if n_iter == 1:
         return [args], [kwargs]
