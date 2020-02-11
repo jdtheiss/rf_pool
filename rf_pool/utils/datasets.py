@@ -162,23 +162,20 @@ class Dataset(torch.utils.data.Dataset):
             label = -1
         if label is None:
             label = -1
-        # call if type is fn
-        if type(img) is type(lambda x: None):
-            img = img(0)
-        # get url within html if necessary
-        if self.find_img_url and type(img) is str:
-            img = self.get_img_url(img, pattern=self.url_pattern,
-                                   replace=self.url_replace,
-                                   timeout=self.timeout)
-        # download if necessary
-        if not self.download and type(img) is str:
-            img = self.download_image(img, index, timeout=self.timeout)
-            if img is None:
-                return None
         try:
-            # convert to numpy, Image
-            img = self.to_numpy(img)
-            img = self.to_Image(img)
+            # call if type is fn
+            if type(img) is type(lambda x: None):
+                img = img(0)
+            # get url within html if necessary
+            if self.find_img_url and type(img) is str:
+                img = self.get_img_url(img, pattern=self.url_pattern,
+                                       replace=self.url_replace,
+                                       timeout=self.timeout)
+            # download if necessary
+            if not self.download and type(img) is str:
+                img = self.download_image(img, index, timeout=self.timeout)
+                if img is None:
+                    return None
             # apply transform
             if self.transform:
                 img = self.transform(img)
