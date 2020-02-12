@@ -506,9 +506,9 @@ def init_uniform_lattice(img_shape, n_kernel_side, spacing, sigma_init=1.,
     y = spacing * lattice_coord_y.float()
     # update based on kernel side
     if n_kernel_side[0] % 2 == 0:
-        x = x + spacing / 2.
+        x = x + np.floor(spacing / 2.)
     if n_kernel_side[1] % 2 == 0:
-        y = y + spacing / 2.
+        y = y + np.floor(spacing / 2.)
     # repeat
     x = x.repeat(n_kernel_side[1]).reshape(n_kernel_side).flatten()
     y = y.repeat(n_kernel_side[0]).reshape(n_kernel_side).t().flatten()

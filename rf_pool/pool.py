@@ -251,12 +251,12 @@ class RF_Uniform(Pool):
     """
     __doc__ = functions.update_doc(__doc__, 'See Also', [-1],
                                    [['',Pool.__methodsdoc__]])
-    def __init__(self, n_kernels, img_shape, spacing, sigma_init=1., rotate=0.,
+    def __init__(self, img_shape, n_kernels, spacing, sigma_init=1.,
+                offset=[0.,0.], rotate=0.,
                 lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         # set mu, sigma
-        centers = torch.as_tensor(img_shape)/2.
-        mu, sigma = lattice.init_uniform_lattice(centers, n_kernels, spacing,
-                                                 sigma_init, rotate)
+        mu, sigma = lattice.init_uniform_lattice(img_shape, n_kernels, spacing,
+                                                 sigma_init, offset, rotate)
         super(RF_Uniform, self).__init__(mu, sigma, img_shape, lattice_fn,
                                          **kwargs)
 class RF_Hexagon(Pool):
@@ -291,12 +291,12 @@ class RF_Hexagon(Pool):
     """
     __doc__ = functions.update_doc(__doc__, 'See Also', [-1],
                                    [['',Pool.__methodsdoc__]])
-    def __init__(self, n_kernels, img_shape, spacing, sigma_init=1., rotate=0.,
-                lattice_fn=lattice.mask_kernel_lattice, **kwargs):
+    def __init__(self, img_shape, n_kernels, spacing, sigma_init=1.,
+                 offset=[0.,0.], rotate=0.,
+                 lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         # set mu, sigma
-        centers = torch.as_tensor(img_shape)/2.
-        mu, sigma = lattice.init_uniform_lattice(centers, n_kernels, spacing,
-                                                 sigma_init, rotate)
+        mu, sigma = lattice.init_hexagon_lattice(img_shape, n_kernels, spacing,
+                                                 sigma_init, offset, rotate)
         super(RF_Hexagon, self).__init__(mu, sigma, img_shape, lattice_fn,
                                          **kwargs)
 
