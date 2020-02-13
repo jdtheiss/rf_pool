@@ -356,8 +356,11 @@ class Model(nn.Module):
         running_loss = 0.
         i = 0
         n_batches = len(trainloader)
-        for epoch in range(n_epochs):
+        for epoch in range(int(np.ceil(n_epochs))):
             for data in trainloader:
+                # check if more than requested epochs
+                if (i+1) > (n_epochs * n_batches):
+                    return loss_history
                 # get inputs, labels
                 inputs = data[:-1]
                 label = data[-1]
