@@ -101,8 +101,7 @@ def gabor_filter(theta, sigma, wavelength, filter_shape, gamma=0.3, psi=0.):
                        torch.cos(2. * np.pi * x_0 / wavelength + psi))
     return weight
 
-def param_search(fn, args, kwargs, param_name, bounds, Ns=None, verbose=True,
-                 xscale='linear', show_cost=True):
+def param_search(fn, args, kwargs, param_space, verbose=True):
     """
     Search parameter space for given function
 
@@ -113,84 +112,71 @@ def param_search(fn, args, kwargs, param_name, bounds, Ns=None, verbose=True,
     args : list
         arguments passed to fn (i.e. fn(*args, **kwargs))
     kwargs : dict
-        keyword arguments passed to fn, which includes parameter of interest
-    param_name : str or list
-        parameter name to update (or list of path to update within kwargs)
-        if list, set_deepattr will be used (see example)
-    bounds : list or tuple
-        bounds of parameter search space with len(bounds) == 2
-    Ns : int
-        number of points to test within search space
-    multi : float, optional
-        multiplyer to separate Ns points starting from bounds[0] (see example)
+        keyword arguments passed to fn (set to {} if no kwargs)
+    param_space : dict
+        dictionary of (key, value) where key is the parameter to update and
+        value is the search space for that parameter. The key can be of the
+        following types:
+            int (index of args),
+            str (key of kwargs),
+            tuple (path of kwargs; see set_deepattr)
+        Search space must be the same length for each parameter given.
+    verbose : bool
+        True/False whether to show parameter search space on each iteration
+        [default: True]
 
     Returns
     -------
     costs : list
-        list of results from each fn call (len(costs) == Ns)
+        list of results from each fn call
+        len(costs) == len(list(param_space.values())[0])
 
     Examples
     --------
-    # get MNIST test data
-    testset = torchvision.datasets.MNIST(root='../data', train=False,
-                                         transform=torchvision.transforms.ToTensor())
-    testloader = torch.utils.data.DataLoader(testset, batch_size=10,
-                                             shuffle=True, num_workers=2)
-    # create Deep Belief Network
-    model = rf_pool.models.DeepBeliefNetwork()
-    model.append('0', rf_pool.modules.RBM(hidden=torch.nn.Conv2d(1, 32, 5),
-                                          vis_activation_fn=torch.nn.Sigmoid()))
-    # initialize optimizer
-    optimizer = torch.optim.SGD(model.layers['0'].parameters(), lr=1e-8)
-    # create param_name path to update param 'lr' in optimizer.param_groups[0]
-    param_name = ['optimizer', 'param_groups', 0, 'lr']
-    # search 'lr' parameter space
-    costs = param_search(model.train_layer, ['0', 1, testloader],
-                         {'optimizer': optimizer, 'monitor': len(testloader)},
-                         param_name, (1e-8, 1e-1), 10, multi=5.)
+    >>> # find parameter x closest to random value a
+    >>> a = np.random.rand()
+    >>> fn = lambda x, a: (x - a)**2
+    >>> param_space = {0: np.linspace(0., 1., 10)}
+    >>> costs = param_search(fn, [0, a], {}, param_space)
+
+    See Also
+    --------
+    set_deepattr
     """
-    if type(param_name) is not list:
-        param_name = [param_name]
-    # set param_space
-    if len(bounds) > 2 or Ns is None:
-        param_space = bounds
-    else:
-        param_space = np.linspace(bounds[0], bounds[1], Ns)
-    try:
-        is_iter = len(param_space[0]) > 1
-    except:
-        is_iter = False
+    # get length of search space
+    n_search = len(list(param_space.values())[0])
+    # check that all parameters have same search space length
+    assert all([len(v) == n_search for v in param_space.values()])
+    # check that all keys are int, str, or tuple
+    assert all([isinstance(k, (int, str, tuple)) for k in param_space.keys()])
     # for each value, update parameter and get cost
     cost = []
-    for i, param in enumerate(param_space):
-        # display progress
-        clear_output(wait=True)
-        display('Progress: %0.2a%%' % (100. * i / len(param_space)))
-        if show_cost:
-            display('Cost: %a' % cost)
-        if verbose:
-            display('Parameter search space: %a' % param_space)
-            display('Parameter value: %a' % param)
-            if is_iter:
-                plt.plot(np.arange(i), cost)
-            else:
-                plt.plot(param_space[:i], cost)
-            plt.xscale(xscale)
-            plt.show()
+    for i in range(n_search):
+        # update params
+        for k, v in param_space.items():
+            if type(k) is int:
+                args[k] = v[i]
+            elif type(k) is str:
+                kwargs.update({k: v[i]})
+            elif type(k) is tuple:
+                kwargs = set_deepattr(kwargs, k, v[i])
         # get cost
-        kwargs = set_deepattr(kwargs, param_name, param)
         cost_i = fn(*args, **kwargs)
         cost.append(cost_i)
+        # display progress
+        clear_output(wait=True)
+        display('Progress: %0.2f%%' % (100. * i / n_search))
+        if verbose:
+            display('Cost: %a' % cost)
+            display('Parameter value(s):')
+            display('\n'.join([str((k, v[i])) for k, v in param_space.items()]))
+            plt.plot(np.arange(i+1), cost)
+            plt.show()
     # plot final cost
     clear_output(wait=True)
-    if show_cost:
-        display('Cost: %a' % cost)
     if verbose:
-        if is_iter:
-            plt.plot(np.arange(len(param_space)), cost)
-        else:
-            plt.plot(param_space, cost)
-        plt.xscale(xscale)
+        display('Cost: %a' % cost)
+        plt.plot(np.arange(n_search), cost)
         plt.show()
     return cost
 
