@@ -165,7 +165,7 @@ def param_search(fn, args, kwargs, param_space, verbose=True):
         cost.append(cost_i)
         # display progress
         clear_output(wait=True)
-        display('Progress: %0.2f%%' % (100. * i / n_search))
+        display('Progress: %0.2f%%' % (100. * (i+1) / n_search))
         if verbose:
             display('Cost: %a' % cost)
             display('Parameter value(s):')
