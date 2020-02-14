@@ -170,14 +170,8 @@ def param_search(fn, args, kwargs, param_space, verbose=True):
             display('Cost: %a' % cost)
             display('Parameter value(s):')
             display('\n'.join([str((k, v[i])) for k, v in param_space.items()]))
-            plt.plot(np.arange(i+1), cost)
+            plt.plot(cost)
             plt.show()
-    # plot final cost
-    clear_output(wait=True)
-    if verbose:
-        display('Cost: %a' % cost)
-        plt.plot(np.arange(n_search), cost)
-        plt.show()
     return cost
 
 def bootstrap(*args, n_samples=1000, fn=np.mean, fn_kwargs={}):
