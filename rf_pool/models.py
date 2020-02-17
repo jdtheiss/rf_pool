@@ -36,7 +36,7 @@ class Model(nn.Module):
     def n_layers(self):
         return len(self.layers)
 
-    def output_shapes(self, input_shape=None, layer_ids=None):
+    def output_shapes(self, input_shape=None, layer_ids=None, **kwargs):
         if input_shape is None:
             input_shape = self.data_shape
         if layer_ids is None:
@@ -44,18 +44,8 @@ class Model(nn.Module):
         # create dummy input
         input = torch.zeros(input_shape)
         # get each layer output shape
-        output_shapes = []
-        for layer_id, layer in self.layers.named_children():
-            input = layer(input)
-            if type(input) is list:
-                shape_i = [i.shape for i in input]
-            else:
-                shape_i = input.shape
-            if layer_id in layer_ids:
-                output_shapes.append(shape_i)
-            if layer_id == layer_ids[-1]:
-                break
-        return output_shapes
+        outputs = self.apply_layers(input, output_layer=layer_ids, **kwargs)
+        return [o.shape if hasattr(o, 'shape') else None for o in outputs]
 
     def append(self, layer_id, layer):
         layer_id = str(layer_id)
@@ -86,13 +76,16 @@ class Model(nn.Module):
         # parse kwargs
         if len(output_layer) > 0:
             kwargs = functions.parse_list_args(len(output_layer), **kwargs)[1]
+            idx = dict([(id,n) for n, id in enumerate(output_layer)])
         else:
             kwargs = functions.parse_list_args(len(layer_ids), **kwargs)[1]
+            idx = dict([(id,n) for n, id in enumerate(layer_ids)])
         # apply each layer
-        for i, (layer_id, layer) in enumerate(zip(layer_ids, layers)):
+        for layer_id, layer in zip(layer_ids, layers):
             # apply modules
-            if i < len(kwargs):
-                output_i = layer.apply_modules(input, layer_name, **kwargs[i])
+            if idx.get(layer_id) is not None:
+                n = idx.get(layer_id)
+                output_i = layer.apply_modules(input, layer_name, **kwargs[n])
                 input = layer.apply_modules(input, layer_name)
             else:
                 output_i = layer.apply_modules(input, layer_name)
