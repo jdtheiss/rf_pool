@@ -83,8 +83,8 @@ class Model(nn.Module):
         # apply each layer
         for layer_id, layer in zip(layer_ids, layers):
             # apply modules
-            if idx.get(layer_id) is not None:
-                n = idx.get(layer_id)
+            n = idx.get(layer_id)
+            if n is not None and len(kwargs[n]) > 0:
                 output_i = layer.apply_modules(input, layer_name, **kwargs[n])
                 input = layer.apply_modules(input, layer_name)
             else:
