@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from itertools import product
 
 import IPython.display
 from IPython.display import clear_output, display
@@ -120,40 +121,38 @@ def param_search(fn, args, kwargs, param_space, verbose=True):
             int (index of args),
             str (key of kwargs),
             tuple (path of kwargs; see set_deepattr)
-        Search space must be the same length for each parameter given.
     verbose : bool
         True/False whether to show parameter search space on each iteration
         [default: True]
 
     Returns
     -------
-    costs : list
-        list of results from each fn call
-        len(costs) == len(list(param_space.values())[0])
+    costs : dict
+        dictionary of results from each fn call where the keys are the
+        parameters used and the values are the costs for those parameters
+        (e.g., {(1.2,0.3): 0.4})
 
     Examples
     --------
-    >>> # find parameter x closest to random value a
+    >>> # find parameters x * y closest to random value a
     >>> a = np.random.rand()
-    >>> fn = lambda x, a: (x - a)**2
-    >>> param_space = {0: np.linspace(0., 1., 10)}
-    >>> costs = param_search(fn, [0, a], {}, param_space)
+    >>> fn = lambda x, y, a: (x*y - a)**2
+    >>> param_space = {0: np.linspace(0., 1., 10), 1: np.linspace(0., 1., 10)}
+    >>> costs = param_search(fn, [0, 0, a], {}, param_space)
 
     See Also
     --------
     set_deepattr
     """
     # get length of search space
-    n_search = len(list(param_space.values())[0])
-    # check that all parameters have same search space length
-    assert all([len(v) == n_search for v in param_space.values()])
+    n_search = np.prod([len(v) for v in param_space.values()])
     # check that all keys are int, str, or tuple
     assert all([isinstance(k, (int, str, tuple)) for k in param_space.keys()])
     # for each value, update parameter and get cost
-    cost = []
-    for i in range(n_search):
+    cost = OrderedDict()
+    for n, v in enumerate(product(*param_space.values())):
         # update params
-        for k, v in param_space.items():
+        for i, k in enumerate(param_space.keys()):
             if type(k) is int:
                 args[k] = v[i]
             elif type(k) is str:
@@ -161,17 +160,14 @@ def param_search(fn, args, kwargs, param_space, verbose=True):
             elif type(k) is tuple:
                 kwargs = set_deepattr(kwargs, k, v[i])
         # get cost
-        cost_i = fn(*args, **kwargs)
-        cost.append(cost_i)
+        cost.update({v: fn(*args, **kwargs)})
         # display progress
         clear_output(wait=True)
-        display('Progress: %0.2f%%' % (100. * (i+1) / n_search))
+        display('Progress: %0.2f%%' % (100. * (n+1) / n_search))
         if verbose:
-            display('Cost: %a' % cost)
-            display('Parameter value(s):')
-            display('\n'.join([str((k, v[i])) for k, v in param_space.items()]))
-            plt.plot(cost)
-            plt.show()
+            display('Parameters: %s' % str(list(param_space.keys())))
+            display('Values: %s' % str(list(cost.keys())[-1]))
+            display('Cost: %s' % str(list(cost.values())[-1]))
     return cost
 
 def bootstrap(*args, n_samples=1000, fn=np.mean, fn_kwargs={}):
