@@ -255,9 +255,6 @@ class FeedForward(Module):
         self.init_weights(pattern='bias', fn=torch.zeros_like)
         # link parameters
         self.link_parameters(self.forward_layer)
-        # set forward, reconstruct functions
-        self.forward_layer.forward = self.forward
-        self.reconstruct_layer.forward = self.reconstruct
 
 class Branch(Module):
     """
@@ -272,9 +269,6 @@ class Branch(Module):
         self.output_names = output_names
         for i, branch in enumerate(self.branches):
             self.forward_layer.add_module('branch_'+str(i), branch)
-        # set forward, reconstruct functions
-        self.forward_layer.forward = self.forward
-        self.reconstruct_layer.forward = self.reconstruct
 
     def output_shape(self, input_shape):
         outputs = self.forward(torch.zeros(input_shape))
@@ -323,9 +317,6 @@ class Control(Module):
         self.init_weights(pattern='bias', fn=torch.zeros_like)
         # link parameters
         self.link_parameters(self.forward_layer)
-        # set forward, reconstruct functions
-        self.forward_layer.forward = self.forward
-        self.reconstruct_layer.forward = self.reconstruct
 
     def forward(self, input):
         if self.input_shape:
@@ -448,9 +439,6 @@ class RBM(Module):
         # set v_bias and h_bias
         self.v_bias = self.hidden_transpose_bias
         self.h_bias = self.hidden_bias
-        # set forward, reconstruct functions
-        self.forward_layer.forward = self.forward
-        self.reconstruct_layer.forward = self.reconstruct
 
     def hidden_shape(self, input_shape):
         if len(input_shape) == 4:
@@ -832,9 +820,6 @@ class CRBM(RBM):
         # set v_bias, h_bias, y_bias
         self.v_bias = self.hidden_transpose_bias
         self.y_bias = self.top_down_transpose_bias
-        # set forward, reconstruct functions
-        self.forward_layer.forward = self.forward
-        self.reconstruct_layer.forward = self.reconstruct
 
     def sample_h_given_vy(self, v, y):
         # get top down input from y
