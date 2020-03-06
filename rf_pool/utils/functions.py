@@ -291,7 +291,27 @@ def normalize_range(x, dims=(1,2)):
 def kwarg_fn(modules=[list, OrderedDict, dict, __builtins__, np, torch], x=None,
              **kwargs):
     """
-    #TODO:WRITEME
+    A function to apply a list of functions based on keyword arguments
+
+    Parameters
+    ----------
+    modules : list, modules containing functions to call
+    x : input to apply functions
+        [default: None]
+    **kwargs : **dict, keyword arguments like fn=args in the order
+        for functions to be called
+
+    Returns
+    -------
+    x : output from applied function calls
+
+    Example
+    -------
+    >>> # y = (x + 3) * 4
+    >>> x = 2
+    >>> y = kwarg_fn(x=x, add=[3], multiply=[4])
+    >>> print(y)
+    20
     """
     # for each kwarg item, get/apply function
     for key, value in kwargs.items():
