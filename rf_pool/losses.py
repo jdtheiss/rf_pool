@@ -1,8 +1,27 @@
+from collections import OrderedDict
+import copy
+
 import numpy as np
 import torch
 import torch.nn as nn
 
 from .utils import functions
+
+def _count_items(d):
+    if not isinstance(d, (dict, OrderedDict)):
+        return 1
+    cnt = 0
+    for v in d.values():
+        cnt += _count_items(v)
+    return cnt
+
+def _get_items(d):
+    if not isinstance(d, (dict, OrderedDict)):
+        return [d]
+    items = []
+    for v in d.values():
+        items.extend(_get_items(v))
+    return items
 
 class Loss(nn.Module):
     """
@@ -167,8 +186,7 @@ class FeatureLoss(Loss):
         on_parameters = self.set_params(set='on')
         # get features for layer_id
         layer_ids = self.model.get_layer_ids(self.layer_id)
-        output = self.model.apply_layers(input, layer_ids,
-                                         **self.kwargs)
+        output = self.model.apply(input, layer_ids, **self.kwargs)
         # mean across image space
         output = torch.mean(output, [-2,-1])
         # turn off parameters
@@ -195,19 +213,50 @@ class FeatureLoss(Loss):
 
 class LayerLoss(Loss):
     """
+    Layer-based loss
+
+    Parameters
+    ----------
+    model : rf_pool.models
+        model used to obtain layer outputs
+    features : dict
+        dictionary containing {layer_id: []} for obtaining layer-specific
+        outputs on which to compute the loss (see model.apply). use
+        {layer_id: {module_name: []}} to set specific module within layer.
+    loss_fn : torch.nn.modules.loss or function
+        loss function to compute over features chosen from layers/modules
+    cost : float or list, optional
+        cost per layer/module pair or float value applied to all losses
+        [default: 1.]
+    parameters : torch.nn.parameter.Parameter
+        parameters to use in update from loss
+        [default: None, uses parameters as they are]
+    input_target : torch.Tensor
+        image used to obtain features to match with loss function
+        (assumed to stay the same)
+        [default: None]
+    target : torch.Tensor
+        features to match with loss function [default: None]
+    **kwargs : **dict
+        keyword arguments passed to model.apply function
+
+    Returns
+    -------
+    None
     """
-    def __init__(self, model, layer_ids, loss_fn, cost=1.,
+    def __init__(self, model, features, loss_fn, cost=1.,
                  parameters=None, input_target=None, target=None, **kwargs):
         super(LayerLoss, self).__init__()
         self.model = model
-        self.layer_ids = layer_ids
+        self.features = features
+        self.n_features = _count_items(self.features)
         self.loss_fn = loss_fn
-        self.cost = functions.parse_list_args(len(layer_ids), cost)[0]
+        self.cost = functions.parse_list_args(self.n_features, cost)[0]
         self.cost = [c[0] for c in self.cost]
         self.parameters = parameters
         self.input_target = input_target
         self.target = target
-        self.kwargs = functions.parse_list_args(len(layer_ids), **kwargs)[1]
+        self.kwargs = kwargs
         # set input_target to features if given
         if self.input_target is not None:
             self.input_target = self.get_features(self.input_target)
@@ -217,21 +266,11 @@ class LayerLoss(Loss):
         # turn on parameters
         on_parameters = self.set_params(set='on')
         # get features
-        feat = []
-        i = 0
-        for (name, layer) in self.model.layers.named_children():
-            if name in self.layer_ids:
-                feat.append([])
-                for arg in args:
-                    output = layer.apply_modules(arg, 'forward_layer',
-                                                 **self.kwargs[i])
-                    feat[-1].append(output)
-                i += 1
-            for ii, arg in enumerate(args):
-                args[ii] = layer.forward(arg)
+        feat = copy.deepcopy(self.features)
+        [self.model.apply(arg, output=feat, **self.kwargs) for arg in args]
         # turn off parameters
         self.set_params(on_parameters, set='off')
-        return feat
+        return _get_items(feat)
 
     def forward(self, *args):
         # get features
@@ -253,7 +292,7 @@ class LayerLoss(Loss):
             else:
                 loss_i = self.loss_fn(*feat_i)
             loss = loss + loss_i * self.cost[i]
-        return loss / len(self.layer_ids)
+        return loss / self.n_features
 
 class SparseLoss(LayerLoss):
     """
@@ -285,7 +324,7 @@ class SparseLoss(LayerLoss):
     kernel_size : tuple or None, optional
         kernel size for type='group_lasso'
     **kwargs
-        keyword arguments for apply_modules method if module_name is not None
+        keyword arguments for apply method if module_name is not None
 
     Returns
     -------

@@ -27,9 +27,6 @@ class Module(nn.Module):
         self.forward_layer = nn.Sequential()
         self.reconstruct_layer = nn.Sequential()
 
-    def __call__(self, *args):
-        return self.forward(*args)
-
     def output_shape(self, input_shape=None):
         if input_shape is None:
             input_shape = self.input_shape
@@ -164,13 +161,19 @@ class Module(nn.Module):
             transposed_fn = fn
         return transposed_fn
 
-    def get_module_names(self, layer_name, module_name=None):
+    def get_module_names(self, output_module_name=None,
+                         layer_name='forward_layer'):
         module_names = []
         layer = getattr(self, layer_name)
-        for name, _ in layer.named_children():
+        if type(output_module_name) is not list:
+            output_module_name = [output_module_name]
+        cnt = -1
+        for i, (name, _) in enumerate(layer.named_children()):
             module_names.append(name)
-            if module_name and name == module_name:
-                break
+            if name in output_module_name:
+                cnt = i + 1
+        if cnt > -1:
+            return module_names[:cnt]
         return module_names
 
     def get_modules(self, layer_name, module_names):
@@ -181,36 +184,100 @@ class Module(nn.Module):
                 modules.append(module)
         return modules
 
-    def apply_modules(self, input, layer_name, module_names=[], output_module=None,
-                      **kwargs):
-        layer = getattr(self, layer_name)
-        module_names = self.get_module_names(layer_name, output_module)
-        for i, (name, module) in enumerate(layer.named_children()):
-            if name in module_names:
-                if i==0 and layer == self.forward_layer:
-                    if self.input_shape:
-                        input = torch.reshape(input, self.input_shape)
-                if i == len(module_names)-1:
-                    input = module(input, **kwargs)
-                else:
-                    input = module(input)
-                if i==len(layer)-1 and layer == self.reconstruct_layer:
-                    if self.reconstruct_shape:
-                        input = torch.reshape(input, self.reconstruct_shape)
-        return input
-
-    def forward(self, input):
+    def forward(self, input, module_names=[], output={}, **kwargs):
         if self.input_shape:
             self.reconstruct_shape = input.shape
             input = torch.reshape(input, self.input_shape)
-        output = self.forward_layer(input)
-        return output
+        for name, module in self.forward_layer.named_children():
+            if len(module_names) > 0 and name not in module_names:
+                continue
+            # get module-specific kwargs
+            mod_kwargs = kwargs.get(name)
+            if mod_kwargs is None:
+                mod_kwargs = {}
+            # apply module
+            input = module(input, **mod_kwargs)
+            # set to output
+            if type(output.get(name)) is list:
+                output.get(name).append(input)
+        return input
 
-    def reconstruct(self, input):
-        output = self.reconstruct_layer(input)
+    def reconstruct(self, input, module_names=[], output={}, **kwargs):
+        for name, module in self.reconstruct_layer.named_children():
+            if len(module_names) > 0 and name not in module_names:
+                continue
+            # get module-specific kwargs
+            mod_kwargs = kwargs.get(name)
+            if mod_kwargs is None:
+                mod_kwargs = {}
+            # apply module
+            input = module(input, **mod_kwargs)
+            # set to output
+            if type(output.get(name)) is list:
+                output.get(name).append(input)
         if self.reconstruct_shape:
-            output = torch.reshape(output, self.reconstruct_shape)
-        return output
+            input = torch.reshape(input, self.reconstruct_shape)
+        return input
+
+    def apply(self, input, layer_name='forward_layer', module_names=[],
+              output={}, output_module=None, **kwargs):
+        """
+        Apply modules with module-specific kwargs and/or collect outputs in dict
+
+        Parameters
+        ----------
+        input : torch.Tensor
+            input passed through modules
+        layer_name : str, optional
+            name of Sequential to apply to input [default: 'forward_layer']
+        module_names : list, optional
+            names of modules in Sequential to apply (i.e. only these modules)
+            [default: [], apply all modules in Sequential]
+        output : dict, optional
+            dictionary like {module_name: []} to be updated with specific results
+            [default: {}, will not set outputs to dictionary]
+        output_module : str, optional
+            name of module to stop passing input through Sequential (i.e., get
+            module_names for each module up to and including output_module)
+            [default: None, apply all layers]
+        **kwargs : dict
+            module-specific keyword arguments like {module_name: kwargs} to be
+            applied for a given module
+
+        Results
+        -------
+        output : torch.Tensor
+            output of passing input through modules
+
+        Examples
+        --------
+        >>> # pass input through modules and obtain outputs of specific module
+        >>> layer = FeedForward(hidden=torch.nn.Conv2d(1,16,5),
+                                activation=torch.nn.ReLU(),
+                                pool=torch.nn.MaxPool2d(2)))
+        >>> saved_outputs = {'activation': []}
+        >>> output = layer.apply(torch.rand(1,1,6,6),
+                                 module_names=['hidden','activation','pool'],
+                                 output=saved_outputs)
+        >>> print(output.shape, saved_outputs.get('activation')[0].shape)
+        torch.Size([1, 16, 1, 1]) torch.Size([1, 16, 2, 2])
+
+        Notes
+        -----
+        The argument `layer_name` must have a corresponding function, which is
+        obtained as getattr(self, layer_name.replace('_layer', '')). For example,
+        'forward_layer' is the layer_name for the forward function and
+        'reconstruct_layer' is the layer_name for the reconstruct function.
+        """
+        # get module_names
+        if len(module_names) == 0:
+            module_names = self.get_module_names(output_module, layer_name)
+        # apply modules
+        fn = getattr(self, layer_name.replace('_layer', ''))
+        return fn(input, module_names, output, **kwargs)
+
+    def __call__(self, *args, **kwargs):
+        return self.apply(*args, **kwargs)
 
     def train(self, input, label, loss_fn, optimizer=None, monitor_loss=None,
               **kwargs):
@@ -245,7 +312,19 @@ class Module(nn.Module):
 
 class FeedForward(Module):
     """
-    #TODO:WRITEME
+    Feed-forward layer
+
+    Parameters
+    ----------
+    input_shape : list, optional
+        shape to which input data should be reshaped
+        [default: None, input data not reshaped]
+    **kwargs : dict
+        modules for layer like {module_name: module}
+
+    Returns
+    -------
+    None
     """
     def __init__(self, input_shape=None, **kwargs):
         super(FeedForward, self).__init__(input_shape)
@@ -258,7 +337,33 @@ class FeedForward(Module):
 
 class Branch(Module):
     """
-    #TODO:WRITEME
+    Branch layer applying multiple streams of modules to input data
+
+    Parameters
+    ----------
+    branches : list of torch.nn.Module
+        list of branches of modules to apply to input data
+    branch_shapes : list, optional
+        list of output shapes to which each branch output should be reshaped
+        [default: None, no reshaping of branch outputs]
+    cat_output : boolean, optional
+        True/False of whether to concatenate branch outputs (along channel dim)
+        Note branch outputs must match shape on all dims other than channel.
+        [default: False, does not concatenate branches]
+    output_names : list, optional
+        list of output names to associate each branch output into a dictionary
+        Note output from forward pass will be dictionary like
+        {branch_name: branch_output}
+        [default: None, branch outputs will not be dictionary]
+    input_shape : list, optional
+        shape to which input data should be reshaped
+        [default: None, input data not reshaped]
+    **kwargs : dict
+        modules for layer like {module_name: module}
+
+    Returns
+    -------
+    None
     """
     def __init__(self, branches, branch_shapes=None, cat_output=False,
                  output_names=None, input_shape=None):
@@ -274,39 +379,77 @@ class Branch(Module):
         outputs = self.forward(torch.zeros(input_shape))
         return [output.shape for output in outputs]
 
-    def forward(self, input, names=[]):
+    def forward(self, input, module_names=[], output={}, **kwargs):
         if self.input_shape:
             self.reconstruct_shape = input.shape
             input = torch.reshape(input, self.input_shape)
         outputs = []
         for i, (name, branch) in enumerate(self.forward_layer.named_children()):
-            if len(names) == 0 or name in names:
-                outputs.append(branch.forward(input))
-                if self.branch_shapes:
-                    outputs[-1] = torch.reshape(outputs[-1], self.branch_shapes[i])
+            if len(module_names) > 0 and name not in module_names:
+                continue
+            # get module-specific kwargs
+            mod_kwargs = kwargs.get(name)
+            if mod_kwargs is None:
+                mod_kwargs = {}
+            # apply module
+            outputs.append(branch.forward(input, **mod_kwargs))
+            if self.branch_shapes:
+                outputs[-1] = torch.reshape(outputs[-1], self.branch_shapes[i])
+            # set to output
+            if type(output.get(name)) is list:
+                output.get(name).append(outputs[-1])
         if self.cat_output:
             outputs = torch.cat(outputs, 1)
         if self.output_names is not None:
-            outputs = OrderedDict([(k,v) for k, v in
-                                   zip(self.output_names, outputs)])
+            outputs = OrderedDict([(k,v)
+                                   for k, v in zip(self.output_names, outputs)])
         return outputs
 
-    def reconstruct(self, input, names=[]):
+    def reconstruct(self, input, module_names=[], output={}, **kwargs):
         outputs = []
         for name, branch in self.forward_layer.named_children():
-            if len(names) == 0 or name in names:
-                #TODO: slice input channels for each branch
-                output = branch.reconstruct(input)
-                if self.reconstruct_shape:
-                    output = torch.reshape(output, self.reconstruct_shape)
-                outputs.append(output)
+            if len(module_names) > 0 and name not in module_names:
+                continue
+            #TODO: slice input channels for each branch
+            # get module-specific kwargs
+            mod_kwargs = kwargs.get(name)
+            if mod_kwargs is None:
+                mod_kwargs = {}
+            # apply module
+            outputs.append(branch.reconstruct(input, **mod_kwargs))
+            if self.reconstruct_shape:
+                outputs[-1] = torch.reshape(outputs[-1], self.reconstruct_shape)
+            # set to output
+            if type(output.get(name)) is list:
+                output.get(name).append(outputs[-1])
         if self.cat_output:
             outputs = torch.cat(outputs, 1)
         return outputs
 
 class Control(Module):
     """
-    #TODO:WRITEME
+    Control network layer to update arguments/keyword arguments passed to other
+    modules/layers
+
+    Parameters
+    ----------
+    input_shape : list, optional
+        shape to which input data should be reshaped
+        [default: None, input data not reshaped]
+    **kwargs : dict
+        modules for layer like {module_name: module}
+
+    Returns
+    -------
+    None
+
+    Notes
+    -----
+    This network must contain a `control` module whose output is passed to the
+    following module as a second argument (e.g., module(input, control_output)).
+    The `type` of control_output is used to discern how the output should be
+    passed to the following module (i.e., dictionary types are passed as
+    module(input, **control_output)).
     """
     def __init__(self, input_shape=None, **kwargs):
         super(Control, self).__init__(input_shape)
@@ -318,24 +461,34 @@ class Control(Module):
         # link parameters
         self.link_parameters(self.forward_layer)
 
-    def forward(self, input):
+    def forward(self, input, module_names=[], output={}, **kwargs):
         if self.input_shape:
             self.reconstruct_shape = input.shape
             input = torch.reshape(input, self.input_shape)
         # apply module
         control_out = None
         for name, module in self.forward_layer.named_children():
+            if len(module_names) > 0 and name not in module_names:
+                continue
+            # get module-specific kwargs
+            mod_kwargs = kwargs.get(name)
+            if mod_kwargs is None:
+                mod_kwargs = {}
+            # apply module
             if name == 'control':
-                control_out = module(input)
+                control_out = module(input, **mod_kwargs)
             elif control_out is not None:
                 if type(control_out) is list:
-                    input = module(input, *control_out)
-                elif type(control_out) is dict:
-                    input = module(input, **control_out)
+                    input = module(input, *control_out, **mod_kwargs)
+                elif isinstance(control_out, (dict, OrderedDict)):
+                    input = module(input, **control_out, **mod_kwargs)
                 else:
-                    input = module(input, control_out)
+                    input = module(input, control_out, **mod_kwargs)
             else:
-                input = module(input)
+                input = module(input, **mod_kwargs)
+            # set to output
+            if type(output.get(name)) is list:
+                output.get(name).append(input)
         return input
 
 class RBM(Module):
@@ -452,7 +605,7 @@ class RBM(Module):
 
     def sample(self, x, layer_name, pooled_output=False):
         # get activation
-        x_mean = self.apply_modules(x, layer_name, ['activation'])
+        x_mean = self.apply(x, layer_name, ['activation'])
         # get pooling x_mean, x_sample if rf_pool
         pool_module = self.get_modules(layer_name, ['pool'])
         if len(pool_module) > 0 and hasattr(pool_module[0], 'rfs'):
@@ -462,22 +615,22 @@ class RBM(Module):
                 pool_fn = pool_module[0].pool_fn
             x_mean = pool_module[0](x_mean, pool_fn=pool_fn)
         # sample from x_mean
-        x_sample = self.apply_modules(x_mean, layer_name, ['sample'])
+        x_sample = self.apply(x_mean, layer_name, ['sample'])
         return x_mean, x_sample
 
     def sample_h_given_v(self, v, pooled_output=False):
         # get hidden output
-        pre_act_h = self.apply_modules(v, 'forward_layer', output_module='hidden')
+        pre_act_h = self.apply(v, 'forward_layer', output_module='hidden')
         return (pre_act_h,) + self.sample(pre_act_h, 'forward_layer', pooled_output)
 
     def sample_v_given_h(self, h):
         # get hidden_transpose output
-        pre_act_v = self.apply_modules(h, 'reconstruct_layer', ['hidden_transpose'])
+        pre_act_v = self.apply(h, 'reconstruct_layer', ['hidden_transpose'])
         return (pre_act_v,) + self.sample(pre_act_v, 'reconstruct_layer')
 
     def sample_h_given_vt(self, v, t, pooled_output=False):
         # get hidden output
-        pre_act_h = self.apply_modules(v, 'forward_layer', output_module='hidden')
+        pre_act_h = self.apply(v, 'forward_layer', output_module='hidden')
         # repeat t to add to pre_act_h
         shape = [v_shp//t_shp for (v_shp,t_shp) in zip(pre_act_h.shape,t.shape)]
         t = functions.repeat(t, shape)
@@ -506,7 +659,7 @@ class RBM(Module):
         # detach h from graph
         h = h.detach()
         # get Wv
-        Wv = self.apply_modules(v, 'forward_layer', output_module='hidden')
+        Wv = self.apply(v, 'forward_layer', output_module='hidden')
         Wv = Wv - h_bias
         # get hWv, bv, ch
         hWv = torch.sum(torch.mul(h, Wv).flatten(1), 1)
@@ -519,7 +672,7 @@ class RBM(Module):
         v_dims = tuple([1 for _ in range(v.ndimension()-2)])
         v_bias = torch.reshape(self.v_bias, (1,-1) + v_dims)
         # get Wv_b
-        Wv_b = self.apply_modules(v, 'forward_layer', output_module='hidden')
+        Wv_b = self.apply(v, 'forward_layer', output_module='hidden')
         # get vbias, hidden terms
         vbias_term = torch.flatten(v * v_bias, 1)
         vbias_term = torch.sum(vbias_term, 1)
@@ -621,10 +774,10 @@ class RBM(Module):
             # get log(p_k(v_k))
             log_pk += self._ais_free_energy(v_k, b, base_rate)
             # sample h
-            Wv_b = self.apply_modules(v_k,'forward_layer',output_module='hidden')
+            Wv_b = self.apply(v_k, 'forward_layer', output_module='hidden')
             h = self.sample(Wv_b * b, 'forward_layer')[1]
             # sample v_k+1
-            pre_act_v = self.apply_modules(h,'reconstruct_layer',['hidden_transpose'])
+            pre_act_v = self.apply(h, 'reconstruct_layer', ['hidden_transpose'])
             v_k = self.sample((1. - b) * base_rate_m + b * pre_act_v,
                               'reconstruct_layer')[1]
             # get log(p_k(v_k+1))
@@ -760,7 +913,7 @@ class RBM(Module):
                                                'momentum': 0.,
                                                'lr': kwargs.get('persistent_lr')})
             # dropout
-            ph_sample = self.apply_modules(ph_sample,'forward_layer',['dropout'])
+            ph_sample = self.apply(ph_sample, 'forward_layer', ['dropout'])
             # negative phase
             [
                 pre_act_nv, nv_mean, nv_sample, pre_act_nh, nh_mean, nh_sample
@@ -795,7 +948,7 @@ class RBM(Module):
 class CRBM(RBM):
     """
     #TODO:WRITEME
-    """#TODO: Update to use apply_modules for activation and sample functions
+    """#TODO: Update to use apply for activation and sample functions
     def __init__(self, top_down=None, y_activation_fn=None, y_sample_fn=None,
                  **kwargs):
         super(CRBM, self).__init__(**kwargs)
@@ -823,11 +976,11 @@ class CRBM(RBM):
 
     def sample_h_given_vy(self, v, y):
         # get top down input from y
-        Uy = self.apply_modules(y, 'reconstruct_layer', ['top_down'])
+        Uy = self.apply(y, 'reconstruct_layer', ['top_down'])
         return self.sample_h_given_vt(v, Uy)
 
     def sample_y_given_h(self, h):
-        pre_act_y = self.apply_modules(h, 'forward_layer', ['top_down_transpose'])
+        pre_act_y = self.apply(h, 'forward_layer', ['top_down_transpose'])
         if self.y_activation_fn:
             y_mean = self.y_activation_fn(pre_act_y)
         else:
@@ -874,8 +1027,8 @@ class CRBM(RBM):
         # detach h from graph
         h = h.detach()
         # get Wv, Uy
-        Wv = self.apply_modules(v, 'forward_layer', output_module='hidden')
-        Uy = self.apply_modules(y, 'reconstruct_layer', ['top_down'])
+        Wv = self.apply(v, 'forward_layer', output_module='hidden')
+        Uy = self.apply(y, 'reconstruct_layer', ['top_down'])
         Wv = Wv - h_bias
         # get hWv, hUy, bv, ch, dy
         hWv = torch.sum(torch.mul(h, Wv).flatten(1), 1)
@@ -924,7 +1077,7 @@ class CRBM(RBM):
                                                'momentum': 0.,
                                                'lr': kwargs.get('persistent_lr')})
             # dropout
-            ph_sample = self.apply_modules(ph_sample, 'forward_layer', ['dropout'])
+            ph_sample = self.apply(ph_sample, 'forward_layer', ['dropout'])
             # negative phase
             [
                 pre_act_nv, nv_mean, nv_sample,

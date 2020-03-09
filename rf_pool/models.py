@@ -14,6 +14,23 @@ from . import losses, ops
 from .modules import Module, FeedForward, RBM
 from .utils import functions, visualize
 
+def _get_dict_shapes(d):
+    """
+    Helper function to replace array-like with its shape within a dictionary
+    """
+    if not isinstance(d, (dict, OrderedDict)):
+        return None
+    # update with shapes
+    for k, v in d.items():
+        if type(v) is list:
+            v = [v_i.shape if hasattr(v_i, 'shape') else None for v_i in v]
+        elif hasattr(v, 'shape'):
+            v = v.shape
+        elif isinstance(v, (dict, OrderedDict)):
+            v = _get_dict_shapes(v)
+        d.update({k: v})
+    return d
+
 class Model(nn.Module):
     """
     Base class for initializing, training, saving, loading, visualizing models
@@ -36,17 +53,6 @@ class Model(nn.Module):
     def n_layers(self):
         return len(self.layers)
 
-    def output_shapes(self, input_shape=None, layer_ids=None, **kwargs):
-        if input_shape is None:
-            input_shape = self.data_shape
-        if layer_ids is None:
-            layer_ids = self.get_layer_ids()
-        # create dummy input
-        input = torch.zeros(input_shape)
-        # get each layer output shape
-        outputs = self.apply_layers(input, output_layer=layer_ids, **kwargs)
-        return [o.shape if hasattr(o, 'shape') else None for o in outputs]
-
     def append(self, layer_id, layer):
         layer_id = str(layer_id)
         self.layers.add_module(layer_id, layer)
@@ -57,45 +63,146 @@ class Model(nn.Module):
             layers.append(self.layers[layer_id])
         return layers
 
-    def apply_layers(self, input, layer_ids=[], output_layer=None, forward=True,
-                     **kwargs):
-        # init output, get layers
-        output = []
-        if len(layer_ids) == 0 and output_layer is not None:
-            if type(output_layer) is not list:
-                output_layer = [output_layer]
+    def get_layer_ids(self, output_layer_id=None, forward=True):
+        layer_ids = [id for id, _ in self.layers.named_children()]
+        if not forward:
+            layer_ids.reverse()
+        if type(output_layer_id) is not list:
+            output_layer_id = [output_layer_id]
+        cnt = -1
+        for i, name in enumerate(layer_ids):
+            if name in output_layer_id:
+                cnt = i + 1
+        if cnt > -1:
+            return layer_ids[:cnt]
+        return layer_ids
+
+    def apply(self, input, layer_ids=[], forward=True, output={},
+              output_layer=None, **kwargs):
+        """
+        Apply layers with layer-specific kwargs and/or collect outputs in dict
+
+        Parameters
+        ----------
+        input : torch.Tensor
+            input passed through model layers
+        layer_ids : list, optional
+            names of layers to apply to input [default: [], apply all layers]
+        forward : boolean, optional
+            True/False to apply forward (vs. reverse) pass through layers
+            [default: True]
+        output : dict, optional
+            dictionary like {layer_id: []} to be updated with specific results
+            [default: {}, will not set outputs to dictionary]
+        output_layer : str, optional
+            name of layer to stop passing input through model (i.e., get layer_ids
+            for each layer up to and including output_layer)
+            [default: None, uses layer_ids]
+        **kwargs : dict
+            layer-specific keyword arguments like {layer_id: kwargs} to be applied
+            for a given layer
+
+        Results
+        -------
+        output : torch.Tensor
+            output of passing input through layers
+
+        Examples
+        --------
+        >>> # pass input through model and obtain outputs of specific layer
+        >>> model = FeedForwardNetwork()
+        >>> model.append('0', FeedForward(hidden=torch.nn.Conv2d(1,16,5),
+                                          activation=torch.nn.ReLU(),
+                                          pool=torch.nn.MaxPool2d(2)))
+        >>> model.append('1', FeedForward(hidden=torch.nn.Linear(16, 10)))
+        >>> saved_outputs = {'0': {'pool': []}}
+        >>> output = model.apply(torch.rand(1,1,6,6), layer_ids=['0','1'],
+                                 output=saved_outputs)
+        >>> print(output.shape, saved_outputs.get('0').get('pool')[0].shape)
+        torch.Size([1, 10]) torch.Size([1, 16, 1, 1])
+        """
+        # get layers for layer_ids
+        if len(layer_ids) == 0:
             layer_ids = self.get_layer_ids(output_layer, forward=forward)
-        elif output_layer is None:
-            output = input
-            output_layer = []
         layers = self.get_layers(layer_ids)
-        if forward:
-            layer_name = 'forward_layer'
-        else:
-            layer_name = 'reconstruct_layer'
-        # parse kwargs
-        if len(output_layer) > 0:
-            kwargs = functions.parse_list_args(len(output_layer), **kwargs)[1]
-            idx = dict([(id,n) for n, id in enumerate(output_layer)])
-        else:
-            kwargs = functions.parse_list_args(len(layer_ids), **kwargs)[1]
-            idx = dict([(id,n) for n, id in enumerate(layer_ids)])
-        # apply each layer
+        # set layer_name
+        layer_name = ['reconstruct_layer','forward_layer'][forward]
+        # for each layer, apply_modules
         for layer_id, layer in zip(layer_ids, layers):
-            # apply modules
-            n = idx.get(layer_id)
-            if n is not None and len(kwargs[n]) > 0:
-                output_i = layer.apply_modules(input, layer_name, **kwargs[n])
-                input = layer.apply_modules(input, layer_name)
-            else:
-                output_i = layer.apply_modules(input, layer_name)
-                input = output_i
-            # set to output
-            if layer_id in output_layer:
-                output.append(output_i)
-            elif layer_id == layer_ids[-1]:
-                output = output_i
-        return output
+            # get layer_kwargs and set default layer_name
+            layer_kwargs = kwargs.get(layer_id)
+            if layer_kwargs is None:
+                layer_kwargs = {}
+            layer_kwargs.setdefault('layer_name', layer_name)
+            # get output dict for layer
+            layer_output = output.get(layer_id)
+            if not isinstance(layer_output, (dict, OrderedDict)):
+                layer_output = {}
+            # apply_modules
+            input = layer.apply(input, output=layer_output, **layer_kwargs)
+            # append to output if list
+            if type(output.get(layer_id)) is list:
+                output.get(layer_id).append(input)
+        return input
+
+    def __call__(self, *args, **kwargs):
+        return self.apply(*args, **kwargs)
+
+    def output_shapes(self, input_shape=None, layer_ids=[], output_layer=None,
+                      **kwargs):
+        """
+        Get output shapes for layers within model
+
+        Parameters
+        ----------
+        input_shape : tuple, optional
+            shape of input data for which to get output shapes
+            [default: None, tries self.data_shape]
+        layer_ids : list, optional
+            layer ids for which to get output shapes
+            [default: [], all layers]
+        output_layer : str, optional
+            layer id at which to stop getting output shapes (i.e., output shapes
+            for all layers up to and including output_layer)
+            [default: None, uses layer_ids]
+        **kwargs : dict, optional
+            keyword arguments used in apply call (see self.apply)
+
+        Returns
+        -------
+        output_shapes : dict
+            dictionary like {layer_id: [output_shape]} containing output shapes
+            for given input_shape and layer_ids
+
+        Examples
+        --------
+        >>> # obtain output shapes for modules within model
+        >>> model = FeedForwardNetwork()
+        >>> model.append('0', FeedForward(hidden=torch.nn.Conv2d(1,16,5),
+                                          activation=torch.nn.ReLU(),
+                                          pool=torch.nn.MaxPool2d(2)))
+        >>> model.append('1', FeedForward(hidden=torch.nn.Linear(16, 10)))
+        >>> output = {'0': {'pool': []}, '1': {'hidden': []}}
+        >>> shapes = output_shapes((1,1,6,6), output=output)
+        >>> print(shapes)
+        {'0': {'pool': [torch.Size([1, 16, 1, 1])]}, '1': {'hidden': [torch.Size([1, 10])]}}
+        """
+        if input_shape is None:
+            input_shape = self.data_shape
+        # get layer_ids
+        if len(layer_ids) == 0:
+            layer_ids = self.get_layer_ids(output_layer)
+        # set outputs based on layer_ids
+        output = kwargs.get('output')
+        if output is None:
+            output = dict([(id, []) for id in layer_ids])
+            kwargs.update({'output': output})
+        # create dummy input
+        input = torch.zeros(input_shape)
+        # get output shapes
+        self.apply(input, layer_ids, **kwargs)
+        # update with shapes
+        return _get_dict_shapes(output)
 
     def update_modules(self, layer_ids, layer_name, module_name, op, overwrite=True,
                        append=True):
@@ -157,19 +264,8 @@ class Model(nn.Module):
             input = self.layers[layer_id].reconstruct(input)
         return input
 
-    def get_layer_ids(self, layer_id=None, forward=True):
-        layer_ids = [id for id, _ in self.layers.named_children()]
-        if not forward:
-            layer_ids.reverse()
-        if layer_id is not None:
-            if type(layer_id) is not list:
-                layer_id = [layer_id]
-            cnt = [n+1 for n, id in enumerate(layer_ids) if id in layer_id][-1]
-            layer_ids = layer_ids[:cnt]
-        return layer_ids
-
     def save_model(self, filename, extras={}):
-        if type(extras) is not dict:
+        if not isinstance(extras, (dict, OrderedDict)):
             extras = {'extras': extras}
         extras.update({'model_str': str(self)})
         extras.update({'model_weights': self.download_weights()})
@@ -202,10 +298,10 @@ class Model(nn.Module):
         model = []
         if type(extras) is list:
             model = extras.pop(0)
-        elif type(extras) is dict and 'model_weights' in extras:
+        elif isinstance(extras, (dict, OrderedDict)) and 'model_weights' in extras:
             self.load_weights(extras.get('model_weights'), param_dict)
             model = self
-        if type(model) is dict or type(model) is OrderedDict:
+        if isinstance(model, (dict, OrderedDict)):
             self.load_weights(model, param_dict)
             model = self
         return model, extras
@@ -305,7 +401,7 @@ class Model(nn.Module):
         #TODO:WRITEME
         Note
         ----
-        When using kwarg layer_params, batch_size should be equal to 1.
+        When using kwarg label_params, batch_size should be equal to 1.
         """
         # get layer_id (layer-wise training) from kwargs
         options = functions.pop_attributes(kwargs, ['layer_id'], default=None)
@@ -320,19 +416,19 @@ class Model(nn.Module):
                                                 default={}))
         # added loss
         if options.get('add_loss'):
-            if type(options.get('add_loss')) is dict:
+            if isinstance(options.get('add_loss'), (dict, OrderedDict)):
                 add_loss = losses.LayerLoss(self, **options.get('add_loss'))
             else:
                 add_loss = options.get('add_loss')
         # sparsity loss
         if options.get('sparse_loss'):
-            if type(options.get('sparse_loss')) is dict:
+            if isinstance(options.get('sparse_loss'), (dict, OrderedDict)):
                 sparse_loss = losses.SparseLoss(self, **options.get('sparse_loss'))
             else:
                 sparse_loss = options.get('sparse_loss')
         # monitor loss
         if options.get('monitor_loss'):
-            if type(options.get('monitor_loss')) is dict:
+            if isinstance(options.get('monitor_loss'), (dict, OrderedDict)):
                 monitor_loss = losses.KwargsLoss(**options.get('monitor_loss'))
             else:
                 monitor_loss = options.get('monitor_loss')
@@ -363,7 +459,10 @@ class Model(nn.Module):
                 # layerwise training
                 if options.get('layer_id') is not None:
                     # get inputs for layer_id
-                    layer_input = self.apply_layers(inputs[0], pre_layer_ids)
+                    if len(pre_layer_ids) > 0:
+                        layer_input = self.apply(inputs[0], pre_layer_ids)
+                    else:
+                        layer_input = inputs[0].clone()
                     if len(inputs[1:]) > 0 and options.get('add_loss') == {}:
                         layer_input = (layer_input,) + tuple(inputs[1:])
                     # train
@@ -527,7 +626,7 @@ class Model(nn.Module):
         pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
         pre_layer_ids.reverse()
         if len(pre_layer_ids) > 0:
-            w = self.apply_layers(w, pre_layer_ids, forward=False)
+            w = self.apply(w, pre_layer_ids, forward=False)
         return visualize.show_images(w, img_shape=img_shape, figsize=figsize,
                                      cmap=cmap)
 
@@ -546,20 +645,25 @@ class Model(nn.Module):
         # pass forward, then reconstruct down
         with torch.no_grad():
             if neg is None:
-                neg = self.apply_layers(input, pre_layer_ids)
+                if len(pre_layer_ids) > 0:
+                    neg = self.apply(input, pre_layer_ids)
+                else:
+                    neg = input.clone()
                 if hasattr(self.layers[layer_id], 'gibbs_vhv'):
                     neg = self.layers[layer_id].gibbs_vhv(neg, k=k)[4]
                 else:
                     neg = self.layers[layer_id].forward(neg)
                     neg = self.layers[layer_id].reconstruct(neg)
-            pre_layer_ids.reverse()
-            neg = self.apply_layers(neg, pre_layer_ids, forward=False)
+            if len(pre_layer_ids) > 0:
+                pre_layer_ids.reverse()
+                print(pre_layer_ids, neg.shape)
+                neg = self.apply(neg, pre_layer_ids, forward=False)
         # reshape, permute for plotting
         if img_shape:
             input = torch.reshape(input, (-1,1) + img_shape)
             neg = torch.reshape(neg, (-1,1) + img_shape)
         # check that negative has <= 3 channels
-        assert neg.shape[1] <= 3, ('negative image must have less than 3 channels')
+        assert neg.shape[1] <= 3, ('negative image must have less than 4 channels')
         input = torch.squeeze(input.permute(0,2,3,1), -1).numpy()
         neg = torch.squeeze(neg.permute(0,2,3,1), -1).numpy()
         input = functions.normalize_range(input, dims=(1,2))
@@ -581,7 +685,7 @@ class Model(nn.Module):
         # equation from Hoyer (2004) used in Ji et al. (2014)
         with torch.no_grad():
             pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
-            layer_input = self.apply_layers(input.detach(), pre_layer_ids)
+            layer_input = self.apply(input.detach(), pre_layer_ids)
             activity = self.layers[layer_id].apply_modules(layer_input,
                                                            'forward_layer',
                                                            output_module=module_name,
@@ -600,7 +704,7 @@ class Model(nn.Module):
         # get layers before layer id
         pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
         # apply forward up to layer id
-        layer_input = self.apply_layers(input.detach(), pre_layer_ids)
+        layer_input = self.apply(input.detach(), pre_layer_ids)
         # apply modules including pool
         return self.layers[layer_id].apply_modules(layer_input, 'forward_layer',
                                                    output_module='pool', **kwargs)
@@ -695,7 +799,7 @@ class DeepBeliefNetwork(Model):
         # get layer_ids
         layer_ids = self.get_layer_ids()
         # get output of n_layers-1
-        top_layer_input = self.apply_layers(input, layer_ids[:-1])
+        top_layer_input = self.apply(input, layer_ids[:-1])
         # gibbs sample top layer
         if top_down_input is not None:
             top_down = self.layers[layer_ids[-1]].gibbs_vhv(top_layer_input,
@@ -704,10 +808,10 @@ class DeepBeliefNetwork(Model):
             top_down = self.layers[layer_ids[-1]].gibbs_vhv(top_layer_input, k=k)[3]
         # reconstruct down to layer_id
         post_layer_ids = self.get_layer_ids(layer_id, forward=False)[1:-1]
-        layer_top_down = self.apply_layers(top_down, post_layer_ids, forward=False)
+        layer_top_down = self.apply(top_down, post_layer_ids, forward=False)
         # get layer_id input
         pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
-        layer_input = self.apply_layers(input, pre_layer_ids)
+        layer_input = self.apply(input, pre_layer_ids)
         # sample h given input, top_down
         return self.layers[layer_id].sample_h_given_vt(layer_input, layer_top_down)
 
@@ -834,8 +938,9 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
             hid_ops = self.update_modules(layer_ids[:-1], 'forward_layer',
                                           'hidden', mul_op, overwrite=False)
             try: # forward pass with doubled weights
-                hids = self.apply_layers(input, layer_ids, output_layer=layer_ids,
-                                         output_module='hidden')
+                saved_outputs = dict([(id, {'hidden': []}) for id in layer_ids])
+                self.apply(input, layer_ids, output=saved_outputs)
+                hids = [v.get(hidden)[0] for v in saved_outputs.values()]
             finally:
                 self.update_modules(layer_ids[:-1], 'forward_layer', 'hidden',
                                     hid_ops)
@@ -865,3 +970,7 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
                 else:
                     hids[i] = layer.sample_h_given_v(v, pooled)
         return v_out, hids
+
+if __name__ == '__main__':
+    import doctest
+    doctest.testmod()

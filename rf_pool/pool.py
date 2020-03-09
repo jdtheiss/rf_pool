@@ -162,11 +162,11 @@ class Pool(torch.nn.Module):
 
     def show_lattice(self, x=None, figsize=(5,5), cmap=None, **kwargs):
         # get mu, sigma
-        if self.get('tmp_mu')[0]:
+        if self.get('tmp_mu')[0] is not None:
             mu = self.tmp_mu
         else:
             mu = self.mu
-        if self.get('tmp_sigma')[0]:
+        if self.get('tmp_sigma')[0] is not None:
             sigma = self.tmp_sigma
         else:
             sigma = self.sigma
@@ -201,11 +201,13 @@ class Pool(torch.nn.Module):
         # set img_shape
         self.img_shape = u.shape[-2:]
         # update rfs, mu, sigma
-        if any([self.get(k, kwargs.get(k)) for k in ['delta_mu','delta_sigma','fn']]):
+        if any([self.get(k, kwargs.get(k))
+                for k in ['delta_mu','delta_sigma','fn']]):
             mu, sigma = self.update_mu_sigma(**kwargs)
             self._update_rfs(mu, sigma)
         # apply attentional field
-        if any([self.get(k, kwargs.get(k)) for k in ['attention_mu','attention_sigma']]):
+        if any([self.get(k, kwargs.get(k))
+                for k in ['attention_mu','attention_sigma']]):
             mu, sigma = self.apply_attentional_field(**kwargs)
             self._update_rfs(mu, sigma)
         # return pooling outputs
@@ -407,31 +409,34 @@ class RF_CenterCrop(Pool):
         # return center crop
         return self.crop_img(output, coords)
 
-class RF_Cortical(Pool):
+class RF_Foveated(Pool):
     """
-    Receptive field pooling layer with cortical weighting
+    Receptive field pooling layer with foveated sampling and optional
+    cortical weighting
 
     Parameters
     ----------
-    cortical_mu : torch.Tensor
-        center for gaussian in cortical space to weight pooled outputs with
-        shape (1, 2) [default: None]
-    cortical_sigma : torch.Tensor
-        standard deviation for gaussian in cortical space with shape (1, 1)
-        [default: None]
-    cortical_kernel_fn : utils.lattice function
-        function used to sample weights from cortical kernel
-        [default: lattice.exp_kernel_2d]
     img_shape : tuple
         receptive field/detection layer shape [default: None]
-    scale : torch.Tensor
+    scale : float
         scaling rate for foveated RF array (see lattice.init_foveated_lattice)
-    lattice_fn : utils.lattice function
+    n_rings : int
+        number of rings for foveated RF array (see lattice.init_foveated_lattice)
+    cortical_mu : torch.Tensor, optional
+        center for gaussian in cortical space to weight pooled outputs with
+        shape (1, 2) [default: None]
+    cortical_sigma : torch.Tensor, optional
+        standard deviation for gaussian in cortical space with shape (1, 1)
+        [default: None]
+    cortical_kernel_fn : utils.lattice function, optional
+        function used to sample weights from cortical kernel
+        [default: lattice.exp_kernel_2d]
+    lattice_fn : utils.lattice function, optional
         function used to update receptive field kernels given delta_mu and
         delta_sigma [default: lattice.mask_kernel_lattice]
     **kwargs : dict
-        kwargs passed to pool.apply (see pool.apply, other ops pooling
-        functions)
+        kwargs passed to lattice.init_foveated_lattice or pool.apply
+        (see pool.apply, other ops pooling functions)
 
     See Also
     --------
@@ -441,16 +446,16 @@ class RF_Cortical(Pool):
     """
     __doc__ = functions.update_doc(__doc__, 'See Also', [-1],
                                    [['',Pool.__methodsdoc__]])
-    def __init__(self, cortical_mu=None, cortical_sigma=None,
+    def __init__(self, img_shape=None, scale=None, n_rings=None,
+                 cortical_mu=None, cortical_sigma=None,
                  cortical_kernel_fn=lattice.exp_kernel_2d,
-                 img_shape=None, scale=None, n_rings=None,
                  lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         # set variables
+        self.scale = torch.tensor(scale)
+        self.n_rings = n_rings
         self.cortical_mu = cortical_mu
         self.cortical_sigma = cortical_sigma
         self.cortical_kernel_fn = cortical_kernel_fn
-        self.scale = torch.tensor(scale)
-        self.n_rings = n_rings
         # get mu, sigma from init_foveated_lattice
         kws = ['spacing','std','n_rf','offset','min_ecc','rotate_rings','rotate']
         defaults = lattice.init_foveated_lattice.__defaults__
@@ -458,7 +463,7 @@ class RF_Cortical(Pool):
                                     for k, v in zip(kws, defaults)])
         mu, sigma = lattice.init_foveated_lattice(img_shape, scale, n_rings,
                                                   **self.lattice_kwargs)
-        super(RF_Cortical, self).__init__(mu, sigma, img_shape, lattice_fn,
+        super(RF_Foveated, self).__init__(mu, sigma, img_shape, lattice_fn,
                                           **kwargs)
         # set cortical weight vars
         self.get_cortical_vars(self.lattice_kwargs)
