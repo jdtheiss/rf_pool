@@ -191,8 +191,11 @@ class Pool(torch.nn.Module):
             attention_sigma = self.get('attention_sigma')[0]
         if attention_mu is None or attention_sigma is None:
             return self.mu, self.sigma
-        return lattice.multiply_gaussians(self.mu, self.sigma,
-                                          attention_mu, attention_sigma)
+        self.tmp_mu, self.tmp_sigma = lattice.multiply_gaussians(self.mu,
+                                                                 self.sigma,
+                                                                 attention_mu,
+                                                                 attention_sigma)
+        return self.tmp_mu, self.tmp_sigma
 
     def forward(self, u, **kwargs):
         """
@@ -513,7 +516,7 @@ class RF_Foveated(Pool):
         # apply weights
         if weights is not None:
             output = torch.mul(output, weights)
-        if not retain_shape:
+        if not retain_shape and not self.get('retain_shape')[0]:
             output = torch.max(output, -3)[0]
         return output
 
