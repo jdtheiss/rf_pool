@@ -56,6 +56,7 @@ class Pool(torch.nn.Module):
         options = functions.pop_attributes(kwargs, ['delta_mu', 'delta_sigma',
                                                     'attention_mu','attention_sigma'])
         functions.set_attributes(self, **options)
+        self.apply_attentional_field()
         # set inputs for rf_pool
         self.rfs = None
         self.rf_indices = None
