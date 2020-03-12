@@ -127,7 +127,7 @@ class Model(nn.Module):
         layers = self.get_layers(layer_ids)
         # set layer_name
         layer_name = ['reconstruct_layer','forward_layer'][forward]
-        # for each layer, apply_modules
+        # for each layer, apply modules
         for layer_id, layer in zip(layer_ids, layers):
             # get layer_kwargs and set default layer_name
             layer_kwargs = kwargs.get(layer_id)
@@ -138,7 +138,7 @@ class Model(nn.Module):
             layer_output = output.get(layer_id)
             if not isinstance(layer_output, (dict, OrderedDict)):
                 layer_output = {}
-            # apply_modules
+            # apply modules
             input = layer.apply(input, output=layer_output, **layer_kwargs)
             # append to output if list
             if type(output.get(layer_id)) is list:
@@ -293,16 +293,16 @@ class Model(nn.Module):
                                if type(v) is not torch.nn.Sequential])
                 self.append(layer_id, FeedForward(**inputs))
 
-    def load_model(self, filename, param_dict={}):
+    def load_model(self, filename, param_dict={}, dtype=torch.float):
         extras = pickle.load(open(filename, 'rb'))
         model = []
         if type(extras) is list:
             model = extras.pop(0)
         elif isinstance(extras, (dict, OrderedDict)) and 'model_weights' in extras:
-            self.load_weights(extras.get('model_weights'), param_dict)
+            self.load_weights(extras.get('model_weights'), param_dict, dtype)
             model = self
         if isinstance(model, (dict, OrderedDict)):
-            self.load_weights(model, param_dict)
+            self.load_weights(model, param_dict, dtype)
             model = self
         return model, extras
 
@@ -313,7 +313,7 @@ class Model(nn.Module):
                 model_dict.update({name: param.detach().numpy()})
         return model_dict
 
-    def load_weights(self, model_dict, param_dict={}):
+    def load_weights(self, model_dict, param_dict={}, dtype=torch.float):
         # for each param, register new param from model_dict
         for name, param in self.named_parameters():
             # get layer to register parameter
@@ -329,7 +329,8 @@ class Model(nn.Module):
             else: # skip param
                 continue
             # update parameter
-            setattr(layer, 'data', torch.as_tensor(model_dict.get(model_key)))
+            setattr(layer, 'data',
+                    torch.as_tensor(model_dict.get(model_key)).type(dtype))
 
     def init_weights(self, named_parameters=None, pattern='weight',
                      fn=torch.randn_like):
@@ -686,10 +687,9 @@ class Model(nn.Module):
         with torch.no_grad():
             pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
             layer_input = self.apply(input.detach(), pre_layer_ids)
-            activity = self.layers[layer_id].apply_modules(layer_input,
-                                                           'forward_layer',
-                                                           output_module=module_name,
-                                                           **kwargs)
+            activity = self.layers[layer_id].apply(layer_input, 'forward_layer',
+                                                   output_module=module_name,
+                                                   **kwargs)
             n = torch.tensor(torch.numel(activity), dtype=activity.dtype)
             l1_l2 = torch.div(torch.sum(torch.abs(activity)),
                               torch.sqrt(torch.sum(torch.pow(activity, 2))))
@@ -706,8 +706,8 @@ class Model(nn.Module):
         # apply forward up to layer id
         layer_input = self.apply(input.detach(), pre_layer_ids)
         # apply modules including pool
-        return self.layers[layer_id].apply_modules(layer_input, 'forward_layer',
-                                                   output_module='pool', **kwargs)
+        return self.layers[layer_id].apply(layer_input, 'forward_layer',
+                                           output_module='pool', pool=kwargs)
 
     def rf_index(self, input, layer_id, thr=0.):
         # get heatmap
