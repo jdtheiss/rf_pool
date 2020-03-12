@@ -54,6 +54,13 @@ def plot_with_kwargs(fn, args, fn_prefix=None, **kwargs):
     # call function
     return fn(*args, **fn_kwargs)
 
+def create_cmap(r=(0.,1.), g=(0., 1.), b=(0., 1.), N=256):
+    vals = np.ones((N, 4))
+    vals[:, 0] = np.linspace(*r, N)
+    vals[:, 1] = np.linspace(*g, N)
+    vals[:, 2] = np.linspace(*b, N)
+    return matplotlib.colors.ListedColormap(vals)
+
 def show_images(*args, img_shape=None, figsize=(5, 5), **kwargs):
     """
     Show images contained in tensor
