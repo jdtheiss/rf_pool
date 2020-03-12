@@ -54,7 +54,8 @@ class Pool(torch.nn.Module):
         self.lattice_fn = lattice_fn
         # check for optional kwargs
         options = functions.pop_attributes(kwargs, ['delta_mu', 'delta_sigma',
-                                                    'attention_mu','attention_sigma'])
+                                                    'attention_mu','attention_sigma',
+                                                    'update_mu','update_sigma'])
         functions.set_attributes(self, **options)
         self.apply_attentional_field()
         # set inputs for rf_pool
@@ -84,12 +85,12 @@ class Pool(torch.nn.Module):
         functions.set_attributes(self, **kwargs)
 
     def get(self, keys, default=None):
-        default = functions.parse_list_args(len(keys), default)[0]
-        if type(keys) is not list:
+        if not isinstance(keys, (tuple, list)):
             keys = [keys]
+        default = functions.parse_list_args(len(keys), default)[0]
         output = []
         for i, key in enumerate(keys):
-            if hasattr(self, key):
+            if hasattr(self, key) and getattr(self, key) is not None:
                 output.append(getattr(self, key))
             else:
                 output.append(*default[i])
@@ -192,10 +193,16 @@ class Pool(torch.nn.Module):
             attention_sigma = self.get('attention_sigma')[0]
         if attention_mu is None or attention_sigma is None:
             return self.mu, self.sigma
-        self.tmp_mu, self.tmp_sigma = lattice.multiply_gaussians(self.mu,
-                                                                 self.sigma,
-                                                                 attention_mu,
-                                                                 attention_sigma)
+        mu, sigma = lattice.multiply_gaussians(self.mu, self.sigma,
+                                               attention_mu, attention_sigma)
+        if self.get('update_mu', kwargs.get('update_mu'))[0] is False:
+            self.tmp_mu = self.mu
+        else:
+            self.tmp_mu = mu
+        if self.get('update_sigma', kwargs.get('update_sigma'))[0] is False:
+            self.tmp_sigma = self.sigma
+        else:
+            self.tmp_sigma = sigma
         return self.tmp_mu, self.tmp_sigma
 
     def forward(self, u, **kwargs):
@@ -461,7 +468,8 @@ class RF_Foveated(Pool):
         self.cortical_sigma = cortical_sigma
         self.cortical_kernel_fn = cortical_kernel_fn
         # get mu, sigma from init_foveated_lattice
-        kws = ['spacing','std','n_rf','offset','min_ecc','rotate_rings','rotate']
+        kws = ['spacing','std','n_rf','offset','min_ecc',
+               'rotate_rings','rotate','keep_all_RFs']
         defaults = lattice.init_foveated_lattice.__defaults__
         self.lattice_kwargs = dict([(k, kwargs.pop(k)) if kwargs.get(k) else (k, v)
                                     for k, v in zip(kws, defaults)])
@@ -494,6 +502,26 @@ class RF_Foveated(Pool):
         weights = self.cortical_kernel_fn(cortical_mu, cortical_sigma,
                                           cortical_RFs.t().reshape(1,2,-1,1))
         return weights.reshape(1, 1, -1, 1, 1)
+
+    def show_cortical_weights(self, cortical_mu=None, cortical_sigma=None, beta=0.):
+        # get weights
+        weights = self.get_cortical_weights(cortical_mu, cortical_sigma, beta)
+        # get cortical location of RFs
+        cortical_RFs = lattice.cortical_xy(self.mu - self.offset, self.scale,
+                                           self.rf_angle, beta, self.rotate)
+        # make gray cmap
+        cmap = visualize.create_cmap(r=(0.5,1.), g=(0.5,1.), b=(0.5,1.))
+        # scatter plot of RFs in cortical space
+        fig = plt.figure()
+        plt.subplot(111, facecolor='gray')
+        sc = plt.scatter(cortical_RFs[:,1], cortical_RFs[:,0],
+                         c=weights.flatten(), cmap=cmap)
+        sc.set_clim([0.,1.])
+        cbar = plt.colorbar()
+        cbar.set_label('RF Weight')
+        xlim, ylim = sc.axes.get_xlim(), sc.axes.get_ylim()
+        sc.axes.set_ylim(np.flip(ylim))
+        return fig;
 
     def forward(self, u, **kwargs):
         # set img_shape
