@@ -70,12 +70,12 @@ def multiply_gaussians(mu0, sigma0, mu1, sigma1):
     return mu, sigma
 
 def cortical_dist(mu, scale_rate, beta=0.):
-    r = torch.sqrt(torch.pow(mu[:,0], 2) + torch.pow(mu[:,1], 2))
+    r = torch.sqrt(torch.sum(torch.pow(mu, 2), 1))
     alpha = 1./torch.log((1. + scale_rate) / (1. - scale_rate))
     return alpha * torch.log(r) + beta
 
 def cortical_xy(mu, scale_rate, rot_angle, beta=0., ref_axis=0.):
-    theta = torch.atan2(mu[:,0], mu[:,1]) - ref_axis
+    theta = torch.atan2(*mu.t()) - ref_axis
     r = cortical_dist(mu, scale_rate, beta=beta)
     y = r * torch.sin((theta / rot_angle) / r)
     x = r * torch.cos((theta / rot_angle) / r)
@@ -343,7 +343,7 @@ def mask_kernel_lattice(mu, sigma, kernel_shape):
 
 def init_foveated_lattice(img_shape, scale, n_rings, spacing=0., std=1.,
                           n_rf=None, offset=[0.,0.], min_ecc=1.,
-                          rotate_rings=True, rotate=0.):
+                          rotate_rings=True, rotate=0., keep_all_RFs=False):
     """
     Creates a foveated lattice of kernel centers (mu) and
     stantard deviations (sigma)
@@ -370,6 +370,10 @@ def init_foveated_lattice(img_shape, scale, n_rings, spacing=0., std=1.,
         rotate receptive fields between rings [default: False]
     rotate : float
         rotation (in radians, counterclockwise) to apply to the entire array
+    keep_all_RFs : boolean
+        True/False keep all RFs regardless of whether they are fully contained
+        within the image space
+        [default: False, remove RFs 1 sigma outside image space]
 
     Returns
     -------
@@ -442,17 +446,23 @@ def init_foveated_lattice(img_shape, scale, n_rings, spacing=0., std=1.,
     mu = torch.stack([rx,ry], dim=-1)
     # set offset of mu
     mu = mu + torch.as_tensor(offset, dtype=mu.dtype)
-    # add img_shape//2 to mu
-    half_img_shape = torch.as_tensor(img_shape, dtype=mu.dtype).unsqueeze(0)/2
-    mu = torch.add(mu, half_img_shape)
-    # multiply by std and set sigma to max(sigma, 1.)
+    # multiply by std and set sigma to max(sigma, 0.5)
     sigma = torch.mul(sigma, std)
     sigma = torch.max(sigma, 0.5 * torch.ones_like(sigma))
+    # check if mu + sigma (along radial direction from fovea) is in image
+    r = torch.sqrt(torch.sum(torch.pow(mu, 2), 1))
+    r_sigma = r - sigma.flatten()
+    theta = torch.atan2(*mu.t())
+    h_w = torch.mul(torch.stack([torch.sin(theta), torch.cos(theta)], 1),
+                    r_sigma.reshape(-1,1))
     # remove mu, sigma outside image frame
-    remove_idx = np.where(torch.sum(torch.lt(mu + 2. * sigma, 0.), -1))[0]
-    mu = torch.as_tensor([m for i, m in enumerate(mu.tolist()) if i not in remove_idx])
-    sigma = torch.as_tensor([s for i, s in enumerate(sigma.tolist()) if i not in remove_idx])
-    return mu, sigma
+    center = torch.as_tensor(img_shape, dtype=mu.dtype).unsqueeze(0) / 2.
+    keep_idx = torch.prod(torch.lt(torch.abs(h_w), center), -1).bool()
+    # add img_shape//2 to mu
+    mu = torch.add(mu, center)
+    if keep_all_RFs:
+        return mu, sigma
+    return mu[keep_idx], sigma[keep_idx]
 
 def init_uniform_lattice(img_shape, n_kernel_side, spacing, sigma_init=1.,
                          offset=[0.,0.], rotate=0.):
