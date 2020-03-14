@@ -1,4 +1,5 @@
 from collections import OrderedDict
+import copy
 import pickle
 import re
 
@@ -701,13 +702,12 @@ class Model(nn.Module):
         assert hasattr(rf_layer, 'rfs'), (
             'No rf_pool layer found.'
         )
-        # get layers before layer id
-        pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
-        # apply forward up to layer id
-        layer_input = self.apply(input.detach(), pre_layer_ids)
-        # apply modules including pool
-        return self.layers[layer_id].apply(layer_input, 'forward_layer',
-                                           output_module='pool', pool=kwargs)
+        # get layer_id kwargs
+        layer_kwargs = copy.deepcopy(kwargs)
+        layer_kwargs.setdefault(layer_id, {})
+        layer_kwargs.get(layer_id).update({'output_module': 'pool'})
+        # apply layers with output_module as pool for layer_id
+        return self.apply(input.detach(), output_layer=layer_id, **layer_kwargs)
 
     def rf_index(self, input, layer_id, thr=0.):
         # get heatmap
