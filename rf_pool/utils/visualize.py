@@ -340,7 +340,7 @@ def heatmap(model, layer_id, score_map=None, scores=None, input=None,
         scores = torch.zeros(heatmap.shape[0])
     if score_map is None:
         scores = scores.clone()
-        scores = scores.reshape(scores.shape[0],1,1)
+        scores = scores.reshape(-1,1,1)
         mask = torch.isnan(scores).bitwise_not().float()
         scores[torch.isnan(scores)] = 0.
         score_map = scores * heatmap
