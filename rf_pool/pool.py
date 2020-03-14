@@ -490,6 +490,12 @@ class RF_Foveated(Pool):
         self.offset = torch.tensor(lattice_kwargs.get('offset'))
         self.offset += (torch.tensor(self.img_shape, dtype=torch.float) // 2)
 
+    def get_cortical_mu(self, mu=None, beta=0.):
+        if mu is None:
+            mu = self.mu
+        return lattice.cortical_xy(mu - self.offset, self.scale,
+                                   self.rf_angle, beta, self.rotate)
+
     def get_cortical_weights(self, cortical_mu=None, cortical_sigma=None, beta=0.):
         if cortical_mu is None:
             cortical_mu = self.cortical_mu
@@ -497,8 +503,7 @@ class RF_Foveated(Pool):
             cortical_sigma = self.cortical_sigma
         if cortical_mu is None or cortical_sigma is None:
             return None
-        cortical_RFs = lattice.cortical_xy(self.mu - self.offset, self.scale,
-                                           self.rf_angle, beta, self.rotate)
+        cortical_RFs = self.get_cortical_mu(beta=beta)
         weights = self.cortical_kernel_fn(cortical_mu, cortical_sigma,
                                           cortical_RFs.t().reshape(1,2,-1,1))
         return weights.reshape(1, 1, -1, 1, 1)
@@ -507,8 +512,7 @@ class RF_Foveated(Pool):
         # get weights
         weights = self.get_cortical_weights(cortical_mu, cortical_sigma, beta)
         # get cortical location of RFs
-        cortical_RFs = lattice.cortical_xy(self.mu - self.offset, self.scale,
-                                           self.rf_angle, beta, self.rotate)
+        cortical_RFs = self.get_cortical_mu(beta=beta)
         # make gray cmap
         cmap = visualize.create_cmap(r=(0.5,1.), g=(0.5,1.), b=(0.5,1.))
         # scatter plot of RFs in cortical space
