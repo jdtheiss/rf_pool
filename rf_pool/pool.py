@@ -433,6 +433,9 @@ class RF_Foveated(Pool):
         scaling rate for foveated RF array (see lattice.init_foveated_lattice)
     n_rings : int
         number of rings for foveated RF array (see lattice.init_foveated_lattice)
+    ref_axis : float
+        reference axis angle (in radians) from which cortical polar angle is
+        calculated [default: 0.]
     cortical_mu : torch.Tensor, optional
         center for gaussian in cortical space to weight pooled outputs with
         shape (1, 2) [default: None]
@@ -458,12 +461,13 @@ class RF_Foveated(Pool):
     __doc__ = functions.update_doc(__doc__, 'See Also', [-1],
                                    [['',Pool.__methodsdoc__]])
     def __init__(self, img_shape=None, scale=None, n_rings=None,
-                 cortical_mu=None, cortical_sigma=None,
+                 ref_axis=0., cortical_mu=None, cortical_sigma=None,
                  cortical_kernel_fn=lattice.exp_kernel_2d,
                  lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         # set variables
         self.scale = torch.tensor(scale)
         self.n_rings = n_rings
+        self.ref_axis = ref_axis
         self.cortical_mu = cortical_mu
         self.cortical_sigma = cortical_sigma
         self.cortical_kernel_fn = cortical_kernel_fn
@@ -486,7 +490,6 @@ class RF_Foveated(Pool):
         else:
             n_rf = lattice_kwargs.get('n_rf')
         self.rf_angle = 2. * np.pi * torch.linspace(0., 1., int(n_rf))[1]
-        self.rotate = torch.tensor(lattice_kwargs.get('rotate'))
         self.offset = torch.tensor(lattice_kwargs.get('offset'))
         self.offset += (torch.tensor(self.img_shape, dtype=torch.float) // 2)
 
@@ -494,7 +497,7 @@ class RF_Foveated(Pool):
         if mu is None:
             mu = self.mu
         return lattice.cortical_xy(mu - self.offset, self.scale,
-                                   self.rf_angle, beta, self.rotate)
+                                   self.rf_angle, beta, self.ref_axis)
 
     def get_cortical_weights(self, cortical_mu=None, cortical_sigma=None, beta=0.):
         if cortical_mu is None:
