@@ -77,8 +77,8 @@ def cortical_dist(mu, scale_rate, beta=0.):
 def cortical_xy(mu, scale_rate, rot_angle, beta=0., ref_axis=0.):
     theta = torch.atan2(*mu.t()) - ref_axis
     r = cortical_dist(mu, scale_rate, beta=beta)
-    y = r * torch.sin((theta / rot_angle) / r)
-    x = r * torch.cos((theta / rot_angle) / r)
+    y = r * torch.sin((theta / rot_angle) / r + ref_axis)
+    x = r * torch.cos((theta / rot_angle) / r + ref_axis)
     return torch.stack([y, x], -1)
 
 def exp_kernel_2d(mu, sigma, xy):
