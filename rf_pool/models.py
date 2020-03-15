@@ -54,10 +54,6 @@ class Model(nn.Module):
     def n_layers(self):
         return len(self.layers)
 
-    def append(self, layer_id, layer):
-        layer_id = str(layer_id)
-        self.layers.add_module(layer_id, layer)
-
     def get_layers(self, layer_ids):
         layers = []
         for layer_id in layer_ids:
@@ -77,6 +73,22 @@ class Model(nn.Module):
         if cnt > -1:
             return layer_ids[:cnt]
         return layer_ids
+
+    def append(self, layer_id, layer):
+        layer_id = str(layer_id)
+        self.layers.add_module(layer_id, layer)
+
+    def insert(self, idx, layer_id, layer):
+        layer_id = str(layer_id)
+        new_layers = nn.ModuleDict({})
+        for i, (layer_id_i, layer_i) in enumerate(self.layers.named_children()):
+            if i == idx:
+                new_layers.add_module(layer_id, layer)
+            new_layers.add_module(layer_id_i, layer_i)
+        self.layers = new_layers
+
+    def remove(self, layer_id):
+        return self.layers.pop(layer_id)
 
     def apply(self, input, layer_ids=[], forward=True, output={},
               output_layer=None, **kwargs):
@@ -273,7 +285,7 @@ class Model(nn.Module):
         with open(filename, 'wb') as f:
             pickle.dump(extras, f)
 
-    def load_architecture(self, model, pattern='^.+$'):
+    def load_architecture(self, model, pattern='^.+$', verbose=False):
         # function to get typename
         get_typename = lambda v: torch.typename(v).split('.')[-1].lower()
         # for each child, append to layers
@@ -285,6 +297,9 @@ class Model(nn.Module):
             layer_id = re.sub('[^a-zA-Z0-9_]*', '', layer_id[0])
             if len(layer_id) == 0:
                 continue
+            # print
+            if verbose:
+                print(layer_id)
             # append to layers if is Module
             if isinstance(layer, Module):
                 self.append(layer_id, layer)
@@ -294,27 +309,29 @@ class Model(nn.Module):
                                if type(v) is not torch.nn.Sequential])
                 self.append(layer_id, FeedForward(**inputs))
 
-    def load_model(self, filename, param_dict={}, dtype=torch.float):
+    def load_model(self, filename, dtype=torch.float, verbose=False):
         extras = pickle.load(open(filename, 'rb'))
         model = []
         if type(extras) is list:
             model = extras.pop(0)
         elif isinstance(extras, (dict, OrderedDict)) and 'model_weights' in extras:
-            self.load_weights(extras.get('model_weights'), param_dict, dtype)
+            self.load_weights(extras.get('model_weights'), dtype, verbose)
             model = self
         if isinstance(model, (dict, OrderedDict)):
-            self.load_weights(model, param_dict, dtype)
+            self.load_weights(model, dtype, verbose)
             model = self
         return model, extras
 
-    def download_weights(self, pattern=''):
+    def download_weights(self, pattern='', verbose=False):
         model_dict = OrderedDict()
         for name, param in self.named_parameters():
             if name.find(pattern) >=0:
+                if verbose:
+                    print(name)
                 model_dict.update({name: param.detach().numpy()})
         return model_dict
 
-    def load_weights(self, model_dict, param_dict={}, dtype=torch.float):
+    def load_weights(self, model_dict, dtype=torch.float, verbose=False):
         # for each param, register new param from model_dict
         for name, param in self.named_parameters():
             # get layer to register parameter
@@ -323,15 +340,18 @@ class Model(nn.Module):
             for field in fields:
                 layer = getattr(layer, field)
             # get param name in model_dict
-            if param_dict.get(name):
-                model_key = param_dict.get(name)
-            elif model_dict.get(name) is not None:
-                model_key = name
+            if model_dict.get(name) is not None:
+                key = name
+            elif any([name.endswith(k) for k in model_dict.keys()]):
+                key = [k for k in model_dict.keys()
+                       if name.endswith(k)][0]
             else: # skip param
                 continue
+            if verbose:
+                print(key)
             # update parameter
-            setattr(layer, 'data',
-                    torch.as_tensor(model_dict.get(model_key)).type(dtype))
+            param = model_dict.get(key)
+            setattr(layer, 'data', torch.as_tensor(param).type(dtype))
 
     def init_weights(self, named_parameters=None, pattern='weight',
                      fn=torch.randn_like):
