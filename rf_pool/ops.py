@@ -26,12 +26,18 @@ class Op(torch.nn.Module):
         functions.set_attributes(self, **kwargs)
 
     def __call__(self, *args, **kwargs):
+        return self.forward(*args, **kwargs)
+
+    def forward(self, *args, **kwargs):
         input_kwargs = functions.get_attributes(self, self.input_keys)
         input_kwargs.update(kwargs)
         return self.fn(*args, **input_kwargs)
 
-def sample_fn(u, distr, **kwargs):
-    return distr(u, **kwargs).sample()
+def sample_fn(input, distr, **kwargs):
+    return distr(input, **kwargs).sample()
+
+def reshape_fn(input, shape):
+    return input.reshape(shape)
 
 if __name__ == '__main__':
     import doctest
