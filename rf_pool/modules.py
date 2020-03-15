@@ -343,6 +343,10 @@ class Branch(Module):
     ----------
     branches : list of torch.nn.Module
         list of branches of modules to apply to input data
+    branch_names : list, optional
+        list of names to set for each branch
+        (i.e., 'forward_layer.%s' % branch_names[0])
+        [default: None, branch names are set as 'branch_%d' % (index)]
     branch_shapes : list, optional
         list of output shapes to which each branch output should be reshaped
         [default: None, no reshaping of branch outputs]
@@ -365,15 +369,22 @@ class Branch(Module):
     -------
     None
     """
-    def __init__(self, branches, branch_shapes=None, cat_output=False,
-                 output_names=None, input_shape=None):
+    def __init__(self, branches, branch_names=None, branch_shapes=None,
+                 cat_output=False, output_names=None, input_shape=None):
         super(Branch, self).__init__(input_shape)
         self.branches = branches
+        if branch_names is not None:
+            assert len(branch_names) == len(branches)
+        self.branch_names = branch_names
         self.branch_shapes = branch_shapes
         self.cat_output = cat_output
         self.output_names = output_names
         for i, branch in enumerate(self.branches):
-            self.forward_layer.add_module('branch_'+str(i), branch)
+            if self.branch_names is not None:
+                branch_name = self.branch_names[i]
+            else:
+                branch_name = 'branch_%d' % i
+            self.forward_layer.add_module(branch_name, branch)
 
     def output_shape(self, input_shape):
         outputs = self.forward(torch.zeros(input_shape))
