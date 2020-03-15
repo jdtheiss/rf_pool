@@ -434,7 +434,7 @@ class RF_Foveated(Pool):
     n_rings : int
         number of rings for foveated RF array (see lattice.init_foveated_lattice)
     ref_axis : float
-        reference axis angle (in radians) from which cortical polar angle is
+        reference axis angle (clockwise, in radians) from which polar angle is
         calculated [default: 0.]
     cortical_mu : torch.Tensor, optional
         center for gaussian in cortical space to weight pooled outputs with
@@ -451,6 +451,11 @@ class RF_Foveated(Pool):
     **kwargs : dict
         kwargs passed to lattice.init_foveated_lattice or pool.apply
         (see pool.apply, other ops pooling functions)
+
+    Notes
+    -----
+    Since image origin is top-left, positive reference angles are clockwise
+    (which is opposite of rotation angle) and positive offsets are down/right.
 
     See Also
     --------
