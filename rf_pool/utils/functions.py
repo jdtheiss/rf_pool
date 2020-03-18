@@ -1,5 +1,6 @@
 from collections import OrderedDict
 from itertools import product
+import re
 
 import IPython.display
 from IPython.display import clear_output, display
@@ -10,6 +11,34 @@ from scipy.io import loadmat
 import torch
 
 def get_doc(docstr, field='', lines=[], end_field=None):
+    """
+    Parse docstring based on given fields, lines
+
+    Parameters
+    ----------
+    docstr : str
+        docstring to parse
+    field : str
+        field within docstr to obtain staring line to return
+        [default: '', starting from line 0]
+    lines : list
+        line numbers (relative to field line) to be returned
+        [default: [], all lines starting from field]
+    end_field : str, optional
+        string to find ending point within docstr [default: None]
+
+    Returns
+    -------
+    subdocstr : str
+        substring of docstring
+
+    Examples
+    --------
+    >>> # print first two lines of str docstr
+    >>> print(get_doc(str.__doc__, '', lines=[0,1]))
+    str(object='') -> str
+    str(bytes_or_buffer[, encoding[, errors]]) -> str
+    """
     start = docstr[:docstr.find(field)].count('\n')
     if end_field:
         end = docstr[:docstr.find(end_field)].count('\n')
@@ -20,8 +49,37 @@ def get_doc(docstr, field='', lines=[], end_field=None):
     docstr = docstr.splitlines()
     return '\n'.join([docstr[idx] for idx in lines])
 
-def update_doc(docstr, field='', lines=[], updates=[], replace=['','']):
-    docstr = docstr.replace(*replace)
+def update_doc(docstr, field='', lines=[], updates=[], sub=['','']):
+    """
+    Update lines within docstring starting at field
+
+    Parameters
+    ----------
+    docstr : str
+        docstring to be updated
+    field : str
+        field within docstr to obtain staring line for updates
+        [default: '', starting from line 0]
+    lines : list
+        line numbers (relative to field line) to be updated
+        [default: [], no lines updated]
+    updates : list
+        update string for each line in lines (i.e., `len(updates) == len(lines)`)
+    sub : list, optional
+        regexp pattern substituted within docstr (prior to per-line updates)
+        called as `re.sub(*sub, docstr)`
+        [default: ['',''], no substitutions made]
+
+    Returns
+    -------
+    new_docstr : str
+        updated docstring
+
+    See Also
+    --------
+    re.sub
+    """
+    docstr = re.sub(*sub, docstr)
     if len(lines) == 0:
         return docstr
     assert len(lines) == len(updates)
@@ -29,9 +87,10 @@ def update_doc(docstr, field='', lines=[], updates=[], replace=['','']):
     lines = [start + idx for idx in lines]
     docstr = docstr.splitlines()
     for n, idx in enumerate(lines):
-        if type(updates[n]) is list:
-            updates[n] = '\n'.join(updates[n])
-        docstr[idx] = '    %s' % updates[n]
+        if type(updates[n]) is str:
+            updates[n] = updates[n].splitlines()
+        updates[n].reverse()
+        [docstr.insert(idx, '%s' % u) for u in updates[n]]
     return '\n'.join(docstr)
 
 def parse_list_args(n_iter, *args, **kwargs):

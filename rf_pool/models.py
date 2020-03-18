@@ -768,10 +768,11 @@ class Model(nn.Module):
     def rf_to_image_space(self, layer_id, coords=None):
         # get mu, sigma
         if coords is None:
-            coords = self.layers[layer_id].forward_layer.pool.get(['mu','sigma'])
+            coords = self.layers[layer_id].forward_layer.pool.get('mu','sigma')
+            coords = list(coords.values())
         elif type(coords) is not torch.Tensor:
             coords = torch.tensor(coords)
-        if type(coords) is not list and type(coords) is not tuple:
+        if not isinstance(coords, (list, tuple)):
             coords = [coords]
         # reversed layers
         layers = self.get_layers(self.get_layer_ids(layer_id)[:-1])
