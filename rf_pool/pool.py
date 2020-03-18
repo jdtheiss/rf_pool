@@ -240,6 +240,29 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
 # set param docstring based on apply docstring parameters
 __paramsdoc__ = functions.get_doc(apply.__doc__, 'pool_fn', end_field='**kwargs')
 
+def rf_to_indices(rfs):
+    """
+    Convert rf kernels into rf_indices
+
+    Parameters
+    ----------
+    rfs : torch.Tensor
+        receptive field mask with shape (n_kernels, h, w)
+
+    Returns
+    -------
+    rf_indices : torch.Tensor
+        receptive field indices with shape (n_kernels, h * w)
+    """
+    if rfs is None:
+        return None
+    with torch.no_grad():
+        rf_indices = torch.zeros_like(rfs.flatten(1))
+        for i, rf in enumerate(rfs):
+            idx = torch.nonzero(rf.flatten())
+            rf_indices[i,:idx.numel()] = idx.flatten()
+    return rf_indices
+
 # cpp pooling functions
 def max_pool(input, **kwargs):
     if 'rfs' in kwargs and 'rf_indices' not in kwargs:
@@ -290,9 +313,8 @@ class Pool(torch.nn.Module):
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and
         delta_sigma [default: lattice.gaussian_kernel_lattice]
-    **kwargs : dict
-        kwargs passed to pool.apply (see pool.apply, other ops pooling
-        functions)
+
+    Optional kwargs (see methods below for additional kwargs)
 
     Methods
     -------
@@ -301,17 +323,24 @@ class Pool(torch.nn.Module):
     set(**kwargs) : set attributes for pool layer
     get(keys, default=None) : get attributes from pool layer
     show_lattice(x=None, figsize=(5,5), cmap=None, **kwargs) : show pool lattice
-    shift_mu_sigma(delta_mu, delta_sigma, fn) : update mu/sigma with shifts
-        or function
-    apply_attentional_field(attention_mu, attention_sigma, **kwargs) : update
-        mu/sigma via gaussian multiplication with a gaussian attentional field
     crop_img(input, coords) : crop input with bounding box coordinates
+    shift_mu_sigma(delta_mu, delta_sigma, fn) : update mu/sigma with shifts
+        or function. These kwargs can also be set at initialization.
+    apply_attentional_field(attention_mu, attention_sigma, **kwargs) : update
+        mu/sigma via gaussian multiplication with a gaussian attentional field.
+        These kwargs can also be set at initialization.
+    vectorize_output(output, vectorize) : vectorize pooled outputs to shape
+        (batch, ch, n_RF). These kwargs can also be set at initialization.
+    weight_output(output, weights) : weight outputs using given tensor. These
+        kwargs can also be set at initialization.
 
     See Also
     --------
     pool.apply
     """
-    __methodsdoc__ = functions.get_doc(__doc__, 'Methods', end_field='See Also')
+    __doc__ = functions.update_doc(__doc__, 'Methods', [-1], [__paramsdoc__])
+    __methodsdoc__ = functions.get_doc(__doc__, 'Optional kwargs',
+                                       end_field='See Also')
     def __init__(self, mu, sigma, img_shape, lattice_fn, **kwargs):
         super(Pool, self).__init__()
         # input parameters
@@ -679,7 +708,7 @@ class Pool(torch.nn.Module):
 
         Notes
         -----
-        The following class functions are called (in order) if associated kwargs
+        The following class methods are called (in order) if associated kwargs
         are in given during forward call (or set at layer initialization):
 
         shift_mu_sigma: `delta_mu`, `delta_sigma`, `fn`;
@@ -691,10 +720,10 @@ class Pool(torch.nn.Module):
         See Also
         --------
         pool.apply
-        self.shift_mu_sigma
-        self.apply_attentional_field
-        self.weight_output
-        self.vectorize_output
+        shift_mu_sigma
+        apply_attentional_field
+        weight_output
+        vectorize_output
         """
         # get options, prefer kwargs
         options = self.get(*self.option_keys)
@@ -724,8 +753,9 @@ class Pool(torch.nn.Module):
                                            [__paramsdoc__], sub=['\n    ','\n'])
 
 class RF_Pool(Pool):
-    __doc__ = functions.update_doc(Pool.__doc__, lines=[1],
-                                   updates=['Receptive field pooling layer'])
+    __doc__ = functions.update_doc(Pool.__doc__,
+                                   sub=['Base class.+\n',
+                                        'Receptive field pooling layer\n'])
     def __init__(self, mu=None, sigma=None, img_shape=None,
                  lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         super(RF_Pool, self).__init__(mu, sigma, img_shape, lattice_fn,
@@ -752,9 +782,6 @@ class RF_Uniform(Pool):
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and
         delta_sigma [default: lattice.gaussian_kernel_lattice]
-    **kwargs : dict
-        kwargs passed to pool.apply (see pool.apply, other ops pooling
-        functions)
 
     See Also
     --------
@@ -792,9 +819,6 @@ class RF_Hexagon(Pool):
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and
         delta_sigma [default: lattice.gaussian_kernel_lattice]
-    **kwargs : dict
-        kwargs passed to pool.apply (see pool.apply, other ops pooling
-        functions)
 
     See Also
     --------
@@ -825,9 +849,6 @@ class RF_Random(Pool):
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and
         delta_sigma [default: lattice.gaussian_kernel_lattice]
-    **kwargs : dict
-        kwargs passed to pool.apply (see pool.apply, other ops pooling
-        functions)
 
     See Also
     --------
@@ -855,10 +876,11 @@ class RF_Random(Pool):
                                         **kwargs)
 
 class RF_Squeeze(Pool):
-    __doc__ = functions.update_doc(Pool.__doc__, lines=[1],
-                                   updates=[['Receptive field pooling layer',
-                                            'with output image size squeezed ',
-                                            'to extent of RF lattice']])
+    __doc__ = functions.update_doc(Pool.__doc__,
+                                   sub=['Base class.+\n',
+                                        'Receptive field pooling layer ' \
+                                        'with output image size squeezed ' \
+                                        'to extent of RF lattice\n'])
     def __init__(self, mu=None, sigma=None, img_shape=None,
                  lattice_fn=lattice.mask_kernel_lattice, **kwargs):
         super(RF_Squeeze, self).__init__(mu, sigma, img_shape, lattice_fn,
@@ -891,9 +913,6 @@ class RF_CenterCrop(Pool):
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and
         delta_sigma [default: lattice.gaussian_kernel_lattice]
-    **kwargs : dict
-        kwargs passed to pool.apply (see pool.apply, other ops pooling
-        functions)
 
     See Also
     --------
@@ -947,20 +966,17 @@ class RF_Foveated(Pool):
     lattice_fn : utils.lattice function, optional
         function used to update receptive field kernels given delta_mu and
         delta_sigma [default: lattice.mask_kernel_lattice]
-    **kwargs : dict
-        kwargs passed to lattice.init_foveated_lattice or pool.apply
-        (see pool.apply, other ops pooling functions)
-
-    Notes
-    -----
-    Since image origin is top-left, positive reference axis angles are clockwise
-    (which is opposite of rotation angle) and positive offsets are down/right.
 
     See Also
     --------
     pool.apply
     lattice.init_foveated_lattice
     lattice.cortical_xy
+
+    Notes
+    -----
+    Since image origin is top-left, positive reference axis angles are clockwise
+    (which is opposite of rotation angle) and positive offsets are down/right.
     """
     __doc__ = functions.update_doc(__doc__, 'See Also', [-1],
                                    [['',Pool.__methodsdoc__]])
@@ -1072,9 +1088,6 @@ class MaxPool(Pool):
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and
         delta_sigma [default: lattice.gaussian_kernel_lattice]
-    **kwargs : dict
-        kwargs passed to pool.apply (see pool.apply, other ops pooling
-        functions)
 
     See Also
     --------
@@ -1107,9 +1120,6 @@ class ProbmaxPool(Pool):
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and
         delta_sigma [default: lattice.gaussian_kernel_lattice]
-    **kwargs : dict
-        kwargs passed to pool.apply (see pool.apply, other ops pooling
-        functions)
 
     See Also
     --------
@@ -1149,9 +1159,6 @@ class StochasticPool(Pool):
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and
         delta_sigma [default: lattice.gaussian_kernel_lattice]
-    **kwargs : dict
-        kwargs passed to pool.apply (see pool.apply, other ops pooling
-        functions)
 
     See Also
     --------
@@ -1169,29 +1176,6 @@ class StochasticPool(Pool):
         super(StochasticPool, self).__init__(mu, sigma, img_shape, lattice_fn,
                                              kernel_size=kernel_size,
                                              pool_fn='stochastic_pool', **kwargs)
-
-def rf_to_indices(rfs):
-    """
-    Convert rf kernels into rf_indices
-
-    Parameters
-    ----------
-    rfs : torch.Tensor
-        receptive field mask with shape (n_kernels, h, w)
-
-    Returns
-    -------
-    rf_indices : torch.Tensor
-        receptive field indices with shape (n_kernels, h * w)
-    """
-    if rfs is None:
-        return None
-    with torch.no_grad():
-        rf_indices = torch.zeros_like(rfs.flatten(1))
-        for i, rf in enumerate(rfs):
-            idx = torch.nonzero(rf.flatten())
-            rf_indices[i,:idx.numel()] = idx.flatten()
-    return rf_indices
 
 if __name__ == '__main__':
     import doctest
