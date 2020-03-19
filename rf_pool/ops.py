@@ -1,3 +1,5 @@
+import inspect
+
 import torch
 
 from .utils import functions
@@ -24,6 +26,13 @@ class Op(torch.nn.Module):
         self.fn = fn
         self.input_keys = kwargs.keys()
         functions.set_attributes(self, **kwargs)
+
+    def __repr__(self):
+        if self.fn is None:
+            return ''
+        name = self.fn.__name__.replace('<', '').replace('>', '')
+        sig = str(inspect.signature(self.fn))
+        return name + sig
 
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)

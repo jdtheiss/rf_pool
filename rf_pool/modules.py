@@ -56,12 +56,10 @@ class Module(nn.Module):
     def make_layer(self, layer_name, transpose=False, **kwargs):
         # init layer to nn.Sequential()
         setattr(self, layer_name, nn.Sequential())
-
         # set None to nn.Sequential()
-        for key, value in kwargs.items():
-            if value is None:
-                kwargs.update({key: nn.Sequential()})
-
+        for name, module in kwargs.items():
+            if module is None:
+                kwargs.update({name: nn.Sequential()})
         # update layers
         self.update_layer(layer_name, transpose=transpose, **kwargs)
 
@@ -72,55 +70,41 @@ class Module(nn.Module):
         else:
             layer = nn.Sequential()
         # update layer
-        for key, value in kwargs.items():
+        for name, module in kwargs.items():
+            # set as Op if module not Module instance
+            if not isinstance(module, torch.nn.modules.Module):
+                module = ops.Op(module)
             if transpose:
-                key = key + '_transpose'
-                value = self.transposed_fn(value)
+                name = name + '_transpose'
+                module = self.transposed_fn(module)
             # add reshape op if linear
-            if self.input_shape is None and isinstance(value, torch.nn.Linear):
+            if self.input_shape is None and isinstance(module, torch.nn.Linear):
                 reshape_op = ops.Op(lambda x: x.flatten(1))
-                layer.add_module('reshape_%s' % key, reshape_op)
-            if value is not None:
-                layer.add_module(key, value)
+                layer.add_module('reshape_%s' % name, reshape_op)
+            if module is not None:
+                layer.add_module(name, module)
         # set layer
         setattr(self, layer_name, layer)
 
-    def update_module(self, layer_name, module_name, value):
-        # get layer
-        if hasattr(self, layer_name):
-            layer = getattr(self, layer_name)
-        else:
-            layer = nn.Sequential()
-        # update op in layer
-        setattr(layer, module_name, value)
-        # set layer
-        setattr(self, layer_name, layer)
+    def update_module(self, layer_name, module_name, module):
+        self.udpate_layer(layer_name, **{module_name: module})
 
     def insert_module(self, layer_name, idx, transpose=False, **kwargs):
         # get layer
         layer = nn.Sequential()
         if hasattr(self, layer_name):
             orig_layer = getattr(self, layer_name)
-            mods = OrderedDict([(k, v) for k, v in orig_layer.named_children()])
         else:
-            mods = {}
-        # set pre-index modules
-        for i, (key, value) in enumerate(mods.items()):
-            if i < idx:
-                layer.add_module(key, value)
-        # set index modules
-        for key, value in kwargs.items():
-            if transpose:
-                key = key + '_transpose'
-                value = self.transposed_fn(value)
-            if value is not None:
-                layer.add_module(key, value)
-        # set post-index modules
-        for i, (key, value) in enumerate(mods.items()):
-            if i >= idx:
-                layer.add_module(key, value)
-        # set layer
+            orig_layer = layer
+        # set empty layer
         setattr(self, layer_name, layer)
+        # set modules in order
+        mods = list(orig_layer.named_children())
+        new_mods = list(kwargs.items())
+        new_mods.reverse()
+        [mods.insert(idx, new_mod) for new_mod in new_mods]
+        # update layer
+        self.update_layer(layer_name, transpose=transpose, **OrderedDict(mods))
 
     def remove_module(self, layer_name, module_name):
         # get layer
@@ -501,6 +485,30 @@ class Control(Module):
             if type(output.get(name)) is list:
                 output.get(name).append(input)
         return input
+
+class Lambda(Module):
+    """
+    Lambda function wrapped in a torch.nn.Module
+
+    Parameters
+    ----------
+    input_shape : list, optional
+        shape to which input data should be reshaped
+        [default: None, input data not reshaped]
+    **kwargs : dict
+        lambda functions for layer like {module_name: lambda_fn}
+
+    Returns
+    -------
+    None
+    """
+    def __init__(self, input_shape=None, **kwargs):
+        super(Lambda, self).__init__(input_shape)
+        # build layer
+        for name, module in kwargs.items():
+            if not isinstance(module, torch.nn.modules.Module):
+                module = ops.Op(module)
+            self.update_layer('forward_layer', **{name: module})
 
 class RBM(Module):
     """
