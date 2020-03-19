@@ -1,3 +1,5 @@
+import inspect
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -991,12 +993,12 @@ class RF_Foveated(Pool):
         self.cortical_mu = cortical_mu
         self.cortical_sigma = cortical_sigma
         self.cortical_kernel_fn = cortical_kernel_fn
-        # get mu, sigma from init_foveated_lattice
-        kws = ['spacing','std','n_rf','offset','min_ecc',
-               'rotate_rings','rotate','keep_all_RFs']
-        defaults = lattice.init_foveated_lattice.__defaults__
+        # get keywords, defaults from init_foveated_lattice and pop kwargs
+        argspec = inspect.getfullargspec(lattice.init_foveated_lattice)
+        kws, defaults = argspec.args[-len(argspec.defaults):], argspec.defaults
         self.lattice_kwargs = dict([(k,kwargs.pop(k)) if kwargs.get(k) else (k,v)
                                     for k, v in zip(kws, defaults)])
+        # get mu, sigma from init_foveated_lattice
         mu, sigma = lattice.init_foveated_lattice(img_shape, scale, n_rings,
                                                   **self.lattice_kwargs)
         super(RF_Foveated, self).__init__(mu, sigma, img_shape, lattice_fn,
