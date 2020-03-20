@@ -765,21 +765,17 @@ class Model(nn.Module):
             heatmap = torch.gt(heatmap, 0.).float()
         return heatmap.squeeze(1)
 
-    def rf_to_image_space(self, layer_id, coords=None):
+    def rf_to_image_space(self, layer_id, *args):
         # get mu, sigma
-        if coords is None:
-            coords = self.layers[layer_id].forward_layer.pool.get('mu','sigma')
-            coords = list(coords.values())
-        elif type(coords) is not torch.Tensor:
-            coords = torch.tensor(coords)
-        if not isinstance(coords, (list, tuple)):
-            coords = [coords]
+        if len(args) == 0:
+            args = self.layers[layer_id].forward_layer.pool.get('mu','sigma')
+            args = list(args.values())
         # reversed layers
         layers = self.get_layers(self.get_layer_ids(layer_id)[:-1])
         layers.reverse()
         # for each layer, add half weight kernel and multiply by pool kernel
-        half_k = (self.layers[layer_id].forward_layer.hidden.kernel_size[0] - 1) // 2
-        coords = [c + half_k for c in coords]
+        half_k = (self.layers[layer_id].forward_layer.hidden.kernel_size[0]-1)//2
+        coords = [a + half_k for a in args]
         for layer in layers:
             coords = [c * layer.forward_layer.pool.kernel_size for c in coords]
             half_k = (layer.forward_layer.hidden.kernel_size[0] - 1) // 2
