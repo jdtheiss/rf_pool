@@ -4,7 +4,7 @@ import os.path as p
 path_to_exp = p.abspath(p.join(p.dirname(p.realpath(__file__)),
                                '../../experiments/'))
 
-def link_project(*args, dest=path_to_exp):
+def link_project(*args, dest=path_to_exp, overwrite=False):
     """
     Create symbolic link to a project folder or jupyter notebook within the
     `experiments` directory
@@ -16,6 +16,9 @@ def link_project(*args, dest=path_to_exp):
     dest : str
         destination path where a symbolic link is made
         [default: `%s`]
+    overwrite : boolean
+        True/False overwrite the file (or symbolic link to file) if it exists
+        in the given directory [default: False]
 
     Returns
     -------
@@ -23,7 +26,13 @@ def link_project(*args, dest=path_to_exp):
     """
     for arg in args:
         f = p.basename(p.normpath(arg))
-        os.symlink(p.abspath(arg), p.join(path_to_exp, f))
+        if p.isdir(dest):
+            dest_i = p.join(dest, f)
+        else:
+            dest_i = dest
+        if overwrite and p.exists(dest_i):
+            os.remove(dest_i)
+        os.symlink(p.abspath(arg), dest_i)
 link_project.__doc__ = link_project.__doc__ % (path_to_exp)
 
 def link_file(*args, file=p.join(path_to_exp,'context.py'), overwrite=False):
@@ -34,12 +43,12 @@ def link_file(*args, file=p.join(path_to_exp,'context.py'), overwrite=False):
     Parameters
     ----------
     *args : str
-        directory path(s) where the file should be linked
+        directory or file path(s) where the file should be linked
     file : str
         file to be linked [default: `%s`]
     overwrite : boolean
         True/False overwrite the file (or symbolic link to file) if it exists
-        in the given directory
+        in the given directory [default: False]
 
     Returns
     -------
@@ -53,7 +62,9 @@ def link_file(*args, file=p.join(path_to_exp,'context.py'), overwrite=False):
     """
     f = p.basename(p.normpath(file))
     for arg in args:
-        if overwrite and p.exists(p.join(arg, f)):
-            os.remove(p.join(arg, f))
-        os.symlink(p.abspath(file), p.join(arg, f))
+        if p.isdir(arg):
+            arg = p.join(arg, f)
+        if overwrite and p.exists(arg):
+            os.remove(arg)
+        os.symlink(p.abspath(file), arg)
 link_file.__doc__ = link_file.__doc__ % (p.join(path_to_exp,'context.py'))
