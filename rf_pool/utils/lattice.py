@@ -1,49 +1,3 @@
-"""
-Utilities for creating receptive field lattices
-for use with rf.pool function.
-
-Examples
---------
-# initialize uniform lattice
->>> img_shape = (200,200)
->>> center = (100,100)
->>> n_kernel_side = 8
->>> spacing = 12
->>> sigma_init = 3.
->>> mu, sigma = init_uniform_lattice(center, n_kernel_side, spacing, sigma_init)
-
-# create gaussian kernels from mu, sigma
->>> kernels = gaussian_kernel_lattice(mu, sigma, img_shape)
-
-# show kernels
->>> show_kernel_lattice(kernels)
-
-# initialize foveated lattice
->>> img_shape = (200,200)
->>> scale = 0.25
->>> spacing = 0.15
->>> min_ecc = 1.
->>> mu, sigma = init_foveated_lattic(img_shape, scale, spacing, min_ecc)
-
-# create exponential kernels from mu, sigma
->>> kernels = exp_kernel_lattice(mu, sigma, img_shape)
-
-# show kernels
->>> show_kernel_lattice(kernels)
-
-# initialize tiled lattice
->>> img_shape = (200,200)
->>> rf_sizes = [3]
->>> spacing = 9
->>> mu, sigma = init_uniform_lattice(img_shape, rf_sizes, spacing)
-
-# create masked kernels from mu, sigma
->>> kernels = mask_kernel_lattice(mu, sigma, img_shape)
-
-# show kernels
->>> show_kernel_lattice(kernels)
-"""
-
 import warnings
 
 import imageio
@@ -51,6 +5,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch.autograd import Function
+
+def fwhm2sigma(fwhm):
+    return fwhm / (2. * np.sqrt(2. * np.log(2)))
+
+def sigma2fwhm(sigma):
+    return 2. * np.sqrt(2. * np.log(2)) * sigma
 
 def multiply_gaussians(mu0, sigma0, mu1, sigma1):
     # reshape to (mu0_batch, 2, 1) (1, 2, mu1_batch)
@@ -87,9 +47,8 @@ def exp_kernel_2d(mu, sigma, xy):
     return torch.exp(-torch.sum((xy - mu)**2., dim=-3) / (2*sigma**2))
 
 def gaussian_kernel_2d(mu, sigma, xy):
-    mu = mu.reshape(mu.shape + (1,1)).float()
-    sigma = sigma.unsqueeze(-1).float()
-    return (1./(2.*np.pi*sigma**2)) * torch.exp(-torch.sum((xy - mu)**2., dim=-3)/ (2*sigma**2))
+    a = 1./(2.*np.pi*sigma**2)
+    return a.reshape(-1,1,1) * exp_kernel_2d(mu, sigma, xy)
 
 def dog_kernel_2d(mu, sigma, ratio, xy):
     kernel_0 = gaussian_kernel_2d(mu, sigma, xy)
