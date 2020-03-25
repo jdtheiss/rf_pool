@@ -404,6 +404,8 @@ class Pool(torch.nn.Module):
             lattice_fn = self.get('lattice_fn')
         if img_shape is None:
             img_shape = self.get('img_shape')
+        if mu is None or sigma is None:
+            return
         assert lattice_fn is not None
         assert img_shape is not None
         # if img_shape changed, shift mu
