@@ -49,9 +49,10 @@ class Module(nn.Module):
         if named_parameters is None:
             named_parameters = self.named_parameters()
         for name, param in named_parameters:
-            with torch.no_grad():
-                if name.find(pattern) >=0:
-                    param.set_(fn(param))
+            if name.find(pattern) >=0:
+                with torch.no_grad():
+                    param.mul_(0.)
+                    param.add_(fn(param))
 
     def make_layer(self, layer_name, transpose=False, **kwargs):
         # init layer to nn.Sequential()
@@ -71,8 +72,10 @@ class Module(nn.Module):
             layer = nn.Sequential()
         # update layer
         for name, module in kwargs.items():
-            # set as Op if module not Module instance
-            if not isinstance(module, torch.nn.modules.Module):
+            # if None, set Sequential; if not module, set Op
+            if module is None:
+                module = nn.Sequential()
+            elif not isinstance(module, torch.nn.modules.Module):
                 module = ops.Op(module)
             if transpose:
                 name = name + '_transpose'
@@ -292,7 +295,8 @@ class Module(nn.Module):
             raise Exception('attribute ' + field + ' not found')
         w = getattr(self, field).clone().detach()
         # plot weights
-        return visualize.plot_images(w, img_shape, figsize, cmap)
+        return visualize.show_images(w, img_shape=img_shape, figsize=figsize,
+                                     cmap=cmap)
 
 class FeedForward(Module):
     """
@@ -586,11 +590,6 @@ class RBM(Module):
                  log_part_fn=F.softplus, input_shape=None):
         super(RBM, self).__init__(input_shape)
         self.log_part_fn = log_part_fn
-        # wrap sample functions in ops.Op
-        if torch.typename(vis_sample).startswith('torch.distributions'):
-            vis_sample = ops.Op(ops.sample_fn, distr=vis_sample)
-        if torch.typename(sample).startswith('torch.distributions'):
-            sample = ops.Op(ops.sample_fn, distr=sample)
         # initialize persistent
         self.persistent = None
         # make forward layer
@@ -856,6 +855,8 @@ class RBM(Module):
 
         Notes
         -----
+        This likelihood estimate is only appropriate for binary data.
+
         A random index in the input image is flipped on each call. Averaging
         over many different indices approximates the pseudo-likelihood.
         """
