@@ -420,10 +420,66 @@ class Model(nn.Module):
     def train(self, n_epochs, trainloader, loss_fn, optimizer, monitor=100,
               **kwargs):
         """
-        #TODO:WRITEME
+        Train model using loss function and optimizer for given dataloader
+
+        Parameters
+        ----------
+        n_epochs : int
+            number of epochs to train for (complete passes through dataloader)
+        trainloader : torch.utils.data.DataLoader
+            dataloader containing training (data, label) pairs
+        loss_fn : torch.nn.modules.loss or rf_pool.losses
+            loss function to opimize during training
+        optimizer : torch.optim
+            optimizer used to update parameters during training
+        monitor : int
+            number of batches between plotting loss, showing weights, etc.
+            [default: 100]
+
+        Optional kwargs
+        layer_id : str
+            id of layer to train (especially for training RBMs layer-wise)
+            [default: None, all layers trained]
+        retain_graph : boolean
+            kwarg passed to `loss.backward()` to maintain graph if True
+            [default: False]
+        add_loss : rf_pool.losses or dict
+            additional loss function added to loss_fn. if dict, kwargs passed to
+            `rf_pool.losses.LayerLoss`
+            [default: {}, no added loss]
+        sparse_loss : rf_pool.losses or dict
+            sparse loss function added to loss_fn. if dict, kwargs passed to
+             `rf_pool.losses.SparseLoss`
+            [default: {}, no added loss]
+        monitor_loss : rf_pool.losses or dict
+            loss function used only during monitoring step (i.e. not used to
+            update parameters). if dict, kwargs passed to
+            `rf_pool.losses.KwargsLoss`
+            [default: {}, loss_fn used for monitoring loss]
+        scheduler : torch.optim.lr_scheduler
+            scheduler used to periodically update learning rate
+        show_lattice : dict
+            kwargs passed to `show_lattice` function during monitoring step
+            [default: {}, function not called]
+        show_negative : dict
+            kwargs passed to `show_negative` function during monitoring step
+            [default: {}, function not called]
+        label_params : dict
+            dictionary with (label, params) pairs of parameters that should be
+            have `requires_grad=False` when the given label is observed in the
+            dataloader. See `set_grad_by_label`.
+            [default: {}, function not called]
+
+        Returns
+        -------
+        loss_history : list
+            list of loss values at each monitoring step
+            (i.e., len(loss_history) == (n_epochs * len(trainloader) / monitor))
+
         Note
         ----
-        When using kwarg label_params, batch_size should be equal to 1.
+        When using kwarg `label_params`, `batch_size` in dataloader should be
+        equal to 1.
         """
         # get layer_id (layer-wise training) from kwargs
         options = functions.pop_attributes(kwargs, ['layer_id'], default=None)
@@ -533,8 +589,8 @@ class Model(nn.Module):
                     # display loss
                     clear_output(wait=True)
                     display('learning rate: %g' % optimizer.param_groups[0]['lr'])
-                    display('[%g%%] loss: %.3f' % (i % n_batches / n_batches * 100.,
-                            running_loss / monitor))
+                    display('[%g%%] loss: %.3f' % (i % n_batches/n_batches*100.,
+                                                   running_loss / monitor))
                     # append loss and show history
                     loss_history.append(running_loss / monitor)
                     plt.plot(loss_history)
