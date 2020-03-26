@@ -1345,6 +1345,8 @@ class RBM_Attention(Pool):
         train_kwargs.update(kwargs.get('train_kwargs') or {})
         # apply forward function first with vectorize=True
         vectorize = kwargs.get('vectorize')
+        if vectorize is None:
+            vectorize = self.get('vectorize')
         output = self.get_binomial_input(u, **kwargs)
         # train RBM
         if training:
