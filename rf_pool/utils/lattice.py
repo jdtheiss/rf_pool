@@ -51,6 +51,7 @@ def estimate_mu_sigma(kernel, mu=None):
         mu = torch.stack([xy.flatten() for xy in torch.meshgrid(x, y)], dim=-1)
     # get weights
     w = kernel.reshape(-1, mu.shape[0]).clone()
+    w = w - w.min(-1, keepdim=True)[0]
     w = w / w.sum(-1, keepdim=True)
     # get expectation of mu, sigma for each Gaussian in kernel
     m = torch.matmul(w, mu)

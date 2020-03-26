@@ -1294,8 +1294,9 @@ class RBM_Attention(Pool):
         if input is None:
             return attention_mu, attention_sigma, None
         weight = self.rbm.apply(input, output_module='activation').detach()
-        # if batch > 1, return softmax of sum across batch
-        weight = torch.softmax(torch.sum(weight, 0), -1)
+        # if batch > 1, return normalized sum across batch
+        weight = torch.sum(weight, 0)
+        weight = torch.div(weight, torch.sum(weight, -1, keepdim=True))
         return attention_mu, attention_sigma, weight
 
     def show_attentional_field(self, input=None):
