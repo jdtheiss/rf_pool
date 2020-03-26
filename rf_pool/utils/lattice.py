@@ -42,6 +42,22 @@ def cortical_xy(mu, scale_rate, rot_angle, beta=0., ref_axis=0.):
     x = r * torch.cos((theta / rot_angle) / r + ref_axis)
     return torch.stack([y, x], -1)
 
+def estimate_mu_sigma(kernel, mu=None):
+    # get mu for each pixel in kernel
+    if mu is None:
+        assert kernel.ndimension() >= 2
+        x = torch.arange(kernel.shape[-1]).float()
+        y = torch.arange(kernel.shape[-2]).float()
+        mu = torch.stack([xy.flatten() for xy in torch.meshgrid(x, y)], dim=-1)
+    # get weights
+    w = kernel.reshape(-1, mu.shape[0]).clone()
+    w = w / w.sum(-1, keepdim=True)
+    # get expectation of mu, sigma for each Gaussian in kernel
+    m = torch.matmul(w, mu)
+    m_dev = m.unsqueeze(1) - mu
+    cov = torch.matmul(m_dev.transpose(-1,-2), torch.mul(w.unsqueeze(-1), m_dev))
+    return m, torch.sqrt(cov[:,0,0]).reshape(-1,1)
+
 def exp_kernel_2d(mu, sigma, xy):
     mu = mu.reshape(mu.shape + (1,1)).float()
     sigma = sigma.unsqueeze(-1).float()

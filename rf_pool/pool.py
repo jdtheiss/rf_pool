@@ -1286,17 +1286,10 @@ class RBM_Attention(Pool):
         If weight is None, each attentional Gaussian is weighted equally in the
         Gaussian multiplication.
         """
-        # weighted combination of mu for attention_mu
+        # estimate mu, sigma for each attentional Gaussian
         mu = self.mu.detach()
         rbm_weight = self.rbm.hidden_weight.detach()
-        attention_mu = torch.matmul(torch.softmax(rbm_weight, -1), mu)
-        # get attention_sigma from fwhm of each weight
-        rbm_weight = rbm_weight - rbm_weight.min(-1, keepdim=True)[0]
-        idx = torch.gt(rbm_weight, rbm_weight.max(-1, keepdim=True)[0] / 2.)
-        mu_min = torch.tensor([min(mu[i].tolist()) for i in idx])
-        mu_max = torch.tensor([max(mu[i].tolist()) for i in idx])
-        fwhm = torch.sqrt(torch.sum(torch.pow(mu_max - mu_min, 2), -1))
-        attention_sigma = lattice.fwhm2sigma(fwhm).reshape(-1, 1)
+        attention_mu, attention_sigma = lattice.estimate_mu_sigma(rbm_weight, mu)
         # set weight based on hidden unit activity
         if input is None:
             return attention_mu, attention_sigma, None
