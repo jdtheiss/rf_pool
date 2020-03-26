@@ -12,7 +12,7 @@ def fwhm2sigma(fwhm):
 def sigma2fwhm(sigma):
     return 2. * np.sqrt(2. * np.log(2)) * sigma
 
-def multiply_gaussians(mu0, sigma0, mu1, sigma1):
+def multiply_gaussians(mu0, sigma0, mu1, sigma1, weight=None):
     # reshape to (mu0_batch, 2, 1) (1, 2, mu1_batch)
     mu0 = torch.unsqueeze(mu0, -1)
     mu1 = torch.unsqueeze(mu1.t(), 0)
@@ -24,9 +24,10 @@ def multiply_gaussians(mu0, sigma0, mu1, sigma1):
     mu = (sigma1_2 * mu0 + sigma0_2 * mu1) / (sigma0_2 + sigma1_2)
     sigma = torch.sqrt((sigma0_2 * sigma1_2) / (sigma0_2 + sigma1_2))
     # return weighted combination based on mu1_batch size
-    w = torch.ones(mu1.shape[-1], 1) / torch.tensor(mu1.shape[-1])
-    mu = torch.matmul(mu, w).squeeze(-1)
-    sigma = torch.matmul(sigma, w).squeeze(-1)
+    if weight is None:
+        weight = torch.ones(mu1.shape[-1], 1) / torch.tensor(mu1.shape[-1])
+    mu = torch.matmul(mu, weight.reshape(-1, 1)).squeeze(-1)
+    sigma = torch.matmul(sigma, weight.reshape(-1, 1)).squeeze(-1)
     return mu, sigma
 
 def cortical_dist(mu, scale_rate, beta=0.):
