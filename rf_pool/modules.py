@@ -909,7 +909,59 @@ class RBM(Module):
     def train(self, input, k=1, optimizer=None, monitor_loss=nn.MSELoss(),
               **kwargs):
         """
-        #TODO:WRITEME
+        Train RBM with given optimizer and k Gibbs sampling steps
+
+        Parameters
+        ----------
+        input : torch.Tensor
+            input data
+        k : int
+            number of Gibbs sampling steps to perform [default: 1]
+        optimizer : torch.optim
+            optimizer used to update parameres in RBM
+            [default: None, parameters are not updated]
+        monitor_loss : torch.nn.modules.loss or rf_pool.losses
+            loss function used only for monitoring loss (i.e., not used to
+            update parameters), called as `monitor_loss(input, nv_mean)` where
+            nv_mean is the probability of a visible unit being turned on during
+            reconstruction after Gibbs sampling in the negative phase.
+            [default: torch.nn.MSELoss()]
+
+        Optional kwargs
+        persistent : torch.Tensor
+            persistent chains with shape (n_chains, *input.shape[1:]) used as
+            fantasy particles to maintain Gibbs sampling across data points.
+            This parameter should only be set for the first input. See Notes.
+            [default: None, no persistent chains used]
+        persistent_lr : float
+            learning rate used for persistent weights (if persistent is not None)
+            [default: None, persistent weights updated with learning rate in
+             optimizer]
+
+        Returns
+        -------
+        loss : float
+            value of loss returned from `monitor_loss` function call or from
+            `contrastive_divergence` function call if monitor_loss is None.
+
+        Notes
+        -----
+        When persistent chains are used, persistent weights are initialized as
+        zeros with shape `hidden_weight.shape`. On each call, the persistent
+        weights are added to `hidden_weight` prior to the negative phase and
+        are decayed by 0.95 and updated with `hidden_weight.grad`. This is known
+        as using ``Fast weights`` for persistent contrsative divergence learning.
+        See references below for more information on RBMs and persistent
+        contrastive divergence.
+
+        References
+        ----------
+        Hinton, G. E. (2002). Training products of experts by minimizing
+        contrastive divergence. Neural computation, 14(8), 1771-1800.
+
+        Tieleman, T., & Hinton, G. (2009, June). Using fast weights to improve
+        persistent contrastive divergence. In Proceedings of the 26th Annual
+        International Conference on Machine Learning (pp. 1033-1040).
         """
         if self.input_shape:
             input = torch.reshape(input, self.input_shape)
