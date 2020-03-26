@@ -322,7 +322,7 @@ class Pool(torch.nn.Module):
 
     Methods
     -------
-    apply(input, **kwargs) : apply pooling function only
+    pool(input, **kwargs) : apply pooling function only
     forward(*args, **kwargs) : apply forward pass through pool layer
     set(**kwargs) : set attributes for pool layer
     get(keys, default=None) : get attributes from pool layer
@@ -374,7 +374,10 @@ class Pool(torch.nn.Module):
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
 
-    def apply(self, input, **kwargs):
+    def apply(self, *args, **kwargs):
+        return self.forward(*args, **kwargs)
+
+    def pool(self, input, **kwargs):
         # get inputs for rf_pool
         input_kwargs = functions.get_attributes(self, self.input_keys)
         input_kwargs.update(kwargs)
@@ -751,7 +754,7 @@ class Pool(torch.nn.Module):
         # update retain_shape as True
         kwargs.update({'retain_shape': True})
         # apply pooling layer
-        output = self.apply(u, **kwargs)
+        output = self.pool(u, **kwargs)
         # weight outputs
         output = self.weight_output(output, options.get('RF_weights'))
         # vectorize outputs
@@ -1212,8 +1215,11 @@ class RBM_Attention(Pool):
         train_kwargs = self.train_kwargs.copy()
         train_kwargs.update(kwargs)
         pool_kwargs = {'training': True, 'train_kwargs': train_kwargs}
-        layer_kwargs = {pool_layer_id: {'output_module': pool_module_name,
-                                        pool_module_name: pool_kwargs}}
+        if pool_module_name is None:
+            layer_kwargs = {pool_layer_id: pool_kwargs}
+        else:
+            layer_kwargs = {pool_layer_id: {'output_module': pool_module_name,
+                                            pool_module_name: pool_kwargs}}
         # train for n_epochs
         loss_history = []
         n_batches = len(trainloader)
