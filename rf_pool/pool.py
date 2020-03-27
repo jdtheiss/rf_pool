@@ -354,7 +354,7 @@ class Pool(torch.nn.Module):
         self.lattice_fn = lattice_fn
         # check for optional kwargs
         self.option_keys = ['delta_mu','delta_sigma','fn','attention_mu',
-                            'attention_sigma','update_mu','update_sigma',
+                            'attention_sigma','weight','update_mu','update_sigma',
                             'vectorize','RF_weights']
         options = functions.pop_attributes(kwargs, self.option_keys)
         functions.set_attributes(self, **options)
@@ -604,7 +604,7 @@ class Pool(torch.nn.Module):
         return mu, sigma
 
     def apply_attentional_field(self, attention_mu=None, attention_sigma=None,
-                                **kwargs):
+                                weight=None, **kwargs):
         """
         Apply attentional field via Gaussian multiplication between an attentional
         Gaussian and each RF Gaussian
@@ -645,7 +645,7 @@ class Pool(torch.nn.Module):
         # multiply attentional gaussian with each RF gaussian
         mu, sigma = lattice.multiply_gaussians(self.mu, self.sigma,
                                                attention_mu, attention_sigma,
-                                               kwargs.get('weight'))
+                                               weight)#kwargs.get('weight'))
         if kwargs.get('update_mu') is False:
             self.tmp_mu = self.mu
         else:
@@ -729,8 +729,8 @@ class Pool(torch.nn.Module):
         are in given during forward call (or set at layer initialization):
 
         shift_mu_sigma: `delta_mu`, `delta_sigma`, `fn`;
-        apply_attentional_field: `attention_mu`, `attention_sigma`, `update_mu`,
-            `update_sigma`;
+        apply_attentional_field: `attention_mu`, `attention_sigma`, `weight`,
+            `update_mu`, `update_sigma`;
         weight_output: `RF_weights`;
         vectorize_output: `vectorize`.
 
@@ -1168,8 +1168,7 @@ class RBM_Attention(Pool):
                        vis_sample=lambda x: torch.round(x + torch.randn_like(x)))
 
     def train_RBM(self, model, pool_layer_id, pool_module_name, n_epochs,
-                  trainloader, monitor=100, show_weights=False,
-                  show_attentional_field=False, **kwargs):
+                  trainloader, monitor=100, **kwargs):
         """
         Train RBM within context of given model by passing data through to
         pooling module, computing number of non-zero vectorized RF outputs,
@@ -1191,14 +1190,10 @@ class RBM_Attention(Pool):
         monitor : int
             number of batches between each monitoring step
             [default: 100]
-        show_weights : boolean
-            True/False show RBM weights during monitoring step
-            [default: False]
-        show_attentional_field : boolean
-            True/False show attentional field during monitoring step
-            [default: False]
         **kwargs : **dict
             keyword arguments passed to `self.rbm.train` (see `modules.RBM.train`)
+            additionally, display functions (e.g., `show_lattice`) from pooling
+            class or `modules.RBM` class (see `rf_pool.utils.functions.kwarg_fn`)
             [default: `self.train_kwargs`]
 
         Returns
@@ -1210,6 +1205,7 @@ class RBM_Attention(Pool):
         See Also
         --------
         modules.RBM.train
+        utils.functions.kwarg_fn
         """
         # set train_kwargs, pool_kwargs
         train_kwargs = self.train_kwargs.copy()
@@ -1245,13 +1241,8 @@ class RBM_Attention(Pool):
                     loss_history.append(running_loss / monitor)
                     plt.plot(loss_history)
                     running_loss = 0.
-                    # show rbm weights
-                    if show_weights:
-                        w_shape = (int(np.sqrt(self.n_kernels)),)*2
-                        self.rbm.show_weights(img_shape=w_shape, cmap='gray')
-                    # show attentional field
-                    if show_attentional_field:
-                        self.show_attentional_field()
+                    # show weights, etc.
+                    functions.kwarg_fn([self, self.rbm], **kwargs)
                     plt.show()
         return loss_history
 
@@ -1333,7 +1324,9 @@ class RBM_Attention(Pool):
         kwargs.update({'vectorize': True})
         with torch.no_grad():
             output = Pool.forward(self, u, **kwargs)
-            return torch.round(torch.sum(torch.softmax(output, -1), 1))
+            output = output - torch.min(output, -1, keepdim=True)[0]
+            sum_output = torch.sum(output, -1, keepdim=True) + 1e-6
+            return torch.round(torch.sum(torch.div(output, sum_output), 1))
 
     def forward(self, u, **kwargs):
         # parse kwargs for training, train_kwargs
