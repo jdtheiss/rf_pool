@@ -240,7 +240,7 @@ def plot_rfs(mu, sigma, img_shape, mu0=None, sigma0=None, figsize=(5,5), **kwarg
     if sigma.ndimension() == 2:
         sigma = sigma.squeeze(-1)
     sigma = sigma.data.numpy()
-    sigma = 2. * np.ceil(sigma)
+    sigma = 2. * sigma
     sigma = get_adjusted_sizes(ax, sigma)
     # set kwargs for plot
     plot_kwargs = {'markersize': sigma.tolist(), 'color': 'black',
@@ -288,7 +288,7 @@ def scatter_rfs(mu, sigma, img_shape, remove=False, updates={}, figsize=(5,5),
     if sigma.ndimension() == 2:
         sigma = sigma.squeeze(-1)
     sigma = sigma.data.numpy()
-    sigma = 2. * np.ceil(sigma)
+    sigma = 2. * sigma
     # set mu offsets
     offsets = np.flip(mu.data.numpy(), 1)
     # set sizes
