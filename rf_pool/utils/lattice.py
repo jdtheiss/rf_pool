@@ -59,6 +59,13 @@ def estimate_mu_sigma(kernel, mu=None):
     cov = torch.matmul(m_dev.transpose(-1,-2), torch.mul(w.unsqueeze(-1), m_dev))
     return m, torch.sqrt(cov[:,0,0]).reshape(-1,1)
 
+def get_xy_coords(kernel_shape):
+    x = torch.arange(kernel_shape[0])
+    y = torch.arange(kernel_shape[1])
+    xy = torch.stack(torch.meshgrid(x, y), dim=0).unsqueeze(0).float()
+    # add 0.5 to coords to account for middle of pixel
+    return xy + 0.5
+
 def exp_kernel_2d(mu, sigma, xy):
     mu = mu.reshape(mu.shape + (1,1)).float()
     sigma = sigma.unsqueeze(-1).float()
@@ -100,9 +107,7 @@ def gaussian_field(priority_map):
     """
     """
     # get mu and sigma for map
-    x = torch.arange(priority_map.shape[0])
-    y = torch.arange(priority_map.shape[1])
-    xy = torch.stack(torch.meshgrid(x, y), dim=0)
+    xy = get_xy_coords(priority_map.shape[:2])
     # get mu, sigma from priority map
     map_mu = xy.reshape(2, -1).t()
     map_sigma = priority_map.reshape(-1, 1)
@@ -160,9 +165,7 @@ def apply_attentional_field(mu, sigma, priority_map):
     with the gaussian at that location. Zero-valued locations will be ignored.
     """
     # get mu and sigma for map
-    x = torch.arange(priority_map.shape[0])
-    y = torch.arange(priority_map.shape[1])
-    xy = torch.stack(torch.meshgrid(x, y), dim=0)
+    xy = get_xy_coords(priority_map.shape[:2])
     # get mu, sigma from priority map
     map_mu = xy.reshape(2, -1).t()
     map_sigma = priority_map.reshape(-1, 1)
@@ -202,11 +205,8 @@ def exp_kernel_lattice(mu, sigma, kernel_shape):
     >>> mu = mu * torch.as_tensor(kernel_shape, dtype=mu.dtype)
     >>> kernels = exp_kernel_lattice(mu, sigma, kernel_shape)
     """
-
     # create the coordinates input to kernel function
-    x = torch.arange(kernel_shape[0])
-    y = torch.arange(kernel_shape[1])
-    xy = torch.stack(torch.meshgrid(x, y), dim=0).unsqueeze(0).float()
+    xy = get_xy_coords(kernel_shape)
 
     return exp_kernel_2d(mu, sigma, xy)
 
@@ -238,11 +238,8 @@ def gaussian_kernel_lattice(mu, sigma, kernel_shape):
     >>> mu = mu * torch.as_tensor(kernel_shape, dtype=mu.dtype)
     >>> kernels = gaussian_kernel_lattice(mu, sigma, kernel_shape)
     """
-
     # create the coordinates input to kernel function
-    x = torch.arange(kernel_shape[0])
-    y = torch.arange(kernel_shape[1])
-    xy = torch.stack(torch.meshgrid(x, y), dim=0).unsqueeze(0).float()
+    xy = get_xy_coords(kernel_shape)
 
     return gaussian_kernel_2d(mu, sigma, xy)
 
@@ -277,11 +274,8 @@ def dog_kernel_lattice(mu, sigma, kernel_shape, ratio=4.):
     >>> mu = mu * torch.as_tensor(kernel_shape, dtype=mu.dtype)
     >>> kernels = dog_kernel_lattice(mu, sigma, kernel_shape, ratio)
     """
-
     # create the coordinates input to kernel function
-    x = torch.arange(kernel_shape[0])
-    y = torch.arange(kernel_shape[1])
-    xy = torch.stack(torch.meshgrid(x, y), dim=0).unsqueeze(0).float()
+    xy = get_xy_coords(kernel_shape)
 
     return dog_kernel_2d(mu, sigma, ratio, xy)
 
@@ -314,9 +308,7 @@ def mask_kernel_lattice(mu, sigma, kernel_shape):
     >>> kernels = mask_kernel_lattice(mu, sigma, kernel_shape)
     """
     # create the coordinates input to kernel function
-    x = torch.arange(kernel_shape[0])
-    y = torch.arange(kernel_shape[1])
-    xy = torch.stack(torch.meshgrid(x, y), dim=0).unsqueeze(0).float()
+    xy = get_xy_coords(kernel_shape)
 
     return mask_kernel_2d(mu, sigma, xy)
 
@@ -563,6 +555,7 @@ def init_hexagon_lattice(img_shape, n_kernel_side, spacing, sigma_init=1.,
     if n_kernel_side[1] % 2 == 0:
         mu[:,1] += 0.5
     # scale based on hexagon distances
+    spacing = spacing / 2. # make edge-to-edge center-to-center spacing
     mu[:,1] *= np.sqrt(3.) * spacing
     mu[:,0] *= 2. * spacing
     for n in range(n_kernel_side[0]):
