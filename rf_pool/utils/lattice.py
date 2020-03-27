@@ -76,6 +76,9 @@ def dog_kernel_2d(mu, sigma, ratio, xy):
 def mask_kernel_2d(mu, sigma, xy):
     kernels = exp_kernel_2d(mu, sigma, xy)
     output = torch.as_tensor(torch.ge(kernels, np.exp(-0.5)), dtype=kernels.dtype)
+    # ensure at least one pixel (if in image) is set to 1.
+    d = torch.div(kernels, torch.max(kernels.flatten(-2), -1)[0].reshape(-1,1,1))
+    output = torch.max(output, torch.floor(d))
     return _MaskGrad.apply(kernels, output)
 
 class _MaskGrad(Function):
@@ -310,7 +313,6 @@ def mask_kernel_lattice(mu, sigma, kernel_shape):
     >>> mu = mu * torch.as_tensor(kernel_shape, dtype=mu.dtype)
     >>> kernels = mask_kernel_lattice(mu, sigma, kernel_shape)
     """
-
     # create the coordinates input to kernel function
     x = torch.arange(kernel_shape[0])
     y = torch.arange(kernel_shape[1])
@@ -481,8 +483,6 @@ def init_uniform_lattice(img_shape, n_kernel_side, spacing, sigma_init=1.,
     >>> mu, sigma = init_uniform_lattice(img_shape, n_kernel_side, spacing,
                                          sigma_init)
     """
-    if sigma_init < 1.:
-        warnings.warn('sigma < 1 will result in sum(pdf) > 1.')
     cx, cy = np.array(img_shape) / 2. + np.array(offset)
     if type(n_kernel_side) is int:
         n_kernel_side = (n_kernel_side,)*2
@@ -552,8 +552,6 @@ def init_hexagon_lattice(img_shape, n_kernel_side, spacing, sigma_init=1.,
     >>> mu, sigma = init_hexagon_lattice(img_shape, n_kernel_side, spacing,
                                          sigma_init)
     """
-    if sigma_init < 1.:
-        warnings.warn('sigma < 1 will result in sum(pdf) > 1.')
     cx, cy = np.array(img_shape) / 2. + np.array(offset)
     if type(n_kernel_side) is int:
         n_kernel_side = (n_kernel_side,)*2
