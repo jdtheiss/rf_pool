@@ -314,7 +314,7 @@ def mask_kernel_lattice(mu, sigma, kernel_shape):
     return mask_kernel_2d(mu, sigma, xy)
 
 def init_foveated_lattice(img_shape, scale, n_rings, spacing=0., std=1.,
-                          n_rf=None, offset=[0.,0.], min_ecc=1.,
+                          n_rf=None, offset=[0.,0.], min_ecc=0.5,
                           rotate_rings=True, rotate=0., keep_all_RFs=False):
     """
     Creates a foveated lattice of kernel centers (mu) and
@@ -418,9 +418,8 @@ def init_foveated_lattice(img_shape, scale, n_rings, spacing=0., std=1.,
     mu = torch.stack([rx,ry], dim=-1)
     # set offset of mu
     mu = mu + torch.as_tensor(offset, dtype=mu.dtype)
-    # multiply by std and set sigma to max(sigma, 0.5)
+    # multiply by std
     sigma = torch.mul(sigma, std)
-    sigma = torch.max(sigma, 0.5 * torch.ones_like(sigma))
     # check if mu + sigma (along radial direction from fovea) is in image
     r = torch.sqrt(torch.sum(torch.pow(mu, 2), 1))
     r_sigma = r - sigma.flatten()
@@ -436,7 +435,7 @@ def init_foveated_lattice(img_shape, scale, n_rings, spacing=0., std=1.,
         return mu, sigma
     return mu[keep_idx], sigma[keep_idx]
 
-def init_uniform_lattice(img_shape, n_kernel_side, spacing, sigma_init=1.,
+def init_uniform_lattice(img_shape, n_kernels, spacing, sigma_init=1.,
                          offset=[0.,0.], rotate=0.):
     """
     Creates a uniform lattice of kernel centers (mu)
@@ -446,7 +445,7 @@ def init_uniform_lattice(img_shape, n_kernel_side, spacing, sigma_init=1.,
     ----------
     img_shape : tuple
         shape of image
-    n_kernel_side : tuple or int
+    n_kernels : tuple or int
         number of kernels along height/width of the lattice
     spacing : float
         spacing between receptive field centers
@@ -470,28 +469,28 @@ def init_uniform_lattice(img_shape, n_kernel_side, spacing, sigma_init=1.,
     # Generate lattice of size 8x8 with 12 pixel spacing centered on a
     # 200x200 image
     >>> img_shape = (200,200)
-    >>> n_kernel_side = 8
+    >>> n_kernels = 8
     >>> spacing = 12
     >>> sigma_init = 3.
-    >>> mu, sigma = init_uniform_lattice(img_shape, n_kernel_side, spacing,
+    >>> mu, sigma = init_uniform_lattice(img_shape, n_kernels, spacing,
                                          sigma_init)
     """
     cx, cy = np.array(img_shape) / 2. + np.array(offset)
-    if type(n_kernel_side) is int:
-        n_kernel_side = (n_kernel_side,)*2
-    lattice_coord_x = torch.arange(n_kernel_side[0]) - np.floor(n_kernel_side[0]/2)
-    lattice_coord_y = torch.arange(n_kernel_side[1]) - np.floor(n_kernel_side[1]/2)
+    if type(n_kernels) is int:
+        n_kernels = (n_kernels,)*2
+    lattice_coord_x = torch.arange(n_kernels[0]) - np.floor(n_kernels[0]/2)
+    lattice_coord_y = torch.arange(n_kernels[1]) - np.floor(n_kernels[1]/2)
     # x-coodinates, y-coordinates
     x = spacing * lattice_coord_x.float()
     y = spacing * lattice_coord_y.float()
     # update based on kernel side
-    if n_kernel_side[0] % 2 == 0:
+    if n_kernels[0] % 2 == 0:
         x = x + np.floor(spacing / 2.)
-    if n_kernel_side[1] % 2 == 0:
+    if n_kernels[1] % 2 == 0:
         y = y + np.floor(spacing / 2.)
     # repeat
-    x = x.repeat(n_kernel_side[1]).reshape(n_kernel_side).flatten()
-    y = y.repeat(n_kernel_side[0]).reshape(n_kernel_side).t().flatten()
+    x = x.repeat(n_kernels[1]).reshape(n_kernels).flatten()
+    y = y.repeat(n_kernels[0]).reshape(n_kernels).t().flatten()
     # rotate
     rx = np.cos(rotate) * x - np.sin(rotate) * y
     ry = np.sin(rotate) * x + np.cos(rotate) * y
@@ -505,7 +504,7 @@ def init_uniform_lattice(img_shape, n_kernel_side, spacing, sigma_init=1.,
 
     return mu, sigma
 
-def init_hexagon_lattice(img_shape, n_kernel_side, spacing, sigma_init=1.,
+def init_hexagon_lattice(img_shape, n_kernels, spacing, sigma_init=1.,
                          offset=[0.,0.], rotate=0.):
     """
     Creates a uniform hexagon lattice of kernel centers (mu)
@@ -515,7 +514,7 @@ def init_hexagon_lattice(img_shape, n_kernel_side, spacing, sigma_init=1.,
     ----------
     img_shape : tuple
         shape of image
-    n_kernel_side : tuple or int
+    n_kernels : tuple or int
         number of kernels along height/width of the lattice
     spacing : float
         spacing between receptive field centers
@@ -539,129 +538,36 @@ def init_hexagon_lattice(img_shape, n_kernel_side, spacing, sigma_init=1.,
     # Generate lattice of size 8x8 with 12 pixel spacing centered on a
     # 200x200 image
     >>> img_shape = (200,200)
-    >>> n_kernel_side = 8
+    >>> n_kernels = 8
     >>> spacing = 12
     >>> sigma_init = 3.
-    >>> mu, sigma = init_hexagon_lattice(img_shape, n_kernel_side, spacing,
+    >>> mu, sigma = init_hexagon_lattice(img_shape, n_kernels, spacing,
                                          sigma_init)
     """
     cx, cy = np.array(img_shape) / 2. + np.array(offset)
-    if type(n_kernel_side) is int:
-        n_kernel_side = (n_kernel_side,)*2
+    if type(n_kernels) is int:
+        n_kernels = (n_kernels,)*2
     # get uniform lattice
-    mu, sigma = init_uniform_lattice((0.,0.), n_kernel_side, 1., sigma_init)
+    mu, sigma = init_uniform_lattice((0.,0.), n_kernels, 1., sigma_init)
     # update based on kernel side
-    if n_kernel_side[0] % 2 == 1:
+    if n_kernels[0] % 2 == 1:
         mu[:,0] -= 0.5
-    if n_kernel_side[1] % 2 == 0:
+    if n_kernels[1] % 2 == 0:
         mu[:,1] += 0.5
     # scale based on hexagon distances
     spacing = spacing / 2. # make edge-to-edge center-to-center spacing
     mu[:,1] *= np.sqrt(3.) * spacing
     mu[:,0] *= 2. * spacing
-    for n in range(n_kernel_side[0]):
-        mu[n::n_kernel_side[0]*2,0] += spacing
+    for n in range(n_kernels[0]):
+        mu[n::n_kernels[0]*2,0] += spacing
     # rotate
-    rx = np.cos(rotate) * mu[:,1] - np.sin(rotate) * mu[:,0]
-    ry = np.sin(rotate) * mu[:,1] + np.cos(rotate) * mu[:,0]
+    rx = np.cos(rotate) * mu[:,0] - np.sin(rotate) * mu[:,1]
+    ry = np.sin(rotate) * mu[:,0] + np.cos(rotate) * mu[:,1]
     # center
-    mu[:,1] = rx + cx
-    mu[:,0] = ry + cy
+    mu[:,0] = rx + cx
+    mu[:,1] = ry + cy
 
     return mu, sigma
-
-def init_tile_lattice(img_shape, rf_sizes, spacing=0):
-    """
-    Creates a tiled lattice of kernel centers (mu)
-    and standard deviations (sigma)
-
-    Parameters
-    ----------
-    img_shape : tuple
-        height and width of bottom-up input to pooling layer
-    rf_sizes : list
-        receptive field sizes to tile detection layer (see example)
-    spacing : int
-        spacing (if positive) or overlap (if negative) between receptive
-        field edges [default: 0]
-
-    Returns
-    -------
-    mu : torch.Tensor
-        kernel x-y coordinate centers with shape (n_kernels, 2) and dtype
-        torch.int32
-    sigma : torch.Tensor
-        kernel standard deviations with shape (n_kernels, 1)
-
-    Examples
-    --------
-    # Generate lattice tiling a 200x200 image with 9 pixels between receptive
-    # fields and standard deviations of 3 pixels
-    >>> img_shape = (200,200)
-    >>> rf_sizes = [3]
-    >>> spacing = 9
-    >>> mu, sigma = init_uniform_lattice(center, size, spacing)
-
-    Notes
-    -----
-    If receptive field sizes do not fully cover image, rf_sizes[-1] will be
-    appended to rf_sizes until the image can be completely covered
-    (unless (rf_sizes[-1] + spacing) <= 0).
-    """
-
-    # ensure rf_sizes given
-    assert len(rf_sizes) > 0
-
-    # get image size
-    img_h, img_w = img_shape
-
-    # append rf_size[-1] if img not fully covered
-    while (img_h - 2*np.sum(rf_sizes) - 2*len(rf_sizes)*spacing) > 0 and \
-          (img_w - 2*np.sum(rf_sizes) - 2*len(rf_sizes)*spacing) > 0:
-        if rf_sizes[-1] + spacing > 0:
-            rf_sizes.extend([rf_sizes[-1]])
-        else: # warn that image won't be covered
-            warnings.warn("Image will not be fully covered by receptive fields.")
-            break
-
-    # for each RF size, get slice indices
-    mu = []
-    sigma = []
-    for n in range(len(rf_sizes)):
-        # get sum of previous rf sizes
-        sum_rfs = np.sum(rf_sizes[:n], dtype='uint8') + spacing*n
-        # get current image size for rf
-        if (img_shape[0] - 2*sum_rfs) < rf_sizes[n] and (img_shape[1] - 2*sum_rfs) < rf_sizes[n]:
-            break
-        if (img_shape[0] - 2*sum_rfs) >= rf_sizes[n]:
-            img_h = img_shape[0] - 2*sum_rfs
-        if (img_shape[1] - 2*sum_rfs) >= rf_sizes[n]:
-            img_w = img_shape[1] - 2*sum_rfs
-        # init (i, j) mu indices
-        i = []
-        j = []
-        # set left side slices
-        i.extend([ii+rf_sizes[n]//2 for ii in np.arange(sum_rfs, img_h+sum_rfs, rf_sizes[n] + spacing)
-                  if ii+rf_sizes[n] <= img_h+sum_rfs])
-        j.extend([jj+rf_sizes[n]//2 for jj in np.repeat(sum_rfs, np.ceil(img_h/(rf_sizes[n]+spacing)))])
-        # set bottom side slices
-        i.extend([ii-rf_sizes[n]//2 for ii in np.repeat(img_h+sum_rfs, np.ceil(img_w/(rf_sizes[n]+spacing)))])
-        j.extend([jj+rf_sizes[n]//2 for jj in np.arange(sum_rfs, img_w+sum_rfs, rf_sizes[n] + spacing)
-                  if jj+rf_sizes[n] <= img_w+sum_rfs])
-        # set right side slices
-        i.extend([ii-rf_sizes[n]//2 for ii in np.arange(img_h+sum_rfs, sum_rfs, -rf_sizes[n] - spacing)
-                  if ii-rf_sizes[n] >= sum_rfs])
-        j.extend([jj-rf_sizes[n]//2 for jj in np.repeat(img_w+sum_rfs, np.ceil(img_h/(rf_sizes[n]+spacing)))])
-        # set top side slices
-        i.extend([ii+rf_sizes[n]//2 for ii in np.repeat(sum_rfs, np.ceil(img_w/(rf_sizes[n]+spacing)))])
-        j.extend([jj-rf_sizes[n]//2 for jj in np.arange(img_w+sum_rfs, sum_rfs, -rf_sizes[n] - spacing)
-                  if jj-rf_sizes[n] >= sum_rfs])
-        # append if not already in mu
-        for ii,jj in zip(i,j):
-            if len(mu) == 0 or (ii,jj) not in mu:
-                mu.append((ii,jj))
-                sigma.append([rf_sizes[n]])
-    return torch.as_tensor(mu, dtype=torch.float32), torch.as_tensor(sigma, dtype=torch.float32)
 
 def plot_size_ecc(mu, sigma, img_shape):
     ecc = torch.abs(mu - torch.as_tensor(img_shape, dtype=mu.dtype).unsqueeze(0)/2.)
