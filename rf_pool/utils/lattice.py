@@ -84,8 +84,9 @@ def mask_kernel_2d(mu, sigma, xy):
     kernels = exp_kernel_2d(mu, sigma, xy)
     output = torch.as_tensor(torch.ge(kernels, np.exp(-0.5)), dtype=kernels.dtype)
     # ensure at least one pixel (if in image) is set to 1.
-    d = torch.div(kernels, torch.max(kernels.flatten(-2), -1)[0].reshape(-1,1,1))
-    output = torch.max(output, torch.floor(d))
+    mu = mu.reshape(mu.shape + (1,1))
+    d = torch.eq(torch.sum(torch.pow(torch.floor(mu) - (xy - 0.5), 2), 1), 0.)
+    output = torch.max(output, d.type(kernels.dtype))
     return _MaskGrad.apply(kernels, output)
 
 class _MaskGrad(Function):
