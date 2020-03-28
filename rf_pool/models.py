@@ -389,33 +389,30 @@ class Model(nn.Module):
                 if name.find(pattern) >=0:
                     param.requires_grad = requires_grad
 
-    def get_prediction(self, input, crop=None):
+    def get_prediction(self, input, crop=None, top_n=1):
         with torch.no_grad():
             output = self.forward(input)
             if crop:
                 output = output[:,:,crop[0],crop[1]]
             if output.ndimension() == 4:
                 output = torch.max(output.flatten(-2), -1)[0]
-            pred = torch.max(output, -1)[1]
-        return pred
+            pred = torch.sort(output, -1)[1]
+        return pred[:,-top_n:]
 
-    def get_accuracy(self, dataloader, crop=None, monitor=100):
-        correct = 0
-        total = 0
-        with torch.no_grad():
-            for i, data in enumerate(dataloader):
-                # get images, labels
-                images, labels = data
+    def get_accuracy(self, dataloader, crop=None, monitor=100, top_n=1):
+        correct = 0.
+        total = 0.
+        for i, (data, labels) in enumerate(dataloader):
+            with torch.no_grad():
                 # get predicted labels, update accuracy
-                pred = self.get_prediction(images, crop=crop)
-                total += labels.size(0)
-                correct += (pred == labels).sum().item()
+                pred = self.get_prediction(data, crop=crop, top_n=top_n)
+                total += float(labels.shape[0])
+                correct += float(torch.eq(pred, labels.reshape(-1,1)).sum())
                 # monitor accuracy
                 if (i+1) % monitor == 0:
                     clear_output(wait=True)
-                    display('[%5d] accuracy: %.2f%%' % (i+1, 100*correct/total))
-
-        return 100 * correct / total
+                    display('[%5d] accuracy: %.2f%%' % (i+1, 100.*correct/total))
+        return 100. * correct / total
 
     def train(self, n_epochs, trainloader, loss_fn, optimizer, monitor=100,
               **kwargs):
