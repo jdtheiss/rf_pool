@@ -595,11 +595,13 @@ class Model(nn.Module):
                     running_loss = 0.
                     # show negative
                     if options.get('show_negative'):
-                        self.show_negative(inputs[0], **options.get('show_negative'))
+                        self.show_negative(inputs[0],
+                                           **options.get('show_negative'))
                     # show lattice
                     if options.get('show_lattice'):
                         if 'x' not in options.get('show_lattice'):
-                            self.show_lattice(inputs[0], **options.get('show_lattice'))
+                            self.show_lattice(x=inputs[0],
+                                              **options.get('show_lattice'))
                         else:
                             self.show_lattice(**options.get('show_lattice'))
                     # call other monitoring functions
@@ -668,7 +670,7 @@ class Model(nn.Module):
                     self.set_requires_grad(label_params.get(label),
                                            requires_grad=requires_grad)
 
-    def show_lattice(self, x=None, figsize=(5,5), cmap=None):
+    def show_lattice(self, current=True, x=None, figsize=(5,5), cmap=None):
         # get rf_layers
         rf_layers = []
         for layer_id, layer in self.layers.named_children():
@@ -685,7 +687,7 @@ class Model(nn.Module):
             # get lattices
             lattices = []
             for pool in rf_layers:
-                pool.show_lattice(x, figsize, cmap)
+                pool.show_lattice(current, x, figsize, cmap)
 
     def show_weights(self, layer_id, field='hidden_weight', img_shape=None,
                      figsize=(5, 5), cmap=None):

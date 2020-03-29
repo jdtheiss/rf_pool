@@ -327,7 +327,7 @@ class Pool(torch.nn.Module):
     forward(*args, **kwargs) : apply forward pass through pool layer
     set(**kwargs) : set attributes for pool layer
     get(keys, default) : get attributes from pool layer
-    show_lattice(figsize, cmap, x, **kwargs) : show pool lattice
+    show_lattice(current, figsize, cmap, x, **kwargs) : show pool lattice
     crop_img(input, coords) : crop input with bounding box coordinates
     adaptive_update(img_shape, adaptive) : update mu/sigma proportional to
         change in img_shape
@@ -509,18 +509,23 @@ class Pool(torch.nn.Module):
         output = output[:, coords[0]:coords[2], coords[1]:coords[3]]
         return torch.reshape(output, input.shape[:-2] + output.shape[-2:])
 
-    def show_lattice(self, figsize=(5,5), cmap=None, x=None, **kwargs):
+    def show_lattice(self, current=True, x=None, figsize=(5,5), cmap=None,
+                     **kwargs):
         """
         Show current RF lattice
 
         Parameters
         ----------
+        current : boolean
+            True/False show current RF lattice (i.e., using `self.tmp_mu`,
+            `self.tmp_sigma`, and `self.tmp_img_shape`).
+            [default: True]
+        x : torch.Tensor, optional
+            image to display on top of RF lattice (e.g., stimulus)
         figsize : tuple
             figure size [default: (5,5)]
         cmap : str or matplotlib.colors.LinearSegmentedColormap
             colormap used for plotting
-        x : torch.Tensor, optional
-            image to display on top of RF lattice (e.g., stimulus)
         **kwargs : **dict
             keyword arguments passed to visualize.scatter_rfs
 
@@ -534,15 +539,15 @@ class Pool(torch.nn.Module):
         visualize.scatter_rfs
         """
         # get mu, sigma
-        if self.get('tmp_mu') is not None:
+        if self.get('tmp_mu') is not None and current:
             mu = self.tmp_mu
         else:
             mu = self.mu
-        if self.get('tmp_sigma') is not None:
+        if self.get('tmp_sigma') is not None and current:
             sigma = self.tmp_sigma
         else:
             sigma = self.sigma
-        if self.get('tmp_img_shape') is not None:
+        if self.get('tmp_img_shape') is not None and current:
             img_shape = self.tmp_img_shape
         else:
             img_shape = self.img_shape
