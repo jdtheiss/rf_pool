@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import inspect
 
 from IPython.display import clear_output, display
@@ -325,11 +326,15 @@ class Pool(torch.nn.Module):
     pool(input, **kwargs) : apply pooling function only
     forward(*args, **kwargs) : apply forward pass through pool layer
     set(**kwargs) : set attributes for pool layer
-    get(keys, default=None) : get attributes from pool layer
-    show_lattice(x=None, figsize=(5,5), cmap=None, **kwargs) : show pool lattice
+    get(keys, default) : get attributes from pool layer
+    show_lattice(figsize, cmap, x, **kwargs) : show pool lattice
     crop_img(input, coords) : crop input with bounding box coordinates
+    adaptive_update(img_shape, adaptive) : update mu/sigma proportional to
+        change in img_shape
     shift_mu_sigma(delta_mu, delta_sigma, fn) : update mu/sigma with shifts
         or function. These kwargs can also be set at initialization.
+    apply_RBM(u, training, optimizer, train_kwargs **kwargs) : get attentional
+        Gaussians to update mu/sigma
     apply_attentional_field(attention_mu, attention_sigma, **kwargs) : update
         mu/sigma via gaussian multiplication with a gaussian attentional field.
         These kwargs can also be set at initialization.
@@ -353,9 +358,9 @@ class Pool(torch.nn.Module):
         self.img_shape = img_shape
         self.lattice_fn = lattice_fn
         # check for optional kwargs
-        self.option_keys = ['delta_mu','delta_sigma','fn','attention_mu',
-                            'attention_sigma','weight','update_mu','update_sigma',
-                            'vectorize','RF_weights']
+        self.option_keys = ['adaptive','delta_mu','delta_sigma','fn',
+                            'training','attention_mu','attention_sigma','weight',
+                            'update_mu','update_sigma','vectorize','RF_weights']
         options = functions.pop_attributes(kwargs, self.option_keys)
         functions.set_attributes(self, **options)
         self.apply_attentional_field(**options)
@@ -413,11 +418,6 @@ class Pool(torch.nn.Module):
             return
         assert lattice_fn is not None
         assert img_shape is not None
-        # if img_shape changed, shift mu
-        delta_mu = torch.sub(torch.as_tensor(img_shape, dtype=mu.dtype),
-                             torch.as_tensor(self.img_shape, dtype=mu.dtype))
-        if not torch.all(torch.eq(delta_mu, 0.)):
-            mu = mu + (delta_mu / 2.)
         # get rfs using lattice_fn
         args = [mu, sigma, img_shape]
         self.rfs = lattice_fn(*args)
@@ -542,6 +542,10 @@ class Pool(torch.nn.Module):
             sigma = self.tmp_sigma
         else:
             sigma = self.sigma
+        if self.get('tmp_img_shape') is not None:
+            img_shape = self.tmp_img_shape
+        else:
+            img_shape = self.img_shape
         if x is not None:
             # show input
             fig, axes = plt.subplots(1, 2, figsize=figsize)
@@ -552,8 +556,18 @@ class Pool(torch.nn.Module):
             return visualize.scatter_rfs(mu, sigma, x.shape[-2:], ax=axes[1],
                                          **kwargs)
         # visualize rfs
-        return visualize.scatter_rfs(mu, sigma, self.img_shape, figsize=figsize,
+        return visualize.scatter_rfs(mu, sigma, img_shape, figsize=figsize,
                                      **kwargs)
+
+    def init_mu_sigma(self, init_fn, img_shape, **kwargs):
+        self.init_fn = init_fn
+        argspec = inspect.getfullargspec(self.init_fn)
+        kws, defaults = argspec.args[-len(argspec.defaults):], argspec.defaults
+        self.init_kwargs = OrderedDict(zip(kws, defaults))
+        updates = dict([(k, kwargs.pop(k)) for k in argspec.args
+                        if kwargs.get(k) is not None])
+        self.init_kwargs.update(updates)
+        return self.init_fn(img_shape, **self.init_kwargs)
 
     def shift_mu_sigma(self, delta_mu=None, delta_sigma=None, fn=None, **kwargs):
         """
@@ -565,7 +579,7 @@ class Pool(torch.nn.Module):
             value by which to shift mu positions with shape (-1, 2)
         delta_sigma : torch.Tensor
             value by which to change sigma sizes with shape (-1, 1)
-            Note: new_sigma = sqrt(exp(log(sigma**2) + delta_sigma))
+            updated as `new_sigma = sqrt(exp(log(sigma**2) + delta_sigma))`
         fn : function, optional
             function used to produce new mu, sigma values
             (e.g., lattice.mask_kernel_lattice)
@@ -578,6 +592,10 @@ class Pool(torch.nn.Module):
             updated mu values
         sigma : torch.Tensor
             updated sigma values
+
+        See Also
+        --------
+        adaptive_update
         """
         if self.mu is None and self.sigma is None:
             return None, None
@@ -587,13 +605,11 @@ class Pool(torch.nn.Module):
         # add delta_mu to mu
         if delta_mu is not None:
             mu = torch.add(self.mu, delta_mu)
-            self.delta_mu = delta_mu
         # add delta_sigma to log(sigma**2) then exponentiate and sqrt
         if delta_sigma is not None:
             log_sigma = torch.add(torch.log(torch.pow(self.sigma, 2)),
                                   delta_sigma)
             sigma = torch.sqrt(torch.exp(log_sigma))
-            self.delta_sigma = delta_sigma
         # update mu, sigma with a lattice function
         if fn is not None:
             mu, sigma = fn(mu, sigma, **kwargs)
@@ -602,6 +618,48 @@ class Pool(torch.nn.Module):
         if all([x is None for x in [delta_mu, delta_sigma, fn]]):
             return None, None
         return mu, sigma
+
+    def adaptive_update(self, img_shape, adaptive=True):
+        """
+        Update mu and sigma proportional to changes in img_shape.
+
+        Parameters
+        ----------
+        img_shape : tuple
+            new image shape by which mu/sigma will be updated
+        adaptive : boolean
+            True/False update mu/sigma proportional to img_shape
+            [default: True]
+
+        Returns
+        -------
+        mu : torch.Tensor
+            updated mu values
+        sigma : torch.Tensor
+            updated sigma values
+
+        See Also
+        --------
+        shift_mu_sigma
+        """
+        # return None if no mu/sigma or adaptive is False
+        if self.mu is None and self.sigma is None or adaptive is False:
+            return None, None
+        else:
+            mu = self.mu
+            sigma = self.sigma
+        # if img_shape unchanged, return None
+        self.tmp_img_shape = img_shape
+        img_shape = torch.as_tensor(img_shape, dtype=mu.dtype)
+        img_shape0 = torch.as_tensor(self.img_shape, dtype=mu.dtype)
+        if torch.all(torch.eq(img_shape, img_shape0)):
+            return None, None
+        # get ratio
+        ratio = torch.div(img_shape, img_shape0)
+        # multiply by ratio, return tmp_mu, tmp_sigma
+        self.tmp_mu = self.mu * ratio
+        self.tmp_sigma = self.sigma * torch.mean(ratio)
+        return self.tmp_mu, self.tmp_sigma
 
     def apply_attentional_field(self, attention_mu=None, attention_sigma=None,
                                 weight=None, **kwargs):
@@ -645,7 +703,7 @@ class Pool(torch.nn.Module):
         # multiply attentional gaussian with each RF gaussian
         mu, sigma = lattice.multiply_gaussians(self.mu, self.sigma,
                                                attention_mu, attention_sigma,
-                                               weight)#kwargs.get('weight'))
+                                               weight)
         if kwargs.get('update_mu') is False:
             self.tmp_mu = self.mu
         else:
@@ -706,6 +764,323 @@ class Pool(torch.nn.Module):
             return output
         return torch.max(torch.flatten(output, -2), -1)[0]
 
+    def init_RBM(self, n_Gaussians, n_channels, training=False, lr=1e-5,
+                 **kwargs):
+        """
+        Initialize RBM used to learn spatial associations (modeled as Gaussians)
+        among RF outputs to update RF locations/sizes using Gaussian
+        multiplication (see `apply_attentional_field`).
+
+        Parameters
+        ----------
+        n_Gaussians : int
+            number of attentional Gaussians to learn (i.e., number of hidden
+            units in RBM)
+        n_channels : int
+            number of channels in input (i.e., input vector to RBM is modeled as
+            Binomial distributions with n=n_channels)
+        training : boolean
+            True/False allow training during forward pass [default: False]
+        lr : float
+            learning rate used during training [default: 1e-5]
+        **kwargs : **dict
+            keyword arguments for `modules.RBM.train`
+
+        Returns
+        -------
+        None
+
+        See Also
+        --------
+        apply_attentional_field
+        train_RBM
+        modules.RBM.train
+
+        Notes
+        -----
+        This function sets the following attributes: `rbm`, `training`,
+        `optimizer`, and `train_kwargs`.
+        """
+        assert self.mu is not None
+        n_kernels = self.mu.shape[0]
+        self.rbm = RBM(hidden=torch.nn.Linear(n_kernels, n_Gaussians),
+                       activation=torch.nn.Sigmoid(),
+                       sample=lambda x: torch.distributions.Bernoulli(x).sample(),
+                       vis_activation=lambda x: torch.sigmoid(x) * n_channels,
+                       vis_sample=lambda x: torch.round(x + torch.randn_like(x)))
+        # set training
+        self.training = training
+        # set optimizer
+        self.optimizer = torch.optim.SGD(self.rbm.parameters(), lr=lr)
+        # set train_kwargs
+        self.train_kwargs = kwargs
+
+    def train_RBM(self, model, pool_layer_id, pool_module_name, n_epochs,
+                  trainloader, optimizer=None, monitor=100, **kwargs):
+        """
+        Train RBM within context of given model by passing data through to
+        pooling module, obtaining vectorized RF outputs as a Binomial vector,
+        and passing this vector with shape (batch, n_kernels) to `self.rbm`.
+
+        Parameters
+        ----------
+        model : rf_pool.models
+            model containing current pooling module
+        pool_layer_id : str
+            layer_id in which current pooling module resides
+        pool_module_name : str
+            name of pooling module within
+            `model.layers[pool_layer_id].forward_layer`
+        n_epochs : int
+            number of epochs to train (full passes through trainloader)
+        trainloader : torch.utils.data.DataLoader
+            dataloader containing (data,label) pairs of data used to train RBM
+        optimizer : torch.optim or None
+            optimizer used to update `self.rbm.parameters` during training
+            [default: None, uses `self.optimizer`]
+        monitor : int
+            number of batches between each monitoring step
+            [default: 100]
+        **kwargs : **dict
+            keyword arguments passed to `self.rbm.train` (see `modules.RBM.train`)
+            additionally, display functions (e.g., `show_lattice`) from pooling
+            class or `modules.RBM` class (see `rf_pool.utils.functions.kwarg_fn`)
+            [default: `self.train_kwargs`]
+
+        Returns
+        -------
+        loss_history : list
+            list of loss values at each monitoring step
+            (i.e., len(loss_history) == (n_epochs * len(trainloader) / monitor))
+
+        See Also
+        --------
+        init_RBM
+        modules.RBM.train
+        utils.functions.kwarg_fn
+        """
+        assert hasattr(self, 'rbm')
+        # set optimizer
+        if optimizer is None:
+            optimizer = self.get('optimizer')
+        # set train_kwargs, pool_kwargs
+        train_kwargs = self.get(train_kwargs={}).copy()
+        train_kwargs.update(kwargs)
+        pool_kwargs = {'training': True, 'optimizer': optimizer,
+                       'train_kwargs': train_kwargs}
+        if pool_module_name is None:
+            layer_kwargs = {pool_layer_id: pool_kwargs}
+        else:
+            layer_kwargs = {pool_layer_id: {'output_module': pool_module_name,
+                                            pool_module_name: pool_kwargs}}
+        # train for n_epochs
+        loss_history = []
+        if not hasattr(self, 'loss_history'):
+            self.loss_history = []
+        n_batches = len(trainloader)
+        running_loss = 0.
+        i = 0
+        for epoch in range(int(np.ceil(n_epochs))):
+            for data in trainloader:
+                # check if more than requested epochs
+                if (i+1) > (n_epochs * n_batches):
+                    return loss_history
+                # pass inputs through model to pool module with training=True
+                model.apply(data[0], output_layer=pool_layer_id, **layer_kwargs)
+                # update running_loss
+                running_loss += self.loss_history.pop(-1)
+                # monitor
+                i += 1
+                if i % monitor == 0:
+                    # display loss
+                    clear_output(wait=True)
+                    display('[%g%%] loss: %.3f' % (i % n_batches/n_batches*100.,
+                                                   running_loss / monitor))
+                    # append loss and show history
+                    loss_history.append(running_loss / monitor)
+                    plt.plot(loss_history)
+                    running_loss = 0.
+                    # show weights, etc.
+                    functions.kwarg_fn([self, self.rbm], **kwargs)
+                    plt.show()
+        return loss_history
+
+    def get_binomial_input(self, u, **kwargs):
+        """
+        Get Binomial vector input to RBM from RF outputs after pooling across `u`.
+
+        Parameters
+        ----------
+        u : torch.Tensor
+            input to pooling module
+        **kwargs : **dict
+            keyword arguments passed to `Pool.forward`
+
+        Returns
+        -------
+        binomial_input : torch.Tensor
+            Binomial input vector for RBM, in which each value is represented as
+            a sampled Binomial distribution with `n=u.shape[1]` and
+            `p=torch.round(torch.sum(norm_output, 1))`, where `norm_output` is
+            the vectorized output from the pooling layer normalized by the sum
+            across the RFs.
+
+        See Also
+        --------
+        init_RBM
+        train_RBM
+
+        Notes
+        -----
+        The number of channels in `u` (i.e., `u.shape[1]`) should match the
+        number of channels set in the RBM (i.e., `n_channels` used in `init_RBM`).
+        """
+        # get output as Binomial vector with shape (batch, n_kernels)
+        options = kwargs.copy()
+        options.update({'vectorize': True, 'get_binomial_input': True})
+        with torch.no_grad():
+            output = Pool.forward(self, u, **options)
+            output = output - torch.min(output, -1, keepdim=True)[0]
+            sum_output = torch.sum(output, -1, keepdim=True) + 1e-6
+            return torch.round(torch.sum(torch.div(output, sum_output), 1))
+
+    def get_attentional_field(self, input=None):
+        """
+        Get attentional field from `self.rbm.hidden_weight`
+
+        Parameters
+        ----------
+        input : torch.Tensor
+            input to `self.rbm` with shape (batch, n_kernels)
+            [default: None, will return weight=None]
+
+        Returns
+        -------
+        attention_mu : torch.Tensor
+            x-y center locations of attentional Gaussians with shape
+            (n_kernels, 2)
+        attention_sigma : torch.Tensor
+            size of attentional Gaussians with shape (n_kernels, 1)
+        weight : torch.Tensor
+            weight associated with each attentional Gaussian with shape
+            (n_kernels, 1). kwarg to be passed to `lattice.multiply_gaussians`.
+
+        See Also
+        --------
+        apply_attentional_field
+        lattice.multiply_gaussians
+
+        Notes
+        -----
+        If weight is None, each attentional Gaussian is weighted equally in the
+        Gaussian multiplication.
+        """
+        assert hasattr(self, 'rbm')
+        # estimate mu, sigma for each attentional Gaussian
+        mu = self.mu.detach()
+        rbm_weight = self.rbm.hidden_weight.detach()
+        attention_mu, attention_sigma = lattice.estimate_mu_sigma(rbm_weight, mu)
+        # set weight based on hidden unit activity
+        if input is None:
+            return attention_mu, attention_sigma, None
+        weight = self.rbm.apply(input, output_module='activation').detach()
+        # if batch > 1, return normalized sum across batch
+        weight = torch.sum(weight, 0)
+        weight = torch.div(weight, torch.sum(weight, -1, keepdim=True))
+        return attention_mu, attention_sigma, weight
+
+    def show_attentional_field(self, input=None):
+        """
+        Show Attentional Gaussians
+
+        Parameters
+        ----------
+        input : torch.Tensor
+            input used to obtain weights for each attentional Gaussian
+            [default: None, each Gaussian shown with same weight]
+
+        Returns
+        -------
+        fig : matplotlib.figure.Figure
+            figure containing plotted RF lattice
+
+        See Also
+        --------
+        get_attentional_field
+        visualize.scatter_rfs
+
+        Notes
+        -----
+        If attentional Gaussians are large, they may not be visible in scatter
+        plot. Use `get_attentional_field` to obtain mu and sigma values.
+        """
+        attention_mu, attention_sigma, weight = self.get_attentional_field(input)
+        return visualize.scatter_rfs(attention_mu, attention_sigma, self.img_shape,
+                                     linewidths=[w for w in weight or [1.]])
+
+    def apply_RBM(self, u, **kwargs):
+        """
+        Apply/train RBM to get attention_mu, attention_sigma, and weight
+        for `apply_attentional_field` during forward pass.
+
+        Parameters
+        ----------
+        u : torch.Tensor
+            input to pooling module
+        training : boolean or None
+            True/False train RBM on each forward pass
+            [default: None, uses `self.training`]
+        optimizer : torch.optim or None
+            optimizer used to update `self.rbm.parameters` during training
+            [default: None, uses `self.optimizer`]
+        train_kwargs : dict
+            dictionary of keyword arguments passed to `self.rbm.train`
+            [default: None, uses `self.train_kwargs`]
+        **kwargs : **dict
+            keyword arguments passed to `forward`
+
+        Returns
+        -------
+        attention_kwargs : OrderedDict
+            dictionary of `apply_attentional_field` inputs (`attention_mu`,
+            `attention_sigma`, `weight`) obtained via `get_attentional_field`.
+
+        See Also
+        --------
+        init_RBM
+        train_RBM
+        get_attentional_field
+        apply_attentional_field
+
+        Notes
+        -----
+        If `attention_mu`, `attention_sigma` or `weight` are in kwargs,
+        {} is returned and no training occurs.
+        """
+        if not hasattr(self, 'rbm') or kwargs.get('get_binomial_input') is True:
+            return {}
+        # parse kwargs for training, optimizer, train_kwargs
+        training = kwargs.get('training')
+        if training is None:
+            training = self.get('training')
+        optimizer = kwargs.get('optimizer')
+        if optimizer is None:
+            optimizer = self.get('optimizer')
+        train_kwargs = self.get(train_kwargs={}).copy()
+        train_kwargs.update(kwargs.get('train_kwargs') or {})
+        # get Binomial vector input to RBM and for weighting attentional field
+        output = self.get_binomial_input(u, **kwargs)
+        # train RBM
+        if training:
+            if not hasattr(self, 'loss_history'):
+                self.loss_history = []
+            self.loss_history.append(self.rbm.train(output, optimizer=optimizer,
+                                                    **train_kwargs))
+        # get attentional field
+        keys = ['attention_mu', 'attention_sigma', 'weight']
+        values = self.get_attentional_field(output)
+        return OrderedDict([(k, v) for k, v in zip(keys, values)])
+
     def forward(self, u, **kwargs):
         """
         Apply forward pass through pooling layer
@@ -728,7 +1103,9 @@ class Pool(torch.nn.Module):
         The following class methods are called (in order) if associated kwargs
         are in given during forward call (or set at layer initialization):
 
+        adaptive_update: `adaptive`;
         shift_mu_sigma: `delta_mu`, `delta_sigma`, `fn`;
+        apply_RBM: `training`, `optimizer`, `train_kwargs`;
         apply_attentional_field: `attention_mu`, `attention_sigma`, `weight`,
             `update_mu`, `update_sigma`;
         weight_output: `RF_weights`;
@@ -737,17 +1114,24 @@ class Pool(torch.nn.Module):
         See Also
         --------
         pool.apply
+        adaptive_update
         shift_mu_sigma
+        apply_RBM
         apply_attentional_field
         weight_output
         vectorize_output
         """
-        # get options, prefer kwargs
+        # get options, update from kwargs
         options = self.get(*self.option_keys)
         options.update(kwargs)
+        # update mu, sigma based on image shape
+        mu, sigma = self.adaptive_update(u.shape[-2:], options.get('adaptive'))
+        self._update_rfs(mu, sigma)
         # update rfs, mu, sigma
         mu, sigma = self.shift_mu_sigma(**options)
-        self._update_rfs(mu, sigma, img_shape=u.shape[-2:])
+        self._update_rfs(mu, sigma)
+        # apply RBM
+        options.update(self.apply_RBM(u, **options))
         # apply attentional field
         mu, sigma = self.apply_attentional_field(**options)
         self._update_rfs(mu, sigma)
@@ -810,11 +1194,15 @@ class RF_Uniform(Pool):
     def __init__(self, img_shape, n_kernels, spacing, sigma_init=1.,
                 offset=[0.,0.], rotate=0.,
                 lattice_fn=lattice.mask_kernel_lattice, **kwargs):
-        # set mu, sigma
-        mu, sigma = lattice.init_uniform_lattice(img_shape, n_kernels, spacing,
-                                                 sigma_init, offset, rotate)
+        # init mu, sigma
+        mu, sigma = self.init_mu_sigma(lattice.init_uniform_lattice, img_shape,
+                                       n_kernels=n_kernels, spacing=spacing,
+                                       sigma_init=sigma_init, offset=offset,
+                                       rotate=rotate)
         super(RF_Uniform, self).__init__(mu, sigma, img_shape, lattice_fn,
-                                         **kwargs)
+                                         init_fn=self.init_fn,
+                                         init_kwargs=self.init_kwargs, **kwargs)
+
 class RF_Hexagon(Pool):
     """
     Receptive field pooling layer with RFs initated using
@@ -847,11 +1235,14 @@ class RF_Hexagon(Pool):
     def __init__(self, img_shape, n_kernels, spacing, sigma_init=1.,
                  offset=[0.,0.], rotate=0.,
                  lattice_fn=lattice.mask_kernel_lattice, **kwargs):
-        # set mu, sigma
-        mu, sigma = lattice.init_hexagon_lattice(img_shape, n_kernels, spacing,
-                                                 sigma_init, offset, rotate)
+        # init mu, sigma
+        mu, sigma = self.init_mu_sigma(lattice.init_hexagon_lattice, img_shape,
+                                       n_kernels=n_kernels, spacing=spacing,
+                                       sigma_init=sigma_init, offset=offset,
+                                       rotate=rotate)
         super(RF_Hexagon, self).__init__(mu, sigma, img_shape, lattice_fn,
-                                         **kwargs)
+                                         init_fn=self.init_fn,
+                                         init_kwargs=self.init_kwargs, **kwargs)
 
 class RF_Random(Pool):
     """
@@ -1008,18 +1399,14 @@ class RF_Foveated(Pool):
         self.cortical_mu = cortical_mu
         self.cortical_sigma = cortical_sigma
         self.cortical_kernel_fn = cortical_kernel_fn
-        # get keywords, defaults from init_foveated_lattice and pop kwargs
-        argspec = inspect.getfullargspec(lattice.init_foveated_lattice)
-        kws, defaults = argspec.args[-len(argspec.defaults):], argspec.defaults
-        self.lattice_kwargs = dict([(k,kwargs.pop(k)) if kwargs.get(k) else (k,v)
-                                    for k, v in zip(kws, defaults)])
-        # get mu, sigma from init_foveated_lattice
-        mu, sigma = lattice.init_foveated_lattice(img_shape, scale, n_rings,
-                                                  **self.lattice_kwargs)
+        # init mu, sigma
+        mu, sigma = self.init_mu_sigma(lattice.init_foveated_lattice, img_shape,
+                                       scale=scale, n_rings=n_rings, **kwargs)
         super(RF_Foveated, self).__init__(mu, sigma, img_shape, lattice_fn,
-                                          **kwargs)
+                                          init_fn=self.init_fn,
+                                          init_kwargs=self.init_kwargs, **kwargs)
         # set cortical weight vars
-        self.get_cortical_vars(self.lattice_kwargs)
+        self.get_cortical_vars(self.init_kwargs)
 
     def get_cortical_vars(self, lattice_kwargs, img_shape=None):
         if lattice_kwargs.get('n_rf') is None:
@@ -1080,7 +1467,7 @@ class RF_Foveated(Pool):
                                                         'beta'],
                                                        ignore_keys=True)
             # weight output by cortical locations relative to cortical_mu
-            self.get_cortical_vars(self.lattice_kwargs, img_shape=u.shape[-2:])
+            self.get_cortical_vars(self.init_kwargs, img_shape=u.shape[-2:])
             RF_weights = self.get_cortical_weights(**cortical_kwargs)
             kwargs.update({'RF_weights': RF_weights})
         # apply forward function
@@ -1112,12 +1499,8 @@ class RBM_Attention(Pool):
     training : boolean
         True/False continuously train RBM with data from each forward pass
         through pooling layer. [default: False]
-    optim_fn : torch.optim
-        optimizer function used to update `self.rbm.paramters`
-        [default: torch.optim.SGD]
-    optim_kwargs : dict
-        keyword arguments passed to `optim_fn`
-        [default: {'lr': 1e-4}]
+    lr : float
+        learning rate to be used during training of RBM [default: 1e-5]
     train_kwargs : dict
         keyword arguments passed to `modules.RBM.train` during training
         (if `self.training=True`). See `modules.RBM.train`.
@@ -1145,213 +1528,11 @@ class RBM_Attention(Pool):
                                    [['',Pool.__methodsdoc__]])
     def __init__(self, n_Gaussians, n_channels, mu, sigma, img_shape,
                  lattice_fn=lattice.mask_kernel_lattice, training=False,
-                 optim_fn=torch.optim.SGD, optim_kwargs={'lr': 1e-4},
-                 train_kwargs={}, **kwargs):
+                 lr=1e-5, train_kwargs={}, **kwargs):
         super(RBM_Attention, self).__init__(mu, sigma, img_shape, lattice_fn,
                                             **kwargs)
-        self.n_Gaussians = n_Gaussians
-        self.n_channels = n_channels
-        self.n_kernels = mu.shape[0]
-        self.training = training
-        self.train_kwargs = train_kwargs
-        self.loss_history = []
         # initialize RBM and optimizer
-        self.init_RBM()
-        self.train_kwargs.update({'optimizer': optim_fn(self.rbm.parameters(),
-                                                        **optim_kwargs)})
-
-    def init_RBM(self):
-        self.rbm = RBM(hidden=torch.nn.Linear(self.n_kernels, self.n_Gaussians),
-                       activation=torch.nn.Sigmoid(),
-                       sample=lambda x: torch.distributions.Bernoulli(x).sample(),
-                       vis_activation=lambda x: torch.sigmoid(x)*self.n_channels,
-                       vis_sample=lambda x: torch.round(x + torch.randn_like(x)))
-
-    def train_RBM(self, model, pool_layer_id, pool_module_name, n_epochs,
-                  trainloader, monitor=100, **kwargs):
-        """
-        Train RBM within context of given model by passing data through to
-        pooling module, computing number of non-zero vectorized RF outputs,
-        and passing this vector with shape (batch, n_kernels) to `self.rbm`.
-
-        Parameters
-        ----------
-        model : rf_pool.models
-            model containing current pooling module
-        pool_layer_id : str
-            layer_id in which current pooling module resides
-        pool_module_name : str
-            name of pooling module within
-            `model.layers[pool_layer_id].forward_layer`
-        n_epochs : int
-            number of epochs to train (full passes through trainloader)
-        trainloader : torch.utils.data.DataLoader
-            dataloader containing (data,label) pairs of data used to train RBM
-        monitor : int
-            number of batches between each monitoring step
-            [default: 100]
-        **kwargs : **dict
-            keyword arguments passed to `self.rbm.train` (see `modules.RBM.train`)
-            additionally, display functions (e.g., `show_lattice`) from pooling
-            class or `modules.RBM` class (see `rf_pool.utils.functions.kwarg_fn`)
-            [default: `self.train_kwargs`]
-
-        Returns
-        -------
-        loss_history : list
-            list of loss values at each monitoring step
-            (i.e., len(loss_history) == (n_epochs * len(trainloader) / monitor))
-
-        See Also
-        --------
-        modules.RBM.train
-        utils.functions.kwarg_fn
-        """
-        # set train_kwargs, pool_kwargs
-        train_kwargs = self.train_kwargs.copy()
-        train_kwargs.update(kwargs)
-        pool_kwargs = {'training': True, 'train_kwargs': train_kwargs}
-        if pool_module_name is None:
-            layer_kwargs = {pool_layer_id: pool_kwargs}
-        else:
-            layer_kwargs = {pool_layer_id: {'output_module': pool_module_name,
-                                            pool_module_name: pool_kwargs}}
-        # train for n_epochs
-        loss_history = []
-        n_batches = len(trainloader)
-        running_loss = 0.
-        i = 0
-        for epoch in range(int(np.ceil(n_epochs))):
-            for data in trainloader:
-                # check if more than requested epochs
-                if (i+1) > (n_epochs * n_batches):
-                    return loss_history
-                # pass inputs through model to pool module with training=True
-                model.apply(data[0], output_layer=pool_layer_id, **layer_kwargs)
-                # update running_loss
-                running_loss += self.loss_history.pop(-1)
-                # monitor
-                i += 1
-                if i % monitor == 0:
-                    # display loss
-                    clear_output(wait=True)
-                    display('[%g%%] loss: %.3f' % (i % n_batches/n_batches*100.,
-                                                   running_loss / monitor))
-                    # append loss and show history
-                    loss_history.append(running_loss / monitor)
-                    plt.plot(loss_history)
-                    running_loss = 0.
-                    # show weights, etc.
-                    functions.kwarg_fn([self, self.rbm], **kwargs)
-                    plt.show()
-        return loss_history
-
-    def get_attentional_field(self, input=None):
-        """
-        Get attentional field from `self.rbm.hidden_weight`
-
-        Parameters
-        ----------
-        input : torch.Tensor
-            input to `self.rbm` with shape (batch, n_kernels)
-            [default: None, will return weight=None]
-
-        Returns
-        -------
-        attention_mu : torch.Tensor
-            x-y center locations of attentional Gaussians with shape
-            (n_kernels, 2)
-        attention_sigma : torch.Tensor
-            size of attentional Gaussians with shape (n_kernels, 1)
-        weight : torch.Tensor
-            weight associated with each attentional Gaussian with shape
-            (n_kernels, 1). kwarg to be passed to `lattice.multiply_gaussians`.
-
-        See Also
-        --------
-        apply_attentional_field
-        lattice.multiply_gaussians
-
-        Notes
-        -----
-        If weight is None, each attentional Gaussian is weighted equally in the
-        Gaussian multiplication.
-        """
-        # estimate mu, sigma for each attentional Gaussian
-        mu = self.mu.detach()
-        rbm_weight = self.rbm.hidden_weight.detach()
-        attention_mu, attention_sigma = lattice.estimate_mu_sigma(rbm_weight, mu)
-        # set weight based on hidden unit activity
-        if input is None:
-            return attention_mu, attention_sigma, None
-        weight = self.rbm.apply(input, output_module='activation').detach()
-        # if batch > 1, return normalized sum across batch
-        weight = torch.sum(weight, 0)
-        weight = torch.div(weight, torch.sum(weight, -1, keepdim=True))
-        return attention_mu, attention_sigma, weight
-
-    def show_attentional_field(self, input=None):
-        """
-        Show Attentional Gaussians
-
-        Parameters
-        ----------
-        input : torch.Tensor
-            input used to obtain weights for each attentional Gaussian
-            [default: None, each Gaussian shown with same weight]
-
-        Returns
-        -------
-        fig : matplotlib.figure.Figure
-            figure containing plotted RF lattice
-
-        See Also
-        --------
-        get_attentional_field
-        visualize.scatter_rfs
-
-        Notes
-        -----
-        If attentional Gaussians are large, they may not be visible in scatter
-        plot. Use `get_attentional_field` to obtain mu and sigma values.
-        """
-        attention_mu, attention_sigma, weight = self.get_attentional_field(input)
-        return visualize.scatter_rfs(attention_mu, attention_sigma, self.img_shape,
-                                     linewidths=[w for w in weight or [1.]])
-
-    def get_binomial_input(self, u, **kwargs):
-        # get output as Binomial vector with shape (batch, n_kernels)
-        kwargs.update({'vectorize': True})
-        with torch.no_grad():
-            output = Pool.forward(self, u, **kwargs)
-            output = output - torch.min(output, -1, keepdim=True)[0]
-            sum_output = torch.sum(output, -1, keepdim=True) + 1e-6
-            return torch.round(torch.sum(torch.div(output, sum_output), 1))
-
-    def forward(self, u, **kwargs):
-        # parse kwargs for training, train_kwargs
-        if kwargs.get('training') is None:
-            training = self.training
-        else:
-            training = kwargs.get('training')
-        train_kwargs = self.train_kwargs.copy()
-        train_kwargs.update(kwargs.get('train_kwargs') or {})
-        # apply forward function first with vectorize=True
-        vectorize = kwargs.get('vectorize')
-        if vectorize is None:
-            vectorize = self.get('vectorize')
-        output = self.get_binomial_input(u, **kwargs)
-        # train RBM
-        if training:
-            self.loss_history.append(self.rbm.train(output, **train_kwargs))
-        # get attentional field
-        attention_mu, attention_sigma, weight = self.get_attentional_field(output)
-        kwargs.update({'attention_mu': attention_mu,
-                       'attention_sigma': attention_sigma,
-                       'weight': weight})
-        # apply forward function with attentional field
-        kwargs.update({'vectorize': vectorize})
-        return Pool.forward(self, u, **kwargs)
+        self.init_RBM(n_Gaussians, n_channels, training, lr, **train_kwargs)
 
 class MaxPool(Pool):
     """
