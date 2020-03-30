@@ -48,6 +48,9 @@ def sample_fn(input, distr, **kwargs):
 def reshape_fn(input, shape):
     return input.reshape(shape)
 
+def bernoulli_sample(input):
+    return torch.distributions.Bernoulli(input).sample()
+
 def binomial_sample(input):
     return torch.round(input + 0.1 * torch.randn_like(input))
 
