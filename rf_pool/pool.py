@@ -809,14 +809,11 @@ class Pool(torch.nn.Module):
         """
         assert self.mu is not None
         n_kernels = self.mu.shape[0]
-        log_part_fn = lambda x: torch.log(1. + torch.sum(torch.exp(x),
-                                                         -1, keepdim=True))
         self.rbm = RBM(hidden=torch.nn.Linear(n_kernels, n_Gaussians),
                        activation=torch.nn.Sigmoid(),
-                       sample=ops.multinomial_sample,
+                       sample=ops.bernoulli_sample,
                        vis_activation=lambda x: torch.sigmoid(x)*n_channels,
-                       vis_sample=ops.binomial_sample,
-                       log_part_fn=log_part_fn)
+                       vis_sample=ops.binomial_sample)
         # set training
         self.training = training
         # set optimizer
