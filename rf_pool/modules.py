@@ -285,18 +285,44 @@ class Module(nn.Module):
                 out = loss
         return out.item()
 
-    def show_weights(self, field='hidden_weight', img_shape=None,
-                     figsize=(5, 5), cmap=None):
+    def show_weights(self, field='hidden_weight', img_shape=None, transpose=False,
+                     **kwargs):
         """
-        #TODO:WRITEME
+        Show weights as image
+
+        Parameters
+        ----------
+        field : str
+            name of weights (e.g., getattr(module, field)) to show
+        img_shape : tuple or None
+            image shape to reshape to [default: None]
+        transpose : boolean
+            True/False transpose weights after reshaping [default: False]
+        **kwargs : **dict
+            keyword arguments passed to `rf_pool.utils.visualize.show_images`
+
+        Returns
+        -------
+        fig : matplotlib.figure.Figure
+            figure with imgs.shape[0] (or imgs.shape[0] + imgs.shape[1]) images
+            with axes shape (n_rows, n_cols)
+
+        See Also
+        --------
+        rf_pool.utils.visualize.show_images
         """
         # get field for weights
         if not hasattr(self, field):
-            raise Exception('attribute ' + field + ' not found')
+            raise Exception('attribute %a not found' % (field))
         w = getattr(self, field).clone().detach()
+        # reshape
+        if img_shape is not None:
+            w = w.reshape(-1, *img_shape)
+        # transpose
+        if transpose:
+            w = w.transpose(-2,-1)
         # plot weights
-        return visualize.show_images(w, img_shape=img_shape, figsize=figsize,
-                                     cmap=cmap)
+        return visualize.show_images(w, img_shape=img_shape, **kwargs)
 
 class FeedForward(Module):
     """
