@@ -90,7 +90,7 @@ class Module(nn.Module):
         setattr(self, layer_name, layer)
 
     def update_module(self, layer_name, module_name, module):
-        self.udpate_layer(layer_name, **{module_name: module})
+        self.update_layer(layer_name, **{module_name: module})
 
     def insert_module(self, layer_name, idx, transpose=False, **kwargs):
         # get layer
