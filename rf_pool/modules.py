@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from . import ops
+from . import ops, pool
 from .utils import functions, visualize
 
 class Module(nn.Module):
@@ -126,18 +126,18 @@ class Module(nn.Module):
 
     def transposed_fn(self, fn):
         # transposed conv
-        if hasattr(fn, 'weight') and torch.typename(fn).find('conv') >= 0:
+        if hasattr(fn, 'weight') and isinstance(fn, torch.nn.Conv2d):
             conv_kwargs = functions.get_attributes(fn, ['stride','padding','dilation'])
             transposed_fn = nn.ConvTranspose2d(fn.out_channels, fn.in_channels,
                                                fn.kernel_size, **conv_kwargs)
             transposed_fn.weight = fn.weight
         # transposed linear
-        elif hasattr(fn, 'weight') and torch.typename(fn).find('linear') >= 0:
+        elif hasattr(fn, 'weight') and isinstance(fn, torch.nn.Linear):
             transposed_fn = nn.Linear(fn.out_features, fn.in_features)
             transposed_fn.weight = nn.Parameter(fn.weight.t())
-        elif hasattr(fn, 'weight'):
+        elif hasattr(fn, 'weight') and not isinstance(fn, pool.Pool):
             #TODO: how to use transposed version of fn implicitly
-            raise Exception('fn type not understood')
+            raise Exception('%a type not understood' % (fn))
         # unpool with indices
         elif hasattr(fn, 'return_indices') and fn.return_indices:
             pool_kwargs = functions.get_attributes(fn, ['stride', 'padding'])
