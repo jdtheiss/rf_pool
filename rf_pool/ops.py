@@ -48,6 +48,15 @@ def sample_fn(input, distr, **kwargs):
 def reshape_fn(input, shape):
     return input.reshape(shape)
 
+def binomial_sample(input):
+    return torch.round(input + 0.1 * torch.randn_like(input))
+
+def multinomial_sample(input):
+    x = input.flatten(0,-2)
+    x = torch.cat([x, torch.zeros(x.shape[0], 1)], -1)
+    y = torch.distributions.Multinomial(1, x).sample()[:,:-1]
+    return y.reshape(input.shape)
+
 if __name__ == '__main__':
     import doctest
     doctest.testmod()

@@ -8,6 +8,7 @@ import torch
 from torch.autograd import Function
 
 import pool
+from . import ops
 from .modules import RBM
 from .utils import functions, lattice, visualize
 
@@ -808,11 +809,14 @@ class Pool(torch.nn.Module):
         """
         assert self.mu is not None
         n_kernels = self.mu.shape[0]
+        log_part_fn = lambda x: torch.log(1. + torch.sum(torch.exp(x),
+                                                         -1, keepdim=True))
         self.rbm = RBM(hidden=torch.nn.Linear(n_kernels, n_Gaussians),
                        activation=torch.nn.Sigmoid(),
-                       sample=lambda x: torch.distributions.Bernoulli(x).sample(),
-                       vis_activation=lambda x: torch.sigmoid(x) * n_channels,
-                       vis_sample=lambda x: torch.round(x + torch.randn_like(x)))
+                       sample=ops.multinomial_sample,
+                       vis_activation=lambda x: torch.sigmoid(x)*n_channels,
+                       vis_sample=ops.binomial_sample,
+                       log_part_fn=log_part_fn)
         # set training
         self.training = training
         # set optimizer
@@ -947,7 +951,8 @@ class Pool(torch.nn.Module):
             output = Pool.forward(self, u, **options)
             output = output - torch.min(output, -1, keepdim=True)[0]
             sum_output = torch.sum(output, -1, keepdim=True) + 1e-6
-            return torch.round(torch.sum(torch.div(output, sum_output), 1))
+            probs = torch.sum(torch.div(output, sum_output), 1)
+            return ops.binomial_sample(probs)
 
     def get_attentional_field(self, input=None):
         """
