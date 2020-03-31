@@ -51,8 +51,8 @@ def reshape_fn(input, shape):
 def bernoulli_sample(input):
     return torch.distributions.Bernoulli(input).sample()
 
-def binomial_sample(input):
-    return torch.round(input + 0.1 * torch.randn_like(input))
+def binomial_sample(input, n_channels):
+    return torch.distributions.Binomial(n_channels, input).sample()
 
 def multinomial_sample(input):
     x = input.flatten(0,-2)
