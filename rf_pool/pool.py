@@ -770,7 +770,7 @@ class Pool(torch.nn.Module):
             return output
         return torch.max(torch.flatten(output, -2), -1)[0]
 
-    def init_RBM(self, n_Gaussians, n_channels, training=False, lr=1e-5,
+    def init_RBM(self, n_Gaussians, training=False, lr=1e-5,
                  **kwargs):
         """
         Initialize RBM used to learn spatial associations (modeled as Gaussians)
@@ -782,9 +782,6 @@ class Pool(torch.nn.Module):
         n_Gaussians : int
             number of attentional Gaussians to learn (i.e., number of hidden
             units in RBM)
-        n_channels : int
-            number of channels in input (i.e., input vector to RBM is modeled as
-            Binomial distributions with n=n_channels)
         training : boolean
             True/False allow training during forward pass [default: False]
         lr : float
@@ -812,8 +809,7 @@ class Pool(torch.nn.Module):
         self.rbm = RBM(hidden=torch.nn.Linear(n_kernels, n_Gaussians),
                        activation=torch.nn.Sigmoid(),
                        sample=ops.bernoulli_sample,
-                       vis_activation=lambda x: torch.sigmoid(x)*n_channels,
-                       vis_sample=ops.binomial_sample)
+                       vis_activation=torch.exp)
         # set training
         self.training = training
         # set optimizer
@@ -825,7 +821,7 @@ class Pool(torch.nn.Module):
                   trainloader, optimizer=None, monitor=100, **kwargs):
         """
         Train RBM within context of given model by passing data through to
-        pooling module, obtaining vectorized RF outputs as a Binomial vector,
+        pooling module, obtaining vectorized RF outputs (each as a Poisson),
         and passing this vector with shape (batch, n_kernels) to `self.rbm`.
 
         Parameters
@@ -911,9 +907,9 @@ class Pool(torch.nn.Module):
                     plt.show()
         return loss_history
 
-    def get_binomial_input(self, u, **kwargs):
+    def get_poisson_input(self, u, **kwargs):
         """
-        Get Binomial vector input to RBM from RF outputs after pooling across `u`.
+        Get Poisson vector input to RBM from RF outputs after pooling across `u`.
 
         Parameters
         ----------
@@ -924,32 +920,23 @@ class Pool(torch.nn.Module):
 
         Returns
         -------
-        binomial_input : torch.Tensor
-            Binomial input vector for RBM, in which each value is represented as
-            a sampled Binomial distribution with `n=u.shape[1]` and
-            `p=torch.round(torch.sum(norm_output, 1))`, where `norm_output` is
-            the vectorized output from the pooling layer normalized by the sum
-            across the RFs.
+        poisson_input : torch.Tensor
+            Poisson input vector for RBM, in which each value is represented as
+            the mean of a Poisson distribution
 
         See Also
         --------
         init_RBM
         train_RBM
-
-        Notes
-        -----
-        The number of channels in `u` (i.e., `u.shape[1]`) should match the
-        number of channels set in the RBM (i.e., `n_channels` used in `init_RBM`).
         """
-        # get output as Binomial vector with shape (batch, n_kernels)
+        # get output as Poisson vector with shape (batch, n_kernels)
         options = kwargs.copy()
-        options.update({'vectorize': True, 'get_binomial_input': True})
+        options.update({'vectorize': True, 'get_poisson_input': True})
         with torch.no_grad():
             output = Pool.forward(self, u, **options)
-            output = output - torch.min(output, -1, keepdim=True)[0]
-            sum_output = torch.sum(output, -1, keepdim=True) + 1e-6
-            probs = torch.sum(torch.div(output, sum_output), 1)
-            return ops.binomial_sample(probs)
+            # get mean activity per RF
+            output = torch.relu(output)
+            return torch.mean(torch.div(output, torch.max(output) + 1e-6), 1)
 
     def get_attentional_field(self, input=None):
         """
@@ -1064,7 +1051,7 @@ class Pool(torch.nn.Module):
         If `attention_mu`, `attention_sigma` or `weight` are in kwargs,
         {} is returned and no training occurs.
         """
-        if not hasattr(self, 'rbm') or kwargs.get('get_binomial_input') is True:
+        if not hasattr(self, 'rbm') or kwargs.get('get_poisson_input') is True:
             return {}
         # parse kwargs for training, optimizer, train_kwargs
         training = kwargs.get('training')
@@ -1075,8 +1062,8 @@ class Pool(torch.nn.Module):
             optimizer = self.get('optimizer')
         train_kwargs = self.get(train_kwargs={}).copy()
         train_kwargs.update(kwargs.get('train_kwargs') or {})
-        # get Binomial vector input to RBM and for weighting attentional field
-        output = self.get_binomial_input(u, **kwargs)
+        # get Poisson vector input to RBM and for weighting attentional field
+        output = self.get_poisson_input(u, **kwargs)
         # train RBM
         if training:
             if not hasattr(self, 'loss_history'):
@@ -1490,8 +1477,6 @@ class RBM_Attention(Pool):
     n_Gaussians : int
         number of attentional Gaussians to be learned (also number of hidden
         units in RBM)
-    n_channels : int
-        number of channels from input layer
     mu : torch.Tensor
         receptive field centers (in x-y coordinate space) with shape
         (n_kernels, 2)
@@ -1533,13 +1518,13 @@ class RBM_Attention(Pool):
     """
     __doc__ = functions.update_doc(__doc__, 'See Also', [-1],
                                    [['',Pool.__methodsdoc__]])
-    def __init__(self, n_Gaussians, n_channels, mu, sigma, img_shape,
+    def __init__(self, n_Gaussians, mu, sigma, img_shape,
                  lattice_fn=lattice.mask_kernel_lattice, training=False,
                  lr=1e-5, train_kwargs={}, **kwargs):
         super(RBM_Attention, self).__init__(mu, sigma, img_shape, lattice_fn,
                                             **kwargs)
         # initialize RBM and optimizer
-        self.init_RBM(n_Gaussians, n_channels, training, lr, **train_kwargs)
+        self.init_RBM(n_Gaussians, training, lr, **train_kwargs)
 
 class MaxPool(Pool):
     """
