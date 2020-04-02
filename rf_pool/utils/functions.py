@@ -348,15 +348,16 @@ def normalize_range(x, dims=(1,2)):
     return x
 
 def kwarg_fn(modules=[list, OrderedDict, dict, __builtins__, np, torch], x=None,
-             **kwargs):
+             display_output=True, **kwargs):
     """
     A function to apply a list of functions based on keyword arguments
 
     Parameters
     ----------
     modules : list, modules containing functions to call
-    x : input to apply functions
-        [default: None]
+    x : object, input to apply functions [default: None]
+    display_output : boolean, True/False display output of each function
+        [default: True]
     **kwargs : **dict, keyword arguments like fn=args in the order
         for functions to be called
 
@@ -368,7 +369,7 @@ def kwarg_fn(modules=[list, OrderedDict, dict, __builtins__, np, torch], x=None,
     -------
     >>> # y = (x + 3) * 4
     >>> x = 2
-    >>> y = kwarg_fn(x=x, add=[3], multiply=[4])
+    >>> y = kwarg_fn(x=x, display_output=False, add=[3], multiply=[4])
     >>> print(y)
     20
     """
@@ -398,6 +399,8 @@ def kwarg_fn(modules=[list, OrderedDict, dict, __builtins__, np, torch], x=None,
             output = fn(x, **value)
         if output is not None and x is not None:
             x = output
+        if display_output and not isinstance(output, (plt.Figure, plt.Axes)):
+            display(output)
     return x
 
 def get_deepattr(obj, path):
