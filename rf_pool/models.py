@@ -799,6 +799,7 @@ class Model(nn.Module):
         pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
         pre_layer_ids.reverse()
         # for each layer apply transpose convolution of ones and unpooling
+        rf_layer._update_rfs(rf_layer.mu, rf_layer.sigma)
         rfs = torch.unsqueeze(rf_layer.rfs, 1).detach()
         w_shape = self.layers[layer_id].forward_layer.hidden.kernel_size
         w = torch.ones((1, 1) + w_shape)
