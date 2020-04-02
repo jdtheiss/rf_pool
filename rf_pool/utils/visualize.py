@@ -215,6 +215,55 @@ def get_adjusted_sizes(ax, size):
     return np.maximum(s[:,0], s[:,1])
 
 def plot_rfs(mu, sigma, img_shape, mu0=None, sigma0=None, figsize=(5,5), **kwargs):
+    """
+    Plot RF outlines as a plot
+
+    Parameters
+    ----------
+    mu : torch.Tensor
+        centers of RFs with shape (n_RF, 2)
+    sigma : torch.Tensor
+        sizes of RFs with shape (n_RF, 1)
+    img_shape : tuple
+        image shape used for RFs
+    mu0 : torch.Tensor
+        optional initial center positions for each RF with shape (n_RF, 2)
+        [default: None]
+    sigma0 : torch.Tensor
+        optional initial sizes for each RF with shape (n_RF, 1) [default: None]
+    figsize : tuple
+        figure size [default: (5,5)]
+    **kwargs : **dict
+        keyword arguments passed to `plot_with_kwargs`
+
+    Optional kwargs
+    ax : matplotlib.pyplot.Axes
+        axis to plot scatter plot onto
+        [default: `matplotlib.pyplot.figure().gca()`]
+    fn_prefix : str
+        prefix used for keywords passed to `plot_with_kwargs` [default: None]
+    markersize: sigma.tolist()
+    color : str
+        color for data points [default: 'black']
+    marker : str
+        marker style for data points [default: 'o']
+    markevery : int, float, tuple, list, None
+        choices of data points to show [defalt: [int(mu0 is not None)]]
+    markeredgecolor : str
+        edgecolor of data points [default: 'black']
+    markerfacecolor : str
+        facecolor of data points [default: 'none']
+
+    Returns
+    -------
+    fig : matplotlib.pyplot.Figure
+        figure containing scatter plot
+
+    See Also
+    --------
+    rf_pool.models.rf_to_image_space
+    plot_with_kwargs
+    """
     # init figure
     if 'ax' not in kwargs:
         fig = plt.figure(figsize=figsize)
@@ -265,6 +314,55 @@ def plot_rfs(mu, sigma, img_shape, mu0=None, sigma0=None, figsize=(5,5), **kwarg
 
 def scatter_rfs(mu, sigma, img_shape, remove=False, updates={}, figsize=(5,5),
                 **kwargs):
+    """
+    Plot RF outlines as a scatter plot
+
+    Parameters
+    ----------
+    mu : torch.Tensor
+        centers of RFs with shape (n_RF, 2)
+    sigma : torch.Tensor
+        sizes of RFs with shape (n_RF, 1)
+    img_shape : tuple
+        image shape used for RFs
+    remove : boolean
+        True/False whether to remove previous scatter plot from axis
+        [default: False]
+    updates : dict
+        updates to scatter plot to be make like (attribute, update)
+        where `hasattr(scatter_plot, attribute) is True` [default: {}]
+    figsize : tuple
+        figure size [default: (5,5)]
+    **kwargs : **dict
+        keyword arguments passed to `plot_with_kwargs`
+
+    Optional kwargs
+    ax : matplotlib.pyplot.Axes
+        axis to plot scatter plot onto
+        [default: `matplotlib.pyplot.figure().gca()`]
+    fn_prefix : str
+        prefix used for keywords passed to `plot_with_kwargs` [default: None]
+    alpha : float
+        alpha value used for `plot_with_kwargs` [default: 0.25]
+    edgecolors : str
+        edgecolor of scatter plot points [default: 'black']
+    facecolors : str
+        facecolor of scatter plot points [default: 'none']
+    offsets : array-like
+        centers of scatter plot points [default: `np.flip(mu, 1)`]
+    sizes : array-like
+        sizes of scatter plot points [default: `(2. * sigma)**2`]
+
+    Returns
+    -------
+    fig : matplotlib.pyplot.Figure
+        figure containing scatter plot
+
+    See Also
+    --------
+    rf_pool.models.rf_to_image_space
+    plot_with_kwargs
+    """
     # init figure
     if 'ax' not in kwargs:
         fig = plt.figure(figsize=figsize)
@@ -318,7 +416,65 @@ def heatmap(model, layer_id, score_map=None, scores=None, input=None,
             rf_fn=scatter_rfs, filename=None, figsize=(5,5), colorbar=False,
             **kwargs):
     """
-    #TODO:WRITEME
+    Show heatmap of RF values
+
+    Parameters
+    ----------
+    model : rf_pool.models
+        model containing RF pooling layer
+    layer_id : str
+        layer id of RF pooling layer
+    score_map : array-like
+        array of RF values to show with shape `model.rf_heatmap(layer_id).shape`
+        [default: None]
+    scores : array-like
+        RF values to show with shape (n_RF,)
+    input : array-like
+        input image to show with shape `model.rf_heatmap(layer_id).shape`
+    rf_fn : function
+        function to show RF outlines (i.e., `scatter_rfs` or `plot_rfs`)
+        [default: `scatter_rfs`]
+    filename : str
+        filename to save image [default: None]
+    figsize : tuple
+        figure size [default: (5,5)]
+    colorbar : boolean
+        True/False whether to include colorbar based on `scores`/`score_map`
+    **kwargs : **dict
+        keyword arguments passed to `rf_fn` (with prefix 'RF_') and
+        `plot_with_kwargs` (with no prefix for imshow of `scores`/`score_map`
+        and prefix 'input_' for imshow of `input`)
+
+    Optional kwargs
+    ax : matplotlib.pyplot.Axes
+        axis to plot heatmap onto [default: `matplotlib.pyplot.figure().gca()`]
+    axis : str
+        'on' or 'off' for `ax.axis` function [default: 'on']
+    cmap : matplotlib.pyplot.cm
+        colormap used for `scores`/`score_map` [default: 'Greys']
+    dpi : float
+        dots per inch used in saving image (if `filename` given) [defualt: 600.]
+    input_cmap : matplotlib.pyplot.cm
+        colormap used for `input` (if given) [default: 'gray']
+    input_alpha : float
+        alpha used for imshow of `input` (if given) [default: 1.]
+    show : boolean
+        True/False to call `matplotlib.pyplot.show` [default: True]
+    xticks : array-like or list
+        x-axis tick values [default: []]
+    yticks : array-like or list
+        y-axis tick values [default: []]
+
+    Returns
+    -------
+    fig : matplotlib.pyplot.Figure
+        figure containing image of heatmap
+
+    See Also
+    --------
+    scatter_rfs
+    plot_rfs
+    plot_with_kwargs
     """
     # init figure
     if 'ax' not in kwargs:
@@ -363,7 +519,7 @@ def heatmap(model, layer_id, score_map=None, scores=None, input=None,
             ma_input = input
         else: # binary image masking out zeros
             ma_input = np.ma.masked_array(torch.gt(input, 0.), input==0.)
-        kwargs.setdefault('input_cmap', 'gray_r')
+        kwargs.setdefault('input_cmap', 'gray')
         kwargs.setdefault('input_alpha', 1.)
         plot_with_kwargs(ax.imshow, [ma_input], fn_prefix='input', **kwargs)
     # remove xticks, yticks
