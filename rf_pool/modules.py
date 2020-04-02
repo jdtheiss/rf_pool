@@ -1,4 +1,5 @@
 from collections import OrderedDict
+import warnings
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -738,7 +739,7 @@ class RBM(Module):
         v : torch.Tensor or torch.utils.data.dataloader.DataLoader
             data to compute log probability
         log_Z : float or None
-            log of the partition function over model (calculated used ais)
+            log of the partition function over model (calculated using `ais`)
             [default: None, log_Z computed by passing kwargs to ais]
 
         Returns
@@ -758,7 +759,7 @@ class RBM(Module):
         if log_Z is None:
             log_Z = self.ais(**kwargs)
         # compute free energy data
-        if type(v) is torch.utils.data.dataloader.DataLoader:
+        if isinstance(v, torch.utils.data.dataloader.DataLoader):
             n_batches = len(v)
             # get mean free energy for each batch
             fe = 0.
@@ -779,13 +780,13 @@ class RBM(Module):
         m : int
             number of AIS runs to compute
         beta : list or array-like
-            beta values in [0,1] for weighting distributions (see notes)
+            beta values in [0,1] for weighting distributions (see References)
         base_rate : torch.Tensor
             visible biases for base model (natural parameter of exponential family)
-            with base_rate.shape == data[0,None].shape
+            with `base_rate.shape == data[0,None].shape`
         base_log_part_fn : torch.nn.functional
             log-partition function for visible units
-            [default: torch.nn.functional.softplus, i.e. binary units]
+            [default: `torch.nn.functional.softplus`, i.e. binary units]
 
         Returns
         -------
@@ -1035,12 +1036,19 @@ class RBM(Module):
         # update parameters
         if optimizer:
             optimizer.step()
+        # if persistent reshape input and nv_mean
+        if self.persistent is not None:
+            warnings.filterwarnings("ignore", message="Using a target size")
+            input = torch.unsqueeze(input, 1)
+            nv_mean = torch.unsqueeze(nv_mean, 0)
         # monitor loss
         with torch.no_grad():
             if monitor_loss is not None:
                 out = monitor_loss(input, nv_mean)
             else:
                 out = loss
+        # reset default warning
+        warnings.filterwarnings("default", message="Using a target size")
         return out.item()
 
 class CRBM(RBM):
