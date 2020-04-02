@@ -808,8 +808,9 @@ class Pool(torch.nn.Module):
         n_kernels = self.mu.shape[0]
         self.rbm = RBM(hidden=torch.nn.Linear(n_kernels, n_Gaussians),
                        activation=torch.nn.Sigmoid(),
-                       sample=ops.bernoulli_sample,
-                       vis_activation=torch.exp)
+                       sample=ops.sample_fn('Bernoulli'),
+                       vis_activation=torch.exp,
+                       vis_sample=ops.sample_fn('Poisson'))
         # set training
         self.training = training
         # set optimizer
@@ -936,7 +937,8 @@ class Pool(torch.nn.Module):
             output = Pool.forward(self, u, **options)
             # get mean activity per RF
             output = torch.relu(output)
-            return torch.mean(torch.div(output, torch.max(output) + 1e-6), 1)
+            probs = torch.mean(output, 1)
+            return torch.distributions.Poisson(probs).sample()
 
     def get_attentional_field(self, input=None):
         """

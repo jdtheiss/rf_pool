@@ -18,7 +18,7 @@ class Op(torch.nn.Module):
     Examples
     --------
     # wrap Bernoulli sampler
-    >>> sampler = Op(sample_fn, distr=torch.distributions.Bernoulli)
+    >>> sampler = Op(sample_fn('Bernoulli'))
     >>> samples = sampler(torch.rand(4))
     """
     def __init__(self, fn, **kwargs):
@@ -42,17 +42,19 @@ class Op(torch.nn.Module):
         input_kwargs.update(kwargs)
         return self.fn(*args, **input_kwargs)
 
-def sample_fn(input, distr, **kwargs):
-    return distr(input, **kwargs).sample()
+def reshape_fn(shape):
+    return lambda x: x.reshape(shape)
 
-def reshape_fn(input, shape):
-    return input.reshape(shape)
-
-def bernoulli_sample(input):
-    return torch.distributions.Bernoulli(input).sample()
-
-def binomial_sample(input, n_channels):
-    return torch.distributions.Binomial(n_channels, input).sample()
+def sample_fn(distribution, **kwargs):
+    if not hasattr(torch.distributions, distribution):
+        raise Exception('%a distribution not found.' % distribution)
+    fn = getattr(torch.distributions, distribution)
+    # get args
+    args = inspect.getfullargspec(fn).args
+    # return with probs=x or *args
+    if 'probs' in args:
+        return lambda x: fn(probs=x, **kwargs).sample()
+    return lambda *args: fn(*args, **kwargs).sample()
 
 def multinomial_sample(input):
     x = input.flatten(0,-2)
