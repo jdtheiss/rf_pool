@@ -1,5 +1,7 @@
 import re
 
+import imageio
+from IPython.display import clear_output, display
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import offsetbox
@@ -60,6 +62,53 @@ def create_cmap(r=(0.,1.), g=(0., 1.), b=(0., 1.), N=256):
     vals[:, 1] = np.linspace(*g, N)
     vals[:, 2] = np.linspace(*b, N)
     return matplotlib.colors.ListedColormap(vals)
+
+def make_gif(images, n_frames=1, filename=None, **kwargs):
+    """
+    Make/save images as gif
+
+    Parameters
+    ----------
+    images : torch.Tensor
+        images to make into gif with shape (batch, ch, h, w)
+        if `ch != 3`, images will be flattened along first two dims
+    n_frames : int
+        number of frames per image in gif [default: 1]
+    filename : str
+        filename to save gif (if None, gif is shown using `matplotlib.imshow`)
+        [default: None]
+    **kwargs : **dict
+        keyword arguments passed to either `imagio.mimsave` or
+        `matplotlib.imshow` depending on whether `filename` is None
+
+    Returns
+    -------
+    None
+    """
+    assert images.ndimension() >= 3
+    if not filename is None and not filename.endswith('.gif'):
+        filename += '.gif'
+    # divide by max and set to uint8
+    images = images.detach()
+    max_images = torch.max(images.flatten(-2), -1)[0]
+    images = torch.div(images, max_images.reshape(*images.shape[:-2], 1, 1))
+    images = torch.mul(images, 255).type(torch.uint8)
+    # permute or flatten based on ndimension
+    if images.ndimension() == 4 and images.shape[1] == 3:
+        images = images.permute(0,2,3,1)
+    else:
+        images = images.flatten(0, -3)
+    # repeat for n_frames
+    images = images.numpy()
+    images = np.repeat(images, n_frames, axis=0)
+    # save gif
+    if filename is not None:
+        imageio.mimsave(filename, images, **kwargs)
+    else:
+        for image in images:
+            clear_output(wait=True)
+            plt.imshow(image, **kwargs)
+            plt.show()
 
 def show_images(*args, img_shape=None, figsize=(5, 5), **kwargs):
     """
