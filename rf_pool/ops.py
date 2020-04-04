@@ -30,8 +30,11 @@ class Op(torch.nn.Module):
     def __repr__(self):
         if self.fn is None:
             return ''
-        name = self.fn.__name__.replace('<', '').replace('>', '')
-        sig = str(inspect.signature(self.fn))
+        name = self.fn.__qualname__.replace('<', '').replace('>', '')
+        try:
+            sig = str(inspect.signature(self.fn))
+        except:
+            sig = '()'
         return name + sig
 
     def __call__(self, *args, **kwargs):
@@ -43,7 +46,14 @@ class Op(torch.nn.Module):
         return self.fn(*args, **input_kwargs)
 
 def reshape_fn(shape):
-    return lambda x: x.reshape(shape)
+    out_fn = lambda x: x.reshape(shape)
+    out_fn.__qualname__ = 'reshape_fn(%a)' % (shape,)
+    return out_fn
+
+def flatten_fn(start_dim=0, end_dim=-1):
+    out_fn = lambda x: x.flatten(start_dim, end_dim)
+    out_fn.__qualname__ = 'flatten_fn(%a, %a)' % (start_dim, end_dim)
+    return out_fn
 
 def sample_fn(distribution, **kwargs):
     if not hasattr(torch.distributions, distribution):
@@ -53,8 +63,15 @@ def sample_fn(distribution, **kwargs):
     args = inspect.getfullargspec(fn).args
     # return with probs=x or *args
     if 'probs' in args:
-        return lambda x: fn(probs=x, **kwargs).sample()
-    return lambda *args: fn(*args, **kwargs).sample()
+        out_fn = lambda x: fn(probs=x, **kwargs).sample()
+    else:
+        out_fn = lambda *args: fn(*args, **kwargs).sample()
+    # set qualname
+    if len(kwargs) == 0:
+        out_fn.__qualname__ = 'sample_fn(%a)' % (fn.__qualname__)
+    else:
+        out_fn.__qualname__ = 'sample_fn(%a, **%a)' % (fn.__qualname__, kwargs)
+    return out_fn
 
 def multinomial_sample(input):
     x = input.flatten(0,-2)
