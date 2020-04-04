@@ -53,11 +53,11 @@ def estimate_mu_sigma(kernel, mu=None):
     w = kernel.reshape(-1, mu.shape[0]).clone()
     w = w - w.min(-1, keepdim=True)[0]
     w = w / w.sum(-1, keepdim=True)
-    # get expectation of mu, sigma for each Gaussian in kernel
+    # get expectation of mu, cov for each Gaussian in kernel
     m = torch.matmul(w, mu)
     m_dev = m.unsqueeze(1) - mu
     cov = torch.matmul(m_dev.transpose(-1,-2), torch.mul(w.unsqueeze(-1), m_dev))
-    return m, torch.sqrt(cov[:,0,0]).reshape(-1,1)
+    return m, cov
 
 def get_xy_coords(kernel_shape):
     x = torch.arange(kernel_shape[0])
