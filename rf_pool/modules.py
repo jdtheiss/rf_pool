@@ -83,7 +83,7 @@ class Module(nn.Module):
                 module = self.transposed_fn(module)
             # add reshape op if linear
             if self.input_shape is None and isinstance(module, torch.nn.Linear):
-                reshape_op = ops.Op(lambda x: x.flatten(1))
+                reshape_op = ops.Op(ops.flatten_fn(1))
                 layer.add_module('reshape_%s' % name, reshape_op)
             if module is not None:
                 layer.add_module(name, module)
@@ -169,6 +169,40 @@ class Module(nn.Module):
         layer = getattr(self, layer_name)
         for name, module in layer.named_children():
             if name in module_names:
+                modules.append(module)
+        return modules
+
+    def get_modules_by_type(self, layer_name, module_types=(),
+                            module_str_types=[]):
+        # ensure module_types is tuple and module_str_types is list
+        if isinstance(module_types, type):
+            module_types = (module_types,)
+        module_types = tuple(module_types)
+        if isinstance(module_str_types, str):
+            module_str_types = [module_str_types]
+        module_str_types = list(module_str_types)
+        # get modules in module_types or module_str_types
+        modules = []
+        layer = getattr(self, layer_name)
+        for name, module in layer.named_children():
+            # if isinstance or endswith type name, append
+            m_type = torch.typename(module)
+            if isinstance(module, module_types) or \
+               any([m_type.endswith(s) for s in module_str_types]):
+                modules.append(module)
+        return modules
+
+    def get_modules_by_attr(self, layer_name, attributes):
+        # ensure attributes is list
+        if isinstance(attributes, str):
+            attributes = [attributes]
+        attributes = list(attributes)
+        # get modules with attributes
+        modules = []
+        layer = getattr(self, layer_name)
+        for name, module in layer.named_children():
+            # if any hasattr, append
+            if any([hasattr(module, attr) for attr in attributes]):
                 modules.append(module)
         return modules
 
