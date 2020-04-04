@@ -934,6 +934,7 @@ class Pool(torch.nn.Module):
         options = kwargs.copy()
         options.update({'vectorize': True, 'get_poisson_input': True})
         with torch.no_grad():
+            self._update_rfs(self.mu, self.sigma)
             output = Pool.forward(self, u, **options)
             # get mean activity per RF
             output = torch.relu(output)
@@ -974,8 +975,13 @@ class Pool(torch.nn.Module):
         assert hasattr(self, 'rbm')
         # estimate mu, sigma for each attentional Gaussian
         mu = self.mu.detach()
-        rbm_weight = self.rbm.hidden_weight.detach()
-        attention_mu, attention_sigma = lattice.estimate_mu_sigma(rbm_weight, mu)
+        # exponentiate as if reconstructing with each hidden unit = 1
+        rbm_weight = torch.exp(self.rbm.hidden_weight.detach())
+        attention_mu, attention_cov = lattice.estimate_mu_sigma(rbm_weight, mu)
+        # get mean of diagonal of cov
+        attention_sigma = torch.mean(torch.sqrt(torch.diagonal(attention_cov,
+                                                               dim1=1, dim2=2)),
+                                     -1)
         # set weight based on hidden unit activity
         if input is None:
             return attention_mu, attention_sigma, None
@@ -1011,8 +1017,10 @@ class Pool(torch.nn.Module):
         plot. Use `get_attentional_field` to obtain mu and sigma values.
         """
         attention_mu, attention_sigma, weight = self.get_attentional_field(input)
+        if weight is None:
+            weight = [1.]
         return visualize.scatter_rfs(attention_mu, attention_sigma, self.img_shape,
-                                     linewidths=[w for w in weight or [1.]])
+                                     linewidths=[w for w in weight])
 
     def apply_RBM(self, u, **kwargs):
         """
