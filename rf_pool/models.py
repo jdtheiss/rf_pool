@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from . import losses, ops
+from . import losses, ops, pool
 from .modules import Module, FeedForward, RBM
 from .utils import functions, visualize
 
@@ -73,6 +73,37 @@ class Model(nn.Module):
         if cnt > -1:
             return layer_ids[:cnt]
         return layer_ids
+
+    def get_layers_by_type(self, layer_types=(), layer_str_types=[]):
+        # ensure layer_types is tuple and layer_str_types is list
+        if isinstance(layer_types, type):
+            layer_types = (layer_types,)
+        layer_types = tuple(layer_types)
+        if isinstance(layer_str_types, str):
+            layer_str_types = [layer_str_types]
+        layer_str_types = list(layer_str_types)
+        # get layers in layer_types or layer_str_types
+        layers = []
+        for name, layer in self.layers:
+            # if isinstance or endswith type name, append
+            l_type = torch.typename(layer)
+            if isinstance(layer, layer_types) or \
+               any([l_type.endswith(s) for s in layer_str_types]):
+                layers.append(layer)
+        return layers
+
+    def get_layers_by_attr(self, attributes):
+        # ensure attributes is list
+        if isinstance(attributes, str):
+            attributes = [attributes]
+        attributes = list(attributes)
+        # get layers with attributes
+        layers = []
+        for name, layer in self.layers:
+            # if hasattr, append
+            if any([hasattr(layer, attr) for attr in attributes]):
+                layers.append(layer)
+        return layers
 
     def append(self, layer_id, layer):
         layer_id = str(layer_id)
@@ -772,8 +803,11 @@ class Model(nn.Module):
             sqrt_n = torch.sqrt(n)
         return (sqrt_n - l1_l2) / (sqrt_n - 1)
 
-    def rf_output(self, input, layer_id, **kwargs):
-        rf_layer = self.layers[layer_id].forward_layer.pool
+    def rf_output(self, input, layer_id, module_name='pool', **kwargs):
+        if module_name is None:
+            rf_layer = self.layers[layer_id]
+        else:
+            rf_layer = getattr(self.layers[layer_id].forward_layer, module_name)
         assert hasattr(rf_layer, 'rfs'), (
             'No rf_pool layer found.'
         )
@@ -784,59 +818,142 @@ class Model(nn.Module):
         # apply layers with output_module as pool for layer_id
         return self.apply(input.detach(), output_layer=layer_id, **layer_kwargs)
 
-    def rf_index(self, input, layer_id, thr=0.):
+    def rf_index(self, input, layer_id, module_name='pool', thr=0.):
         # get heatmap
-        heatmap = self.rf_heatmap(layer_id)
+        heatmap = self.rf_heatmap(layer_id, module_name=module_name)
         # get RFs where any pixel is greater than threshold
-        return torch.max(torch.gt(torch.mul(input, heatmap), thr).flatten(-2), -1)[0]
+        return torch.max(torch.gt(torch.mul(input,heatmap),thr).flatten(-2),-1)[0]
 
-    def rf_heatmap(self, layer_id):
-        rf_layer = self.layers[layer_id].forward_layer.pool
+    def rf_heatmap(self, layer_id, module_name='pool',
+                   layer_type='forward_layer'):
+        """
+        Show heatmap of receptive fields in image space (requires
+        `rf_pool.pool.Pool` module)
+
+        Parameters
+        ----------
+        layer_id : str
+            layer id of layer containing pooling module
+        module_name : str
+            name of pooling module within layer [default: 'pool']
+        layer_type : str
+            layer name containing module [default: 'forward_layer']
+
+        Returns
+        -------
+        heatmap : torch.Tensor
+            heatmap with shape (n_RF, h, w) as a binary map of RF area in image
+            space
+        """
+        if module_name is None:
+            rf_layer = self.layers[layer_id]
+        elif layer_type is None:
+            rf_layer = getattr(self.layers[layer_id], module_name)
+        else:
+            rf_layer = getattr(getattr(self.layers[layer_id], layer_type),
+                               module_name)
         assert hasattr(rf_layer, 'rfs'), (
             'No rf_pool layer found.'
         )
-        # get layers before layer id
-        pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
-        pre_layer_ids.reverse()
+        # get layers up to layer id
+        pre_layer_ids = self.get_layer_ids(layer_id)
         # for each layer apply transpose convolution of ones and unpooling
         rf_layer._update_rfs(rf_layer.mu, rf_layer.sigma)
         rfs = torch.unsqueeze(rf_layer.rfs, 1).detach()
-        w_shape = self.layers[layer_id].forward_layer.hidden.kernel_size
-        w = torch.ones((1, 1) + w_shape)
-        heatmap = torch.conv_transpose2d(rfs, w)
-        heatmap = torch.gt(heatmap, 0.).float()
+        # get modules with kernel_size attribute
+        modules = []
         for id in pre_layer_ids:
-            # upsample
-            pool = self.layers[id].get_modules('forward_layer', ['pool'])
-            if len(pool) == 1 and hasattr(pool[0], 'kernel_size'):
-                pool_size = pool[0].kernel_size
+            modules.extend(self.layers[id].get_modules_by_attr(layer_type,
+                                                               'kernel_size'))
+        modules.reverse()
+        # find rf_layer for start
+        idx = [i for i, m in enumerate(modules) if m is rf_layer][0]
+        modules = modules[idx+1:]
+        # for each module, upsample or transpose convolution
+        heatmap = rfs.clone()
+        for module in modules:
+            # get kernel_size
+            size = getattr(module, 'kernel_size')
+            if size is None:
+                continue
+            if type(size) is not tuple:
+                size = (size,)*2
+            # if pool, upsample
+            if isinstance(module, pool.Pool) or \
+               torch.typename(module).lower().find('pool') > -1:
                 heatmap = torch.nn.functional.interpolate(heatmap,
-                                                          scale_factor=pool_size)
-            # conv_transpose2d
-            hidden = self.layers[id].get_modules('forward_layer', ['hidden'])
-            if len(hidden) == 1 and hasattr(hidden[0], 'weight'):
-                w_shape = hidden[0].kernel_size
-                w = torch.ones((1, 1) + w_shape)
+                                                          scale_factor=size)
+            else:
+                w = torch.ones((1,1) + size)
                 heatmap = torch.conv_transpose2d(heatmap, w)
             heatmap = torch.gt(heatmap, 0.).float()
         return heatmap.squeeze(1)
 
-    def rf_to_image_space(self, layer_id, *args):
+    def rf_to_image_space(self, layer_id, *args, module_name='pool',
+                          layer_type='forward_layer'):
+        """
+        Get image-space coordinates/sizes for RF `mu`/`sigma` values (or other)
+
+        Parameters
+        ----------
+        layer_id : str
+            layer id of layer containing pooling module
+        *args : float, int, array-like
+            inputs to obtain image-space coordinates/sizes
+            [default: `mu`/`sigma` from RF pooling module]
+        module_name : str
+            name of pooling module within layer [default: 'pool']
+        layer_type : str
+            layer name containing module [default: 'forward_layer']
+
+        Returns
+        -------
+        coords : list
+            torch.Tensor of image-space coordinate/size per arg in *args
+        """
+        # start module
+        if module_name is None:
+            start_module = self.layers[layer_id]
+        elif layer_type is None:
+            start_module = getattr(self.layers[layer_id], module_name)
+        else:
+            start_module = getattr(getattr(self.layers[layer_id], layer_type),
+                                   module_name)
         # get mu, sigma
         if len(args) == 0:
-            args = self.layers[layer_id].forward_layer.pool.get('mu','sigma')
+            args = start_module.get('mu','sigma')
             args = list(args.values())
-        # reversed layers
-        layers = self.get_layers(self.get_layer_ids(layer_id)[:-1])
-        layers.reverse()
-        # for each layer, add half weight kernel and multiply by pool kernel
-        half_k = (self.layers[layer_id].forward_layer.hidden.kernel_size[0]-1)//2
-        coords = [a + half_k for a in args]
+        # ensure args are tensor
+        args = [torch.as_tensor(a) for a in args]
+        arg_shapes = [a.shape for a in args]
+        # get layers up to layer_id
+        layers = self.get_layers(self.get_layer_ids(layer_id))
+        # get modules with kernel_size
+        modules = []
         for layer in layers:
-            coords = [c * layer.forward_layer.pool.kernel_size for c in coords]
-            half_k = (layer.forward_layer.hidden.kernel_size[0] - 1) // 2
-            coords = [c + half_k for c in coords]
-        return coords
+            modules.extend(layer.get_modules_by_attr('forward_layer',
+                                                     'kernel_size'))
+        modules.reverse()
+        # find start_module, start after
+        idx = [i for i, m in enumerate(modules) if m is start_module][0]
+        modules = modules[idx+1:]
+        # for each module, add half weight and multiply by pool size
+        for module in modules:
+            size = getattr(module, 'kernel_size')
+            if size is None:
+                continue
+            size = torch.as_tensor(size)
+            # if pool, upsample
+            if isinstance(module, pool.Pool) or \
+               torch.typename(module).lower().find('pool') > -1:
+                args = [a * size.type(a.dtype) for a in args]
+            else:
+                half_kernel = (size - 1) // 2
+                args = [a + half_kernel.type(a.dtype) for a in args]
+        # ensure same shape by averaging over different dim
+        args = [torch.mean(a, -1).reshape(a_shp) if a.shape != a_shp else a
+                for (a, a_shp) in zip(args, arg_shapes)]
+        return args
 
 class FeedForwardNetwork(Model):
     """

@@ -461,9 +461,9 @@ def scatter_rfs(mu, sigma, img_shape, remove=False, updates={}, figsize=(5,5),
                     fn(scatter_kwargs.get(key))
     return fig
 
-def heatmap(model, layer_id, score_map=None, scores=None, input=None,
-            rf_fn=scatter_rfs, filename=None, figsize=(5,5), colorbar=False,
-            **kwargs):
+def heatmap(model, layer_id, module_name='pool', score_map=None, scores=None,
+            input=None, rf_fn=scatter_rfs, filename=None, figsize=(5,5),
+            colorbar=False, **kwargs):
     """
     Show heatmap of RF values
 
@@ -473,6 +473,8 @@ def heatmap(model, layer_id, score_map=None, scores=None, input=None,
         model containing RF pooling layer
     layer_id : str
         layer id of RF pooling layer
+    module_name : str
+        module name for RF pooling layer [default: 'pool']
     score_map : array-like
         array of RF values to show with shape `model.rf_heatmap(layer_id).shape`
         [default: None]
@@ -533,11 +535,11 @@ def heatmap(model, layer_id, score_map=None, scores=None, input=None,
         ax = kwargs.pop('ax')
         fig = ax.get_figure()
     # get heatmap
-    heatmap = model.rf_heatmap(layer_id)
+    heatmap = model.rf_heatmap(layer_id, module_name)
     # plot RF outlines in image space
     if rf_fn:
         # get mu, sigma in image space
-        mu, sigma = model.rf_to_image_space(layer_id)
+        mu, sigma = model.rf_to_image_space(layer_id, module_name=module_name)
         rf_fn(mu, sigma, heatmap.shape[1:], remove=False, ax=ax, fn_prefix='RF',
               **kwargs)
     # set scores
