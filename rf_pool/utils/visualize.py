@@ -180,20 +180,80 @@ def show_images(*args, img_shape=None, figsize=(5, 5), **kwargs):
     plt.show()
     return fig
 
-def visualize_features(model, layer_id, feature_indices, lr=0.05, n_iter=1000,
-                       optim_fn=torch.optim.Adam, optim_kwargs={},
-                       add_loss=[losses.KernelVarLoss()], loss_weights=[1.],
-                       seed=None, img_shape=None, **kwargs):
+def visualize_features(model, layer_id, module_name, feature_indices,
+                       lr=0.05, n_iter=1000, optim_fn=torch.optim.Adam,
+                       optim_kwargs={}, add_loss=[losses.KernelVarLoss()],
+                       loss_weights=[1.], seed=None, img_shape=None, **kwargs):
+    """
+    Visualize features via gradient ascent of feature outputs
+
+    Parameters
+    ----------
+    model : rf_pool.models
+        Model containing features to visualize
+    layer_id : str
+        layer containing features to visualize
+    module_name : str
+        module containing features to visualize
+    feature_indices : list or int
+        indice(s) of outputs from
+        `getattr(model.layers[layer_id].forward_layer, module_name)` to visualize
+        via gradient ascent to maximally activate all `feature_indices`
+    lr : float
+        learning rate used during gradient ascent [default: 0.05]
+    n_iter : int
+        number of iterations to perform gradient ascent [default: 1000]
+    optim_fn : torch.optim
+        optimizer function to use to update visualization
+        [default: torch.optim.Adam]
+    optim_kwargs : dict
+        keyword arguments passed to optim_fn [default: {}]
+    add_loss : list or rf_pool.losses
+        additional loss function(s) to be used to perform gradient ascent
+        [default: [`rf_pool.losses.KernelVarLoss()`]]
+    loss_weights : list or float
+        weight(s) for adding losses together [default: [1.]]
+    seed : torch.Tensor or None
+        seed input to be updated for visualization
+        [default: None]
+    img_shape : tuple or None
+        image shape for seed [default: None]
+    **kwargs : **dict
+        keyword arguments passed to `model.optimize_texture`
+
+    Returns
+    -------
+    seed : torch.Tensor
+        input updated via gradient ascent to visualize features
+
+    See Also
+    --------
+    rf_pool.models.Model.optimize_texture
+    rf_pool.losses.FeatureLoss
+
+    Notes
+    -----
+    The main loss function used for gradient ascent of feature outputs is
+    `rf_pool.losses.FeatureLoss`. If no `seed` is given, seed is set to
+    `torch.rand(1, 1, *img_shape)`. If no `img_shape` is given, the input image
+    shape is inferred from
+    `[2. * s for s in model.rf_to_image_space(layer_id, 1., 1.,
+                                              module_name=module_name,
+                                              output_space=True)]`,
+    which may be inaccurate.
+    """
     # create seed
     if img_shape is None:
-        img_shape = [s * 2 for s in model.rf_to_image_space(layer_id, 1) * 2]
+        img_shape = [s * 2 for s in model.rf_to_image_space(layer_id, 1., 1.,
+                                                            module_name=module_name,
+                                                            output_space=True)]
     if seed is None:
         seed = torch.rand(1, 1, *img_shape, requires_grad=True)
     # set feature loss
     if type(feature_indices) is not list:
         feature_indices = [feature_indices]
     feat_loss = losses.FeatureLoss(model, layer_id, feature_indices,
-                                   lambda x: -x, output_module='hidden')
+                                   lambda x: -x, output_module=module_name)
     # set additional losses
     if type(add_loss) is not list:
         add_loss = [add_loss]
