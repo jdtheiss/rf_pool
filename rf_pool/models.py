@@ -308,13 +308,31 @@ class Model(nn.Module):
             input = self.layers[layer_id].reconstruct(input)
         return input
 
-    def save_model(self, filename, extras={}):
-        if not isinstance(extras, (dict, OrderedDict)):
-            extras = {'extras': extras}
-        extras.update({'model_str': str(self)})
-        extras.update({'model_weights': self.download_weights()})
+    def save_model(self, filename, **kwargs):
+        """
+        Save current model as dictionary containing `str(model)` and model
+        weights.
+
+        Parameters
+        ----------
+        filename : str
+            file name to save model
+        **kwargs : **dict
+            optional extras to save like `key=value`
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        Model saved as dictionary containing following keys 'model_str',
+        'model_weights', and `kwargs.keys()`.
+        """
+        kwargs.update({'model_str': str(self)})
+        kwargs.update({'model_weights': self.download_weights()})
         with open(filename, 'wb') as f:
-            pickle.dump(extras, f)
+            pickle.dump(kwargs, f)
 
     def load_architecture(self, model, pattern='^.+$', verbose=False):
         # function to get typename
@@ -636,8 +654,8 @@ class Model(nn.Module):
                         else:
                             self.show_lattice(**options.get('show_lattice'))
                     # call other monitoring functions
-                    functions.kwarg_fn([IPython.display, self, visualize], None,
-                                       **kwargs)
+                    functions.kwarg_fn([IPython.display, self, visualize],
+                                        None, **kwargs)
         return loss_history
 
     def optimize_texture(self, n_steps, input, seed, loss_fn, optimizer,
@@ -890,7 +908,7 @@ class Model(nn.Module):
         return heatmap.squeeze(1)
 
     def rf_to_image_space(self, layer_id, *args, module_name='pool',
-                          layer_type='forward_layer'):
+                          layer_type='forward_layer', output_space=False):
         """
         Get image-space coordinates/sizes for RF `mu`/`sigma` values (or other)
 
@@ -905,12 +923,25 @@ class Model(nn.Module):
             name of pooling module within layer [default: 'pool']
         layer_type : str
             layer name containing module [default: 'forward_layer']
+        output_space : boolean
+            True/False whether to return image-space coordiantes based on
+            output of module [default: False]
 
         Returns
         -------
         coords : list
             torch.Tensor of image-space coordinate/size per arg in *args
+
+        Notes
+        -----
+        If `output_space is True`, image-space coordinates are in reference to
+        the output of the given module. If `output_space is False`, image-space
+        coordinates are in reference to the input to the given module (i.e.,
+        the module `kernel_size` is not included in the coordinate computation).
+        This distinction is useful for `rf_pool.pool` classes which use the
+        input image shape as reference for RF locations.
         """
+        #TODO: need to update for stride, dilation, etc. 
         # start module
         if module_name is None:
             start_module = self.layers[layer_id]
@@ -934,9 +965,13 @@ class Model(nn.Module):
             modules.extend(layer.get_modules_by_attr('forward_layer',
                                                      'kernel_size'))
         modules.reverse()
-        # find start_module, start after
+        # find start_module
         idx = [i for i, m in enumerate(modules) if m is start_module][0]
-        modules = modules[idx+1:]
+        # if using input space, add 1 to idx
+        if output_space is False:
+            idx += 1
+        # get reversed modules from start_module
+        modules = modules[idx:]
         # for each module, add half weight and multiply by pool size
         for module in modules:
             size = getattr(module, 'kernel_size')
