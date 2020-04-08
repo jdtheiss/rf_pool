@@ -753,8 +753,7 @@ class RBM(Module):
         # get Wv_b
         Wv_b = self.apply(v, 'forward_layer', output_module='hidden')
         # get vbias, hidden terms
-        vbias_term = torch.flatten(v * v_bias, 1)
-        vbias_term = torch.sum(vbias_term, 1)
+        vbias_term = torch.sum(torch.flatten(v * v_bias, 1), 1)
         hidden_term = torch.sum(self.log_part_fn(Wv_b).flatten(1), 1)
         return -hidden_term - vbias_term
 
@@ -764,7 +763,7 @@ class RBM(Module):
         return torch.div(torch.mean(self.free_energy(v)),
                          torch.mean(self.free_energy(valid_v)))
 
-    def log_prob(self, v, log_Z=None, **kwargs):
+    def log_prob(self, v, n_data=-1, log_Z=None, **kwargs):
         """
         Log probability of data
 
@@ -772,6 +771,9 @@ class RBM(Module):
         ----------
         v : torch.Tensor or torch.utils.data.dataloader.DataLoader
             data to compute log probability
+        n_data : int
+            number of data points (or batches if v is `DataLoader`) within v
+            to compute log probability [default: -1, all data in v]
         log_Z : float or None
             log of the partition function over model (calculated using `ais`)
             [default: None, log_Z computed by passing kwargs to ais]
@@ -792,16 +794,21 @@ class RBM(Module):
         # compute log_Z
         if log_Z is None:
             log_Z = self.ais(**kwargs)
+        # set n_data
+        n_data = n_data if n_data > 0 else len(v)
         # compute free energy data
         if isinstance(v, torch.utils.data.dataloader.DataLoader):
-            n_batches = len(v)
+            # set number of batches to n_data
+            n_batches = n_data
             # get mean free energy for each batch
             fe = 0.
-            for data, _ in v:
+            for i, (data, _) in enumerate(v):
+                if i > n_batches:
+                    break
                 fe += torch.mean(self.free_energy(data))
         else: # get free energy for tensor input
             n_batches = 1.
-            fe = torch.mean(self.free_energy(v))
+            fe = torch.mean(self.free_energy(v[:n_data]))
         # return log prob of data
         return -torch.div(fe, n_batches) - log_Z
 
@@ -869,7 +876,7 @@ class RBM(Module):
         base_h = torch.zeros_like(h[0,None])
         log_Z_base = torch.add(torch.sum(base_log_part_fn(base_rate)),
                                torch.sum(self.log_part_fn(base_h)))
-        # return estimated log_Z_model
+        # return estimated log_Z_model log(Z_B/Z_A * Z_A)
         log_Z_model = r_AIS + log_Z_base
         return log_Z_model
 
