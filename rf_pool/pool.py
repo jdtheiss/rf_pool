@@ -1,5 +1,6 @@
 from collections import OrderedDict
 import inspect
+import re
 
 from IPython.display import clear_output, display
 import matplotlib.pyplot as plt
@@ -358,6 +359,8 @@ class Pool(torch.nn.Module):
         self.sigma = sigma
         self.img_shape = img_shape
         self.lattice_fn = lattice_fn
+        # get kwargs keys
+        self._kwarg_keys = kwargs.keys()
         # check for optional kwargs
         self.option_keys = ['adaptive','delta_mu','delta_sigma','fn',
                             'training','attention_mu','attention_sigma','weight',
@@ -379,6 +382,28 @@ class Pool(torch.nn.Module):
 
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
+
+    def __repr__(self):
+        # get inputs to __init__
+        argspec = inspect.getfullargspec(self.__init__)
+        defaults = dict(zip(argspec.args[-len(argspec.defaults):],
+                            argspec.defaults))
+        arg_keys = argspec.args[1:]
+        kwarg_keys = self._kwarg_keys
+        # get input items
+        inputs = self.get(*[k for k in arg_keys
+                            if not k in ['mu','sigma']],
+                          *[k for k in kwarg_keys
+                            if not k.startswith('init')])
+        init_kwargs = self.get(init_kwargs={})
+        inputs.update([(k, v) for k, v in init_kwargs.items() if k in inputs])
+        # get str and name from Module
+        s = torch.nn.Module.__repr__(self)
+        name = re.findall('^[^\(]+', s)[0]
+        # add provided inputs
+        a = ', '.join(['%s=%a' % (k, v) for k, v in inputs.items()
+                       if v is not None and defaults.get(k) is not v])
+        return s.replace(name + '(', name + '(' + a)
 
     def apply(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
@@ -1285,7 +1310,7 @@ class RF_Random(Pool):
         else:
             sigma = kwargs.pop('sigma')
         super(RF_Random, self).__init__(mu, sigma, img_shape, lattice_fn,
-                                        **kwargs)
+                                        n_kernels=n_kernels, **kwargs)
 
 class RF_Squeeze(Pool):
     __doc__ = functions.update_doc(Pool.__doc__,
@@ -1334,7 +1359,7 @@ class RF_CenterCrop(Pool):
                                    [['',Pool.__methodsdoc__]])
     def __init__(self, crop_size, mu=None, sigma=None, img_shape=None,
                  lattice_fn=lattice.mask_kernel_lattice, **kwargs):
-        self.crop_size = torch.tensor(crop_size)
+        self.crop_size = torch.as_tensor(crop_size)
         super(RF_CenterCrop, self).__init__(mu, sigma, img_shape, lattice_fn,
                                             **kwargs)
 
@@ -1420,8 +1445,8 @@ class RF_Foveated(Pool):
         if img_shape is None:
             img_shape = self.img_shape
         self.rf_angle = 2. * np.pi * torch.linspace(0., 1., int(n_rf))[1]
-        self.offset = torch.tensor(lattice_kwargs.get('offset'))
-        self.offset += (torch.tensor(img_shape, dtype=torch.float) // 2)
+        self.offset = torch.as_tensor(lattice_kwargs.get('offset'))
+        self.offset += (torch.as_tensor(img_shape, dtype=torch.float) // 2)
 
     def get_cortical_mu(self, mu=None, beta=0.):
         if mu is None:
@@ -1532,6 +1557,8 @@ class RBM_Attention(Pool):
                  lattice_fn=lattice.mask_kernel_lattice, training=False,
                  lr=1e-5, train_kwargs={}, **kwargs):
         super(RBM_Attention, self).__init__(mu, sigma, img_shape, lattice_fn,
+                                            n_Gaussians=n_Gaussians,
+                                            training=training, lr=lr,
                                             **kwargs)
         # initialize RBM and optimizer
         self.init_RBM(n_Gaussians, training, lr, **train_kwargs)
