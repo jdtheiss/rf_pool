@@ -302,16 +302,14 @@ class SparseLoss(LayerLoss):
     ----------
     model : rf_pool.models.Model
         model used to compute features at layer_ids
-    layer_ids : list
-        layer ids corresponding to layers within model for which features will be
-        computed
+    features : dict
+        dictionary containing {layer_id: []} for obtaining layer-specific
+        outputs on which to compute the loss (see model.apply). use
+        {layer_id: {module_name: []}} to set specific module within layer.
     loss_fn : string or function
         type of sparsity constraint: 'cross_entropy' (Lee et al., 2008),
         'log_sum' (Ji et al., 2014), 'lasso', 'group_lasso' (Yuan & Lin, 2006)
         [default: 'cross_entropy']
-    module_name : string or None
-        output module for passing input through forward layer
-        [default: None, no modules are applied to the input]
     cost : float
         sparsity-cost determining how much the constraint is applied to weights
         [default: 1.]
@@ -344,7 +342,7 @@ class SparseLoss(LayerLoss):
     'group_lasso': sum(sqrt(prod(kernel_size)) * sqrt(sum_kernel(q**2)))
     Note: for 'cross_entropy', q is also averaged across image dimensions.
     """
-    def __init__(self, model, layer_ids, loss_fn='cross_entropy', module_name=None,
+    def __init__(self, model, features, loss_fn='cross_entropy',
                  cost=1., decay=0., **kwargs):
         if type(loss_fn) is str:
             assert hasattr(self, loss_fn)
@@ -353,9 +351,9 @@ class SparseLoss(LayerLoss):
         self.options = functions.pop_attributes(kwargs, ['target','epsilon',
                                                          'kernel_size'],
                                                 ignore_keys=True)
-        self.q = [None,] * len(layer_ids)
-        super(SparseLoss, self).__init__(model, layer_ids, loss_fn, module_name,
-                                         cost, **kwargs)
+        super(SparseLoss, self).__init__(model, features, loss_fn, cost=cost,
+                                         **kwargs)
+        self.q = [None,] * self.n_features
 
     def cross_entropy(self, q, target):
         q = torch.mean(q.transpose(0,1).flatten(1), -1)
@@ -399,4 +397,4 @@ class SparseLoss(LayerLoss):
             if sparse_cost.ndimension() > 2:
                 sparse_cost = torch.mean(torch.flatten(sparse_cost, 2), -1)
             loss = loss + torch.mul(self.cost[i], torch.sum(sparse_cost))
-        return loss / len(self.layer_ids)
+        return loss / self.n_features
