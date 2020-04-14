@@ -248,8 +248,8 @@ class Model(nn.Module):
         # update with shapes
         return _get_dict_shapes(output)
 
-    def update_modules(self, layer_ids, layer_name, module_name, op, overwrite=True,
-                       append=True):
+    def update_modules(self, layer_ids, layer_name, module_name, op,
+                       overwrite=True, append=True):
         """
         Update self.layers[layer_ids].layer_name.module_name by appending,
         prepending, or overwriting with op.
@@ -593,10 +593,15 @@ class Model(nn.Module):
                     loss = self.layers[layer_id].train(layer_input,
                                                        optimizer=optimizer,
                                                        **kwargs)
+                    # backprop extra losses if given
+                    ext_loss = 0.
                     if options.get('add_loss'):
-                        loss = loss + add_loss(*inputs)
+                        ext_loss = ext_loss + add_loss(*inputs)
                     if options.get('sparse_loss'):
-                        loss = loss + sparse_loss(*inputs)
+                        ext_loss = ext_loss + sparse_loss(*inputs)
+                    if isinstance(ext_loss, torch.Tensor):
+                        ext_loss.backward(retain_graph=options.get('retain_graph'))
+                        optimizer.step()
                 else: # normal training
                     # zero gradients
                     layer_input = inputs[0]
@@ -941,7 +946,7 @@ class Model(nn.Module):
         This distinction is useful for `rf_pool.pool` classes which use the
         input image shape as reference for RF locations.
         """
-        #TODO: need to update for stride, dilation, etc. 
+        #TODO: need to update for stride, dilation, etc.
         # start module
         if module_name is None:
             start_module = self.layers[layer_id]
@@ -1071,26 +1076,27 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
 
     def train_layer(self, layer_id, n_epochs, trainloader, optimizer, k=1,
                     monitor=100, **kwargs):
-        # get layer_ids, layer_name if layer_id is first/last
+        # update module to double input and double top-down
         layer_ids = self.get_layer_ids()
-        if layer_id == layer_ids[0]:
-            layer_name = 'forward_layer'
-        elif layer_id == layer_ids[-1]:
-            layer_name = 'reconstruct_layer'
-        else:
-            layer_name = None
-        # update activation
-        if layer_name is not None:
-            mul_op = ops.Op(lambda x: 2. * x)
-            act_op = self.update_modules([layer_id], layer_name, 'activation',
-                                         mul_op, append=False, overwrite=False)
+        mul_op = ops.Op(lambda x: 2. * x)
+        act_op0 = self.update_modules([layer_ids[0]], 'forward_layer',
+                                      'activation', mul_op, overwrite=False,
+                                      append=False)
+        if len(layer_ids) > 1 and layer_id == layer_ids[-1]:
+            act_op1 = self.update_modules([layer_id], 'reconstruct_layer',
+                                          'activation', mul_op, overwrite=False,
+                                          append=False)
         # train
         try:
             output = self.train(n_epochs, trainloader, None, optimizer,
                                 monitor=monitor, layer_id=layer_id, k=k, **kwargs)
         finally:
-            if layer_name is not None:
-                self.update_modules([layer_id], layer_name, 'activation', act_op)
+            # replace mul_op with original activation operation
+            self.update_modules([layer_ids[0]], 'forward_layer', 'activation',
+                                act_op0, overwrite=True)
+            if len(layer_ids) > 1 and layer_id == layer_ids[-1]:
+                self.update_modules([layer_ids[0]], 'reconstruct_layer',
+                                    'activation', act_op1, overwrite=True)
         return output
 
     def train_dbm(self, n_epochs, trainloader, optimizer, k=1, n_iter=10,
