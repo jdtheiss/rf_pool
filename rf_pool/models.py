@@ -663,14 +663,45 @@ class Model(nn.Module):
                                         None, **kwargs)
         return loss_history
 
-    def optimize_texture(self, n_steps, input, seed, loss_fn, optimizer,
-                         transform=None, monitor=100, show_images=[], **kwargs):
+    def optimize_texture(self, n_steps, seed, loss_fn, optimizer, input=[],
+                         transform=None, monitor=100, **kwargs):
         """
-        #TODO:WRITEME
+        Optimize texture seed image
+
+        Parameters
+        ----------
+        n_steps : int
+            number of steps to optimizer seed image
+        seed : torch.Tensor
+            seed image to be optimized
+        loss_fn : function or rf_pool.losses or torch.nn.modules.loss
+            loss function used to optimize seed image.
+            See `rf_pool.losses.LayerLoss`
+        input : torch.Tensor or list
+            input image(s) to use as target for loss function [default: []]
+        transform : rf_pool.utils.transforms
+            transforms to be applied to seed/input images [default: None]
+        monitor : int
+            number of optimization steps between monitoring loss, images
+        **kwargs : **dict
+            keyword arguments passed to `rf_pool.utils.visualize.show_images`
+            during monitoring step
+
+        Returns
+        -------
+        seed : torch.Tensor
+            updated seed image based on optimization
+
+        See Also
+        --------
+        rf_pool.losses.LayerLoss
+        rf_pool.utils.visualize.visualize_features
         """
         # turn off model gradients
         on_parameters = self.get_trainable_params()
         self.set_requires_grad(pattern='', requires_grad=False)
+        if input is None:
+            input = []
         if type(input) is not list:
             input = [input]
         # optimize texture
@@ -706,9 +737,7 @@ class Model(nn.Module):
                 plt.show()
                 running_loss = 0.
                 # monitor texture
-                visualize.show_images(seed, *show_images, **kwargs)
-                functions.kwarg_fn([IPython.display, self, visualize], None,
-                                   **kwargs)
+                visualize.show_images(seed, *loss_input, **kwargs)
         # turn on model gradients
         self.set_requires_grad(on_parameters, requires_grad=True)
         return seed
@@ -761,15 +790,15 @@ class Model(nn.Module):
         return visualize.show_images(w, img_shape=img_shape, figsize=figsize,
                                      cmap=cmap)
 
-    def show_negative(self, input, layer_id, n_images=-1, k=1, img_shape=None,
-                      figsize=(5,5), cmap=None):
+    def show_negative(self, input, layer_id, n_images=-1, k=1, persistent=True,
+                      img_shape=None, figsize=(5,5), cmap=None):
         """
         #TODO:WRITEME
         """
         layer_id = str(layer_id)
         pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
         # get persistent if hasattr
-        if hasattr(self.layers[layer_id], 'persistent'):
+        if hasattr(self.layers[layer_id], 'persistent') and persistent is True:
             neg = self.layers[layer_id].persistent
         else:
             neg = None
@@ -781,13 +810,12 @@ class Model(nn.Module):
                 else:
                     neg = input.clone()
                 if hasattr(self.layers[layer_id], 'gibbs_vhv'):
-                    neg = self.layers[layer_id].gibbs_vhv(neg, k=k)[4]
+                    neg = self.layers[layer_id].gibbs_vhv(neg, k=k)[-1]
                 else:
                     neg = self.layers[layer_id].forward(neg)
                     neg = self.layers[layer_id].reconstruct(neg)
             if len(pre_layer_ids) > 0:
                 pre_layer_ids.reverse()
-                print(pre_layer_ids, neg.shape)
                 neg = self.apply(neg, pre_layer_ids, forward=False)
         # reshape, permute for plotting
         if img_shape:
@@ -1049,6 +1077,10 @@ class DeepBeliefNetwork(Model):
                     monitor=100, **kwargs):
         return self.train(n_epochs, trainloader, None, optimizer, monitor=monitor,
                           layer_id=layer_id, k=k, **kwargs)
+
+    def train_dbn(self):
+        #TODO: based off up-down algorigthm in Hinton, Osindero, Teh (2006)
+        raise NotImplementedError
 
 class DeepBoltzmannMachine(DeepBeliefNetwork):
     """

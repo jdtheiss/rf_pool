@@ -180,10 +180,10 @@ def show_images(*args, img_shape=None, figsize=(5, 5), **kwargs):
     plt.show()
     return fig
 
-def visualize_features(model, layer_id, module_name, feature_indices,
-                       lr=0.05, n_iter=1000, optim_fn=torch.optim.Adam,
-                       optim_kwargs={}, add_loss=[losses.KernelVarLoss()],
-                       loss_weights=[1.], seed=None, img_shape=None, **kwargs):
+def visualize_features(model, layer_id, module_name, feature_index,
+                       loss_fn=lambda x: -x.mean(), lr=0.05, n_iter=1000,
+                       optim_fn=torch.optim.Adam, optim_kwargs={}, seed=None,
+                       img_shape=(3,128,128), **kwargs):
     """
     Visualize features via gradient ascent of feature outputs
 
@@ -195,10 +195,14 @@ def visualize_features(model, layer_id, module_name, feature_indices,
         layer containing features to visualize
     module_name : str
         module containing features to visualize
-    feature_indices : list or int
-        indice(s) of outputs from
+    feature_index : int or list
+        index of outputs on channel dimension from
         `getattr(model.layers[layer_id].forward_layer, module_name)` to visualize
-        via gradient ascent to maximally activate all `feature_indices`
+        via gradient ascent to maximally activate given feature
+    loss_fn : function or rf_pool.losses
+        lambda function passed to `rf_pool.losses.FeatureLoss` or `rf_pool.losses`
+        instance [default: lambda x: -x.mean(), where `x` is indexed features
+        with shape (batch, len(feature_index), h, w)]
     lr : float
         learning rate used during gradient ascent [default: 0.05]
     n_iter : int
@@ -208,16 +212,12 @@ def visualize_features(model, layer_id, module_name, feature_indices,
         [default: torch.optim.Adam]
     optim_kwargs : dict
         keyword arguments passed to optim_fn [default: {}]
-    add_loss : list or rf_pool.losses
-        additional loss function(s) to be used to perform gradient ascent
-        [default: [`rf_pool.losses.KernelVarLoss()`]]
-    loss_weights : list or float
-        weight(s) for adding losses together [default: [1.]]
     seed : torch.Tensor or None
         seed input to be updated for visualization
-        [default: None]
+        [default: None, set to
+        `(torch.randn(1, *img_shape) * 0.01).requires_grad_(True)`]
     img_shape : tuple or None
-        image shape for seed [default: None]
+        image shape for seed [default: (3,128,128)]
     **kwargs : **dict
         keyword arguments passed to `model.optimize_texture`
 
@@ -230,42 +230,26 @@ def visualize_features(model, layer_id, module_name, feature_indices,
     --------
     rf_pool.models.Model.optimize_texture
     rf_pool.losses.FeatureLoss
+    rf_pool.losses
 
     Notes
     -----
     The main loss function used for gradient ascent of feature outputs is
-    `rf_pool.losses.FeatureLoss`. If no `seed` is given, seed is set to
-    `torch.rand(1, 1, *img_shape)`. If no `img_shape` is given, the input image
-    shape is inferred from
-    `[2. * s for s in model.rf_to_image_space(layer_id, 1., 1.,
-                                              module_name=module_name,
-                                              output_space=True)]`,
-    which may be inaccurate.
+    `rf_pool.losses.FeatureLoss`.
     """
     # create seed
-    if img_shape is None:
-        img_shape = [s * 2 for s in model.rf_to_image_space(layer_id, 1., 1.,
-                                                            module_name=module_name,
-                                                            output_space=True)]
     if seed is None:
-        seed = torch.rand(1, 1, *img_shape, requires_grad=True)
+        seed = (torch.randn(1, *img_shape) * 0.01).requires_grad_(True)
     # set feature loss
-    if type(feature_indices) is not list:
-        feature_indices = [feature_indices]
-    feat_loss = losses.FeatureLoss(model, layer_id, feature_indices,
-                                   lambda x: -x, output_module=module_name)
-    # set additional losses
-    if type(add_loss) is not list:
-        add_loss = [add_loss]
-    if type(loss_weights) is not list:
-        loss_weights = [loss_weights]
-    assert len(add_loss) == len(loss_weights)
-    # set combined loss_fn
-    loss_fn = losses.MultiLoss([feat_loss] + add_loss, [1.] + loss_weights)
+    if not isinstance(loss_fn, losses.Loss):
+        loss_fn = losses.FeatureLoss(model, {layer_id: {module_name: []}},
+                                     feature_index, loss_fn,
+                                     output_layer=layer_id, 
+                                     **{layer_id: {'output_module': module_name}})
     # set optimizer
     optim = optim_fn([seed], lr=lr, **optim_kwargs)
     # optimize texture
-    model.optimize_texture(n_iter, [], seed, loss_fn, optim, **kwargs);
+    model.optimize_texture(n_iter, seed, loss_fn, optim, **kwargs);
     return seed
 
 def show_confusion_matrix(data, labels, cmap=plt.cm.afmhot):
