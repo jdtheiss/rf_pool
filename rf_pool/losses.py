@@ -163,54 +163,6 @@ class KernelVarLoss(Loss):
     def forward(self, *args):
         return self.loss_fn(*args)
 
-class FeatureLoss(Loss):
-    """
-    """
-    def __init__(self, model, layer_id, feature_indices, loss_fn, cost=1.,
-                 parameters=None, input_target=None, target=None, **kwargs):
-        super(FeatureLoss, self).__init__()
-        self.model = model
-        self.layer_id = layer_id
-        self.feature_indices = feature_indices
-        self.loss_fn = loss_fn
-        self.cost = cost
-        self.parameters = parameters
-        self.input_target = input_target
-        self.target = target
-        self.kwargs = kwargs
-        if self.input_target is not None:
-            self.input_target = self.get_features(self.input_target)
-
-    def get_features(self, input):
-        # turn on parameters
-        on_parameters = self.set_params(set='on')
-        # get features for layer_id
-        layer_ids = self.model.get_layer_ids(self.layer_id)
-        output = self.model.apply(input, layer_ids, **self.kwargs)
-        # mean across image space
-        output = torch.mean(output, [-2,-1])
-        # turn off parameters
-        self.set_params(on_parameters, set='off')
-        return output
-
-    def forward(self, *args):
-        if self.target is None and self.input_target is None:
-            feat = self.get_features(*args)
-        else:
-            feat = self.get_features(args[0])
-        loss = torch.zeros(1, requires_grad=True)
-        for i, feat_i in enumerate(feat.t()):
-            if i not in self.feature_indices:
-                continue
-            if self.input_target is not None:
-                loss_i = self.loss_fn(feat_i, self.input_target)
-            elif self.target is not None:
-                loss_i = self.loss_fn(feat_i, self.target)
-            else:
-                loss_i = self.loss_fn(feat_i)
-            loss = loss + loss_i * self.cost
-        return loss
-
 class LayerLoss(Loss):
     """
     Layer-based loss
@@ -219,7 +171,7 @@ class LayerLoss(Loss):
     ----------
     model : rf_pool.models
         model used to obtain layer outputs
-    features : dict
+    layer_modules : dict
         dictionary containing {layer_id: []} for obtaining layer-specific
         outputs on which to compute the loss (see model.apply). use
         {layer_id: {module_name: []}} to set specific module within layer.
@@ -244,12 +196,12 @@ class LayerLoss(Loss):
     -------
     None
     """
-    def __init__(self, model, features, loss_fn, cost=1.,
+    def __init__(self, model, layer_modules, loss_fn, cost=1.,
                  parameters=None, input_target=None, target=None, **kwargs):
         super(LayerLoss, self).__init__()
         self.model = model
-        self.features = features
-        self.n_features = _count_items(self.features)
+        self.layer_modules = layer_modules
+        self.n_features = _count_items(self.layer_modules)
         self.loss_fn = loss_fn
         self.cost = functions.parse_list_args(self.n_features, cost)[0]
         self.cost = [c[0] for c in self.cost]
@@ -266,7 +218,7 @@ class LayerLoss(Loss):
         # turn on parameters
         on_parameters = self.set_params(set='on')
         # get features
-        feat = copy.deepcopy(self.features)
+        feat = copy.deepcopy(self.layer_modules)
         [self.model.apply(arg, output=feat, **self.kwargs) for arg in args]
         # turn off parameters
         self.set_params(on_parameters, set='off')
@@ -294,6 +246,75 @@ class LayerLoss(Loss):
             loss = loss + loss_i * self.cost[i]
         return loss / self.n_features
 
+class FeatureLoss(LayerLoss):
+    """
+    Feature-based loss
+
+    Parameters
+    ----------
+    model : rf_pool.models
+        model used to obtain layer outputs
+    layer_modules : dict
+        dictionary containing {layer_id: []} for obtaining layer-specific
+        outputs on which to compute the loss (see model.apply). use
+        {layer_id: {module_name: []}} to set specific module within layer.
+    feature_index : int or list
+        index of feature to compute loss
+    loss_fn : torch.nn.modules.loss or function
+        loss function to compute over features chosen from layers/modules.
+        input is index features with shape (batch_size, len(feature_index) h, w)
+        or (batch_size, len(feature_index))
+    cost : float or list, optional
+        cost per layer/module pair or float value applied to all losses
+        [default: 1.]
+    parameters : torch.nn.parameter.Parameter
+        parameters to use in update from loss
+        [default: None, uses parameters as they are]
+    input_target : torch.Tensor
+        image used to obtain features to match with loss function
+        (assumed to stay the same)
+        [default: None]
+    target : torch.Tensor
+        features to match with loss function [default: None]
+    **kwargs : **dict
+        keyword arguments passed to model.apply function
+
+    Returns
+    -------
+    None
+    """
+    def __init__(self, model, layer_modules, feature_index, loss_fn, cost=1.,
+                 parameters=None, input_target=None, target=None, **kwargs):
+        super(FeatureLoss, self).__init__(model, layer_modules, loss_fn, cost,
+                                          parameters, input_target, target,
+                                          **kwargs)
+        # get feature_index as list
+        assert isinstance(feature_index, (int, list))
+        if not isinstance(feature_index, list):
+            feature_index = [feature_index]
+        self.feature_index = feature_index
+
+    def forward(self, *args):
+        if self.target is None and self.input_target is None:
+            feat = self.get_features(*args)
+        else:
+            feat = self.get_features(args[0])
+        # get losses
+        loss = torch.zeros(1, requires_grad=True)
+        for i, feat_i in enumerate(feat):
+            # index features
+            feat_i = [f[:,self.feature_index] for f in feat_i]
+            if self.input_target is not None:
+                loss_i = self.loss_fn(*feat_i, *self.input_target[i])
+            elif self.target is not None:
+                loss_i = self.loss_fn(*feat_i, self.target)
+            elif len(args) > 1 and args[0].ndimension() != args[1].ndimension():
+                loss_i = self.loss_fn(*feat_i, *args[1:])
+            else:
+                loss_i = self.loss_fn(*feat_i)
+            loss = loss + loss_i * self.cost[i]
+        return loss / self.n_features
+
 class SparseLoss(LayerLoss):
     """
     Encourage sparsity by taking gradient of constraint function
@@ -302,7 +323,7 @@ class SparseLoss(LayerLoss):
     ----------
     model : rf_pool.models.Model
         model used to compute features at layer_ids
-    features : dict
+    layer_modules : dict
         dictionary containing {layer_id: []} for obtaining layer-specific
         outputs on which to compute the loss (see model.apply). use
         {layer_id: {module_name: []}} to set specific module within layer.
@@ -342,7 +363,7 @@ class SparseLoss(LayerLoss):
     'group_lasso': sum(sqrt(prod(kernel_size)) * sqrt(sum_kernel(q**2)))
     Note: for 'cross_entropy', q is also averaged across image dimensions.
     """
-    def __init__(self, model, features, loss_fn='cross_entropy',
+    def __init__(self, model, layer_modules, loss_fn='cross_entropy',
                  cost=1., decay=0., **kwargs):
         if type(loss_fn) is str:
             assert hasattr(self, loss_fn)
@@ -351,7 +372,7 @@ class SparseLoss(LayerLoss):
         self.options = functions.pop_attributes(kwargs, ['target','epsilon',
                                                          'kernel_size'],
                                                 ignore_keys=True)
-        super(SparseLoss, self).__init__(model, features, loss_fn, cost=cost,
+        super(SparseLoss, self).__init__(model, layer_modules, loss_fn, cost=cost,
                                          **kwargs)
         self.q = [None,] * self.n_features
 
