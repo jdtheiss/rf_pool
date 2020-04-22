@@ -25,6 +25,7 @@ def _get_items(d):
 
 class Loss(nn.Module):
     """
+    Base Class for losses
     """
     def __init__(self):
         super(Loss, self).__init__()
@@ -50,6 +51,23 @@ class Loss(nn.Module):
 
 class MultiLoss(Loss):
     """
+    Combine multiple losses as weighted sum
+
+    Parameters
+    ----------
+    losses : list
+        list of loss functions to be called
+    weights : list
+        list of weights (per loss function in `losses`)
+        [default: [1.] * len(losses)]
+
+    Returns
+    -------
+    None
+
+    Methods
+    -------
+    add_loss(loss, weight=1.) : add another loss to `losses` attribute
     """
     def __init__(self, losses=[], weights=[]):
         super(MultiLoss, self).__init__()
@@ -73,6 +91,32 @@ class MultiLoss(Loss):
 
 class ArgLoss(Loss):
     """
+    Simple loss function applied with optional, constant input/target parameters
+
+    Parameters
+    ----------
+    loss_fn : torch.nn.modules.loss or function
+        loss function to use
+    input : torch.Tensor or None
+        input passed to `loss_fn` as first argument if not None, else replaced
+        by first argument passed during `forward` call [default: None]
+    target : torch.Tensor or None
+        target passed to `loss_fn` as second argument if not None, else replaced
+        by arguments passed during `forward` call [default: None] (see Notes)
+
+    Returns
+    -------
+    None
+
+    See Also
+    --------
+    KwargsLoss
+
+    Notes
+    -----
+    If `input is not None and target is None`, the second argument passed to
+    `loss_fn` is either the first argument passed to `forward` if only one
+    argument is given or the second argument if more than one argument is given.
     """
     def __init__(self, loss_fn, input=None, target=None):
         super(ArgLoss, self).__init__()
@@ -88,6 +132,25 @@ class ArgLoss(Loss):
 
 class KwargsLoss(Loss):
     """
+    Loss function using keyword arguments
+
+    Parameters
+    ----------
+    loss_fn : torch.nn.modules.loss or function
+        loss function to use
+    n_args : int
+        number of arguments to be passed to `loss_fn` during `forward` call
+        [default: 1]
+    **kwargs : **dict
+        keyword arguments passed to `loss_fn` during `forward` call
+
+    Returns
+    -------
+    None
+
+    See Also
+    --------
+    ArgLoss
     """
     def __init__(self, loss_fn, n_args=1, **kwargs):
         super(KwargsLoss, self).__init__()
@@ -100,6 +163,26 @@ class KwargsLoss(Loss):
 
 class KernelLoss(Loss):
     """
+    Convolve input with given weight
+
+    Parameters
+    ----------
+    weight : torch.Tensor
+        weight to convolve with input during `forward` call
+    reduce : str
+        name of reduction function to use (i.e., function from `torch` or `Loss`)
+        [default: 'mean']
+    **kwargs : **dict
+        keyword arguments passed to `torch.conv2d` during `forward` call
+
+    Returns
+    -------
+    None
+
+    See Also
+    --------
+    SpatialFreqLoss
+    KernelVarLoss
     """
     def __init__(self, weight, reduce='mean', **kwargs):
         super(KernelLoss, self).__init__()
@@ -120,6 +203,37 @@ class KernelLoss(Loss):
 
 class SpatialFreqLoss(KernelLoss):
     """
+    Reduce spatial frequecies in image space with given gabors
+
+    Parameters
+    ----------
+    n_gabors : int
+        number of gabors to use
+    theta : list
+        list of gabor orientations with `len(theta) == n_gabors`
+    sigma : list
+        list of sigma sizes with `len(sigma) == n_gabors`
+    wavelength : list
+        list of spatial frequecie wavelengths with `len(wavelength) == n_gabors`
+    filter_shape : list
+        list of filter shapes with `len(filter_shape) == n_gabors`
+    gamma : list or float
+        gamma value(s) passed to `functions.gabor_filter` [default: 0.3]
+    psi : list or float
+        psi value(s) passed to `functions.gabor_filter` [default: 0.]
+    reduce : str
+        name of reduction function to use (i.e., function from `torch` or `Loss`)
+        [default: 'mean']
+    **kwargs : **dict
+        keyword arguments passed to `torch.conv2d` during `forward` call
+
+    Returns
+    -------
+    None
+
+    See Also
+    --------
+    rf_pool.utils.functions.gabor_filter
     """
     def __init__(self, n_gabors, theta, sigma, wavelength, filter_shape,
                  gamma=0.3, psi=0., reduce='mean', **kwargs):
@@ -131,8 +245,45 @@ class SpatialFreqLoss(KernelLoss):
         weight = torch.stack(gabors).unsqueeze(1)
         super(SpatialFreqLoss, self).__init__(weight, reduce, **kwargs)
 
+    def forward(self, *args):
+        if args[0].shape[1] > self.weight.shape[1]:
+            self.weight = functions.repeat(self.weight, [1, args[0].shape[1]])
+        output = torch.conv2d(args[0], self.weight, **self.kwargs)
+        return self.reduce_fn(output)
+
 class KernelVarLoss(Loss):
     """
+    Reduce variance across kernels in image
+
+    Parameters
+    ----------
+    kernel_size : int or tuple
+        size of kernel to reduce variance within [default: 2]
+    stride : int or tuple
+        stride of convolution [default: 1]
+    reduce : str
+        name of reduction function to use (i.e., function from `torch` or `Loss`)
+        [default: 'mean']
+    **kwargs : **dict
+        keyword arguments passed to `torch.nn.functional.avg_pool2d` or
+        `torch.nn.functional.lp_pool2d` (see Notes)
+
+    Returns
+    -------
+    None
+
+    Notes
+    -----
+    Variance is computed across kernels by first subtracting the mean computed as
+    `mean = torch.nn.functional.avg_pool2d(input, kernel_size, stride, **kwargs)`
+    followed by computing the sum of squares across each kernel with
+    `torch.nn.functional.lp_pool2d(input-mean, 2, kernel_size, stride, **kwargs)`.
+    Finally, the result is reduced via the function defined by `reduce`.
+
+    See Also
+    --------
+    torch.nn.functional.avg_pool2d
+    torch.nn.lp_pool2d
     """
     def __init__(self, kernel_size=2, stride=1, reduce='mean', **kwargs):
         super(KernelVarLoss, self).__init__()
@@ -176,7 +327,9 @@ class LayerLoss(Loss):
         outputs on which to compute the loss (see model.apply). use
         {layer_id: {module_name: []}} to set specific module within layer.
     loss_fn : torch.nn.modules.loss or function
-        loss function to compute over features chosen from layers/modules
+        loss function to compute over features chosen from layers/modules. if
+        `type(lost_fn) is list`, should be list of loss functions per
+        layer/module pair.
     cost : float or list, optional
         cost per layer/module pair or float value applied to all losses
         [default: 1.]
@@ -235,14 +388,18 @@ class LayerLoss(Loss):
         # get losses
         loss = torch.zeros(1, requires_grad=True)
         for i, feat_i in enumerate(feat):
-            if self.input_target is not None:
-                loss_i = self.loss_fn(*feat_i, *self.input_target[i])
-            elif self.target is not None:
-                loss_i = self.loss_fn(*feat_i, self.target)
-            elif len(args) > 1 and args[0].ndimension() != args[1].ndimension():
-                loss_i = self.loss_fn(*feat_i, *args[1:])
+            if isinstance(self.loss_fn, list):
+                loss_fn_i = self.loss_fn[i]
             else:
-                loss_i = self.loss_fn(*feat_i)
+                loss_fn_i = self.loss_fn
+            if self.input_target is not None:
+                loss_i = loss_fn_i(*feat_i, *self.input_target[i])
+            elif self.target is not None:
+                loss_i = loss_fn_i(*feat_i, self.target)
+            elif len(args) > 1 and args[0].ndimension() != args[1].ndimension():
+                loss_i = loss_fn_i(*feat_i, *args[1:])
+            else:
+                loss_i = loss_fn_i(*feat_i)
             loss = loss + loss_i * self.cost[i]
         return loss / self.n_features
 
@@ -260,10 +417,11 @@ class FeatureLoss(LayerLoss):
         {layer_id: {module_name: []}} to set specific module within layer.
     feature_index : int or list
         index of feature to compute loss
-    loss_fn : torch.nn.modules.loss or function
+    loss_fn : torch.nn.modules.loss or function or list
         loss function to compute over features chosen from layers/modules.
         input is index features with shape (batch_size, len(feature_index) h, w)
-        or (batch_size, len(feature_index))
+        or (batch_size, len(feature_index)). if `type(lost_fn) is list`, should
+        be list of loss functions per layer/module pair.
     cost : float or list, optional
         cost per layer/module pair or float value applied to all losses
         [default: 1.]
@@ -293,6 +451,10 @@ class FeatureLoss(LayerLoss):
         if not isinstance(feature_index, list):
             feature_index = [feature_index]
         self.feature_index = feature_index
+        # set input_target to indexed features if given
+        if self.input_target is not None:
+            self.input_target = [[f[:,self.feature_index] for f in feat_i]
+                                 for feat_i in self.input_target]
 
     def forward(self, *args):
         if self.target is None and self.input_target is None:
@@ -304,14 +466,18 @@ class FeatureLoss(LayerLoss):
         for i, feat_i in enumerate(feat):
             # index features
             feat_i = [f[:,self.feature_index] for f in feat_i]
-            if self.input_target is not None:
-                loss_i = self.loss_fn(*feat_i, *self.input_target[i])
-            elif self.target is not None:
-                loss_i = self.loss_fn(*feat_i, self.target)
-            elif len(args) > 1 and args[0].ndimension() != args[1].ndimension():
-                loss_i = self.loss_fn(*feat_i, *args[1:])
+            if isinstance(self.loss_fn, list):
+                loss_fn_i = self.loss_fn[i]
             else:
-                loss_i = self.loss_fn(*feat_i)
+                loss_fn_i = self.loss_fn
+            if self.input_target is not None:
+                loss_i = loss_fn_i(*feat_i, *self.input_target[i])
+            elif self.target is not None:
+                loss_i = loss_fn_i(*feat_i, self.target)
+            elif len(args) > 1 and args[0].ndimension() != args[1].ndimension():
+                loss_i = loss_fn_i(*feat_i, *args[1:])
+            else:
+                loss_i = loss_fn_i(*feat_i)
             loss = loss + loss_i * self.cost[i]
         return loss / self.n_features
 
