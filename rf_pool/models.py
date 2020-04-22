@@ -1142,8 +1142,8 @@ class DeepBeliefNetwork(Model):
           **kwargs)
     train_layer(layer_id, n_epochs, trainloader, optimizer, k=1, monitor=100,
                 **kwargs)
-    train_dbn(n_epochs, trainloader, optimizer, k=1, persistent=None,
-              monitor=100, **kwargs)
+    train_model(n_epochs, trainloader, optimizer, k=1, persistent=None,
+                monitor=100, **kwargs)
 
     References
     ----------
@@ -1263,8 +1263,8 @@ class DeepBeliefNetwork(Model):
         return self.train(n_epochs, trainloader, None, optimizer, monitor=monitor,
                           layer_id=layer_id, k=k, **kwargs)
 
-    def train_dbn(self, n_epochs, trainloader, optimizer, k=1, persistent=None,
-                  monitor=100, **kwargs):
+    def train_model(self, n_epochs, trainloader, optimizer, k=1, persistent=None,
+                    monitor=100, **kwargs):
         # set persistent attribute
         self.persistent = persistent
         # set contrastive_divergence loss
@@ -1274,7 +1274,7 @@ class DeepBeliefNetwork(Model):
         return self.train(n_epochs, trainloader, loss_fn, optimizer,
                           monitor=monitor, **kwargs)
 
-class DeepBoltzmannMachine(Model):
+class DeepBoltzmannMachine(DeepBeliefNetwork):
     """
     Deep Boltzmann Machine
 
@@ -1294,8 +1294,8 @@ class DeepBoltzmannMachine(Model):
     train_layer(layer_id, n_epochs, trainloader, optimizer, k=1, monitor=100,
                 **kwargs)
         train deep boltzmann machine with contrastive divergence
-    train_dbm(n_epochs, trainloader, optimizer, k=1, n_iter=10, persistent=None,
-              monitor=100, **kwargs)
+    train_model(n_epochs, trainloader, optimizer, k=1, n_iter=10, persistent=None,
+                monitor=100, **kwargs)
 
     References
     ----------
@@ -1329,8 +1329,8 @@ class DeepBoltzmannMachine(Model):
                                     'activation', act_op1, overwrite=True)
         return output
 
-    def train_dbm(self, n_epochs, trainloader, optimizer, k=1, n_iter=10,
-                  persistent=None, monitor=100, **kwargs):
+    def train_model(self, n_epochs, trainloader, optimizer, k=1, n_iter=10,
+                    persistent=None, monitor=100, **kwargs):
         # set persistent
         self.persistent = persistent
         # set loss function
