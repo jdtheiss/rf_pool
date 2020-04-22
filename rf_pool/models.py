@@ -57,7 +57,10 @@ class Model(nn.Module):
     def get_layers(self, layer_ids):
         layers = []
         for layer_id in layer_ids:
-            layers.append(self.layers[layer_id])
+            if layer_id is None:
+                layers.append(lambda x: x)
+            else:
+                layers.append(self.layers[layer_id])
         return layers
 
     def get_layer_ids(self, output_layer_id=None, forward=True):
@@ -183,7 +186,8 @@ class Model(nn.Module):
             if not isinstance(layer_output, (dict, OrderedDict)):
                 layer_output = {}
             # apply modules
-            input = layer.apply(input, output=layer_output, **layer_kwargs)
+            if layer_id is not None:
+                input = layer.apply(input, output=layer_output, **layer_kwargs)
             # append to output if list
             if type(output.get(layer_id)) is list:
                 output.get(layer_id).append(input)
@@ -607,9 +611,10 @@ class Model(nn.Module):
                     layer_input = inputs[0]
                     optimizer.zero_grad()
                     # get loss
-                    if isinstance(loss_fn, losses.Loss):
+                    if isinstance(loss_fn, losses.LayerLoss):
                         loss = loss_fn(*data)
-                    else: # get outputs then loss
+                    else:
+                        # get outputs then loss
                         output = self.forward(layer_input)
                         loss = loss_fn(output, label)
                     # additional loss
@@ -775,36 +780,106 @@ class Model(nn.Module):
     def show_weights(self, layer_id, field='hidden_weight', img_shape=None,
                      figsize=(5, 5), cmap=None):
         """
-        #TODO:WRITEME
+        Show weights of given layer (as projection to image space if applicable)
+
+        Parameters
+        ----------
+        layer_id : str
+            layer id containing weights to be shown
+        field : str
+            name of layer weights (i.e. `getattr(self.layers[layer_id], field)`)
+            [default: 'hidden_weight']
+        img_shape : tuple or None
+            image shape to reshape weights for visualization [default: None]
+        figsize : tuple
+            size of matplotlib figure to show [default: (5, 5)]
+        cmap : matplotlib.pyplot.cm
+            colormap used for showing images [default: None]
+
+        Returns
+        -------
+        fig : matplotlib.pyplot.Figure
+            figure containing images
+
+        See Also
+        --------
+        rf_pool.utils.visualize.show_images
+
+        Notes
+        -----
+        If layers preceding `layer_id` have `reconstruct_layer` modules, the
+        weights will be passed through each preceding layer to obtain a
+        projection in the image space (e.g., for generative models).
         """
         # get field for weights
         layer_id = str(layer_id)
         if not hasattr(self.layers[layer_id], field):
             raise Exception('attribute ' + field + ' not found')
-        w = getattr(self.layers[layer_id], field).clone().detach()
-        # get weights reconstructed down if not first layer
-        pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
-        pre_layer_ids.reverse()
-        if len(pre_layer_ids) > 0:
-            w = self.apply(w, pre_layer_ids, forward=False)
+        with torch.no_grad():
+            w = getattr(self.layers[layer_id], field).detach()
+            # get weights reconstructed down if not first layer
+            pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
+            pre_layer_ids.reverse()
+            if len(pre_layer_ids) > 0:
+                w = self.apply(w, pre_layer_ids, forward=False)
         return visualize.show_images(w, img_shape=img_shape, figsize=figsize,
                                      cmap=cmap)
 
     def show_negative(self, input, layer_id, n_images=-1, k=1, persistent=True,
                       img_shape=None, figsize=(5,5), cmap=None):
         """
-        #TODO:WRITEME
+        Show reconstruction of input after passed to layer_id
+
+        Parameters
+        ----------
+        input : torch.Tensor
+            input to reconstruct
+        layer_id : str
+            layer to reconstruct from
+        n_images : int
+            number of images to display [default: -1, all images]
+        k : int
+            number of gibbs sampling steps (if applicable) [default: 1]
+        persistent : boolean
+            True/False use persistent attribute of layer for reconstruction
+            (if applicable) [default: True]
+        img_shape : tuple or None
+            shape of image for reconstruction [default: None]
+        figsize : tuple
+            figure size for showing images [default: (5,5)]
+        cmap : matplotlib.pyplot.cm
+            colormap used for showing images [default: None]
+
+        Returns
+        -------
+        fig : matplotlib.pyplot.Figure
+            figure containing images
+
+        See Also
+        --------
+        DeepBeliefNetwork
+        DeepBoltzmannMachine
+
+        Notes
+        -----
+        This function requires `reconstruct_layer` to contain the modules needed
+        to reconstruct from the given layer, which is created automatically for
+        DeepBeliefNetwork/DeepBoltzmannMachine models.
         """
         layer_id = str(layer_id)
         pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
         # get persistent if hasattr
-        if hasattr(self.layers[layer_id], 'persistent') and persistent is True:
+        if hasattr(self, 'persistent') and self.persistent is not None:
+            with torch.no_grad():
+                neg = self.apply(self.persistent.clone(), pre_layer_ids)
+        elif hasattr(self.layers[layer_id], 'persistent'):
             neg = self.layers[layer_id].persistent
+            neg = neg.clone() if neg is not None else None
         else:
             neg = None
         # pass forward, then reconstruct down
         with torch.no_grad():
-            if neg is None:
+            if neg is None or not persistent:
                 if len(pre_layer_ids) > 0:
                     neg = self.apply(input, pre_layer_ids)
                 else:
@@ -1025,14 +1100,32 @@ class Model(nn.Module):
 
 class FeedForwardNetwork(Model):
     """
-    #TODO:WRITEME
+    Feed Forward Network
+
+    Attributes
+    ----------
+    data_shape : tuple
+        shape of input data
+    layers : torch.nn.ModuleDict
+        layers containing computations to be performed
+
+    Methods
+    -------
+    append(layer_id, layer)
+    insert(idx, layer_id, layer)
+    remove(layer_id)
+    apply(input, layer_ids=[], forward=True, output={}, output_layer=None,
+          **kwargs)
+    train(n_epochs, trainloader, loss_fn, optimizer, monitor=100, **kwargs)
+    optimize_texture(n_steps, seed, loss_fn, optimizer, input=[],
+                     transform=None, monitor=100, **kwargs)
     """
     def __init__(self, model=None):
         super(FeedForwardNetwork, self).__init__(model)
 
 class DeepBeliefNetwork(Model):
     """
-    #TODO:WRITEME
+    Deep Belief Network
 
     Attributes
     ----------
@@ -1042,49 +1135,148 @@ class DeepBeliefNetwork(Model):
 
     Methods
     -------
+    append(layer_id, layer)
+    insert(idx, layer_id, layer)
+    remove(layer_id)
+    apply(input, layer_ids=[], forward=True, output={}, output_layer=None,
+          **kwargs)
     train_layer(layer_id, n_epochs, trainloader, optimizer, k=1, monitor=100,
                 **kwargs)
-        train deep belief network with greedy layer-wise contrastive divergence
+    train_dbn(n_epochs, trainloader, optimizer, k=1, persistent=None,
+              monitor=100, **kwargs)
 
     References
     ----------
-    #TODO:WRITEME
+    Hinton, Osindero & Teh (2006)
     """
     def __init__(self, model=None):
         super(DeepBeliefNetwork, self).__init__(model)
 
-    def posterior(self, layer_id, input, top_down_input=None, k=1):
-        # get layer_ids
+    def init_complementary_prior(self, layer_id, module_name='hidden'):
+        """
+        Initialize complementary priors using transpose of weights from previous
+        layer.
+
+        Parameters
+        ----------
+        layer_id : str
+            layer id to initialize weights
+        module_name : str
+            name of module containing weights to initialize (must match module
+            name of previous layer) [defualt: 'hidden']
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        This function initializes weights to the transpose of the weights from
+        the previous layer mulitplied by an orthonormal transformation matrix
+        to project to the number of hidden units in the current layer. This
+        allows the current layer to initialize as a complementary prior over the
+        previous layer in order to learn more efficiently. See References for
+        more information.
+
+        References
+        ----------
+        Hinton, Osindero & Teh (2006)
+        """
+        # get weight, bias and transpose bias names
+        weight_name = module_name + '_weight'
+        bias_name = module_name + '_bias'
+        transpose_bias_name = module_name + '_transpose_bias'
+        # get previous and current layers
+        layer_ids = self.get_layer_ids(layer_id)[-2:]
+        prev_layer, layer = self.get_layers(layer_ids)
+        # get pervious layer weights and transpose (and flip if 4d)
+        w = getattr(prev_layer, weight_name).detach()
+        wT = w.transpose(0,1)
+        if wT.ndimension() == 4:
+            wT = wT.flip((-2,-1))
+        # create orthonormal transformation to layer_id to_ch
+        w0_shape = getattr(layer, weight_name).shape
+        to_ch = w0_shape[0]
+        from_ch = wT.shape[0]
+        u, s, v = torch.svd(torch.randn(to_ch, from_ch) * wT.std() + wT.mean())
+        # create new weights with orthonormal transformation
+        w_prior = torch.matmul(wT.flatten(1).t(), torch.matmul(v, u.t())).t()
+        w_prior = w_prior.reshape(w0_shape)
+        # init layer weights
+        layer.init_weights(pattern=weight_name, fn=lambda x: w_prior)
+        # init visible bias
+        layer.init_weights(pattern=transpose_bias_name,
+                           fn=lambda x: getattr(prev_layer, bias_name).detach())
+
+    def _get_free_energy_loss(self, layer_id):
+        def free_energy_loss(x):
+            fe = torch.mean(self.layers[layer_id].free_energy(x))
+            hidsize = torch.as_tensor(self.layers[layer_id].hidden_shape(x.shape))
+            hidsize = torch.prod(hidsize.unsqueeze(-1)[2:])
+            return torch.div(fe, hidsize)
+        return free_energy_loss
+
+    def contrastive_divergence(self, input, k=1):
+        #TODO: not technically the same as Hinton, Osindero, Teh (2006)
+        #TODO: should unlink rec/gen weights for all but top layer
+        #TODO: then update is based on s(d - p) for lower layers
+        #TODO: and normal CD for top layer
+        # get free_energy functions for each layer
         layer_ids = self.get_layer_ids()
-        # get output of n_layers-1
-        top_layer_input = self.apply(input, layer_ids[:-1])
-        # gibbs sample top layer
-        if top_down_input is not None:
-            top_down = self.layers[layer_ids[-1]].gibbs_vhv(top_layer_input,
-                                                            top_down_input, k=k)[3]
-        else:
-            top_down = self.layers[layer_ids[-1]].gibbs_vhv(top_layer_input, k=k)[3]
-        # reconstruct down to layer_id
-        post_layer_ids = self.get_layer_ids(layer_id, forward=False)[1:-1]
-        layer_top_down = self.apply(top_down, post_layer_ids, forward=False)
-        # get layer_id input
-        pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
-        layer_input = self.apply(input, pre_layer_ids)
-        # sample h given input, top_down
-        return self.layers[layer_id].sample_h_given_vt(layer_input, layer_top_down)
+        layer_ids = [None,] + layer_ids
+        fe_losses = [self._get_free_energy_loss(layer_id)
+                     for layer_id in layer_ids[1:]]
+        # get positive phase statistics
+        pos_output = OrderedDict([(layer_id, {'sample': []})
+                                  if layer_id is not None else (None, [])
+                                  for layer_id in layer_ids[:-1]])
+        # gibbs sample output layer
+        with torch.no_grad():
+            output = self.apply(input, output=pos_output, layer_ids=layer_ids)
+            # if persistent, use output from persistent pass as top-down input
+            if hasattr(self, 'persistent') and self.persistent is not None:
+                output = self.apply(self.persistent, layer_ids=layer_ids)
+            # gibbs sample
+            output = self.layers[layer_ids[-1]].gibbs_hvh(output, k=k)[-1]
+        # get negative phase statistics
+        neg_output = OrderedDict([(layer_id, {'sample': []})
+                                  for layer_id in layer_ids[1:]])
+        neg_layer_ids = layer_ids.copy()[1:]
+        neg_layer_ids.reverse()
+        with torch.no_grad():
+            reconstruct = self.apply(output, output=neg_output,
+                                     layer_ids=neg_layer_ids, forward=False)
+        # update persistent
+        if hasattr(self, 'persistent') and self.persistent is not None:
+            self.persistent = reconstruct
+        # get difference in free_energy
+        loss = torch.zeros(1, requires_grad=True)
+        for fe_loss_fn, pos, neg in zip(fe_losses, pos_output.values(),
+                                        neg_output.values()):
+            p_sample = pos.get('sample')[0] if type(pos) is dict else pos[0]
+            n_sample = neg.get('sample')[0] if type(neg) is dict else neg[0]
+            loss = loss + torch.sub(fe_loss_fn(p_sample), fe_loss_fn(n_sample))
+        return loss
 
     def train_layer(self, layer_id, n_epochs, trainloader, optimizer, k=1,
                     monitor=100, **kwargs):
         return self.train(n_epochs, trainloader, None, optimizer, monitor=monitor,
                           layer_id=layer_id, k=k, **kwargs)
 
-    def train_dbn(self):
-        #TODO: based off up-down algorigthm in Hinton, Osindero, Teh (2006)
-        raise NotImplementedError
+    def train_dbn(self, n_epochs, trainloader, optimizer, k=1, persistent=None,
+                  monitor=100, **kwargs):
+        # set persistent attribute
+        self.persistent = persistent
+        # set contrastive_divergence loss
+        cd_loss = losses.KwargsLoss(self.contrastive_divergence, n_args=1, k=k)
+        loss_fn = losses.LayerLoss(self, {None: []}, cd_loss, layer_ids=[None])
+        # train
+        return self.train(n_epochs, trainloader, loss_fn, optimizer,
+                          monitor=monitor, **kwargs)
 
-class DeepBoltzmannMachine(DeepBeliefNetwork):
+class DeepBoltzmannMachine(Model):
     """
-    #TODO:WRITEME
+    Deep Boltzmann Machine
 
     Attributes
     ----------
@@ -1094,14 +1286,20 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
 
     Methods
     -------
+    append(layer_id, layer)
+    insert(idx, layer_id, layer)
+    remove(layer_id)
+    apply(input, layer_ids=[], forward=True, output={}, output_layer=None,
+          **kwargs)
     train_layer(layer_id, n_epochs, trainloader, optimizer, k=1, monitor=100,
                 **kwargs)
         train deep boltzmann machine with contrastive divergence
-    train_dbm()
+    train_dbm(n_epochs, trainloader, optimizer, k=1, n_iter=10, persistent=None,
+              monitor=100, **kwargs)
 
     References
     ----------
-    #TODO:WRITEME
+    Salakhutdinov & Hinton (2009)
     """
     def __init__(self, model=None):
         super(DeepBoltzmannMachine, self).__init__(model)
@@ -1132,15 +1330,18 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
         return output
 
     def train_dbm(self, n_epochs, trainloader, optimizer, k=1, n_iter=10,
-                  monitor=100, **kwargs):
+                  persistent=None, monitor=100, **kwargs):
+        # set persistent
+        self.persistent = persistent
         # set loss function
-        loss_fn = losses.KwargsLoss(self.contrastive_divergence, n_args=1,
-                                    k=k, n_iter=n_iter, **kwargs)
+        cd_loss = losses.KwargsLoss(self.contrastive_divergence, n_args=1,
+                                    k=k, n_iter=n_iter)
+        loss_fn = losses.LayerLoss(self, {None: []}, cd_loss, layer_ids=[None])
         # train
         return self.train(n_epochs, trainloader, loss_fn, optimizer,
                           monitor=monitor, **kwargs)
 
-    def contrastive_divergence(self, input, k=5, n_iter=10, **kwargs):
+    def contrastive_divergence(self, input, k=5, n_iter=10):
         #TODO: update mean_field to condition on output
         # positive phase mean field
         layer_ids = self.get_layer_ids()
@@ -1153,39 +1354,36 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
         pos_energy = []
         for i, layer in enumerate(layers):
             if i == 0:
-                pos_energy_i = layer.energy(input, hids[i][1])
+                pos_energy_i = torch.mean(layer.free_energy(v)) #energy(input, hids[i][1])
             else:
                 h_n = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[0]
-                pos_energy_i = layer.energy(h_n, hids[i][1])
-            hidsize = torch.prod(torch.tensor(hids[i][1].shape[-2:]))
+                pos_energy_i = torch.mean(layer.free_energy(h_n)) #energy(h_n, hids[i][1])
+            hidsize = torch.prod(torch.as_tensor(hids[i][1].shape[-2:]))
             pos_energy.append(torch.div(pos_energy_i, hidsize))
         # negative phase for each layer
-        if hasattr(self, 'persistent'):
-            v = self.persistent
-        elif kwargs.get('persistent') is not None:
-            self.persistent = kwargs.get('persistent')
+        if hasattr(self, 'persistent') and self.persistent is not None:
             v = self.persistent
         hids = None
         with torch.no_grad():
             for _ in range(k+1):
                 even = (hids is not None)
                 v, hids = self.layer_gibbs(v, hids, sampled=True, even=even)
-        if hasattr(self, 'persistent'):
+        if hasattr(self, 'persistent') and self.persistent is not None:
             self.persistent = v
         # get negative energies
         neg_energy = []
         for i, layer in enumerate(layers):
             if i == 0:
-                neg_energy_i = layer.energy(v, hids[i][1])
+                neg_energy_i = torch.mean(layer.free_energy(v)) #energy(v, hids[i][1])
             else:
                 h_n = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[0]
-                neg_energy_i = layer.energy(h_n, hids[i][1])
-            hidsize = torch.prod(torch.tensor(hids[i][1].shape[-2:]))
+                neg_energy_i = torch.mean(layer.free_energy(h_n)) #energy(h_n, hids[i][1])
+            hidsize = torch.prod(torch.as_tensor(hids[i][1].shape[-2:]))
             neg_energy.append(torch.div(neg_energy_i, hidsize))
         # return mean difference in energies
         loss = torch.zeros(1, requires_grad=True)
         for (p, n) in zip(pos_energy, neg_energy):
-            loss = torch.add(loss, torch.sub(torch.mean(p), torch.mean(n)))
+            loss = torch.add(loss, torch.sub(p, n))
         return loss
 
     def layer_gibbs(self, input, hids=None, sampled=False, pooled=False,
@@ -1203,7 +1401,7 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
             try: # forward pass with doubled weights
                 saved_outputs = dict([(id, {'hidden': []}) for id in layer_ids])
                 self.apply(input, layer_ids, output=saved_outputs)
-                hids = [v.get(hidden)[0] for v in saved_outputs.values()]
+                hids = [v.get('hidden')[0] for v in saved_outputs.values()]
             finally:
                 self.update_modules(layer_ids[:-1], 'forward_layer', 'hidden',
                                     hid_ops)
