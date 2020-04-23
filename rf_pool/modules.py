@@ -52,8 +52,8 @@ class Module(nn.Module):
         for name, param in named_parameters:
             if name.find(pattern) >=0:
                 with torch.no_grad():
-                    param.mul_(0.)
-                    param.add_(fn(param))
+                    new_param = fn(param)
+                    param.mul_(0.).add_(new_param)
 
     def make_layer(self, layer_name, transpose=False, **kwargs):
         # init layer to nn.Sequential()
@@ -128,7 +128,8 @@ class Module(nn.Module):
     def transposed_fn(self, fn):
         # transposed conv
         if hasattr(fn, 'weight') and isinstance(fn, torch.nn.Conv2d):
-            conv_kwargs = functions.get_attributes(fn, ['stride','padding','dilation'])
+            conv_kwargs = functions.get_attributes(fn, ['stride','padding',
+                                                        'dilation'])
             transposed_fn = nn.ConvTranspose2d(fn.out_channels, fn.in_channels,
                                                fn.kernel_size, **conv_kwargs)
             transposed_fn.weight = fn.weight
@@ -657,7 +658,7 @@ class RBM(Module):
         self.make_layer('forward_layer', hidden=hidden, activation=activation,
                         pool=pool, sample=sample, dropout=dropout)
         # init weights
-        self.init_weights(pattern='weight', fn=lambda x: 0.01 * torch.randn_like(x))
+        self.init_weights(pattern='weight', fn=lambda x: 0.01*torch.randn_like(x))
         # make reconstruct layer
         self.make_layer('reconstruct_layer', transpose=True, pool=pool,
                         hidden=hidden)
@@ -674,10 +675,10 @@ class RBM(Module):
 
     def hidden_shape(self, input_shape):
         if len(input_shape) == 4:
-            v_shp = torch.tensor(input_shape[-2:]).numpy()
-            W_shp = torch.tensor(self.hidden_weight.shape[-2:]).numpy()
+            v_shp = torch.as_tensor(input_shape[-2:]).numpy()
+            W_shp = torch.as_tensor(self.hidden_weight.shape[-2:]).numpy()
             img_shape = tuple(v_shp - W_shp + 1)
-            hidden_shape = (input_shape[0], self.hidden_weight.shape[0]) + img_shape
+            hidden_shape = (input_shape[0], self.hidden_weight.shape[0])+img_shape
         else:
             hidden_shape = (input_shape[0], self.hidden_weight.shape[1])
         return hidden_shape
@@ -940,6 +941,19 @@ class RBM(Module):
         xi_flip = torch.reshape(xi_flip, v.shape)
         fe_xi_flip = self.free_energy(xi_flip)
         # return pseudo-likelihood
+        return torch.mean(n_visible * torch.log(torch.sigmoid(fe_xi_flip-fe_xi)))
+
+    def gaussian_pseudo_likelihood(self, v):
+        n_visible = np.prod(v.shape[1:])
+        # get free energy for input
+        fe_xi = self.free_energy(v)
+        # flip random bit
+        xi_flip = torch.flatten(v, 1)
+        bit_idx = torch.randint(xi_flip.shape[1], (v.shape[0],))
+        xi_idx = np.arange(v.shape[0])
+        xi_flip[xi_idx, bit_idx] = -xi_flip[xi_idx, bit_idx]
+        fe_xi_flip = self.free_energy(xi_flip.reshape(v.shape))
+        # return pseudo-likelihood
         return torch.mean(n_visible * torch.log(torch.sigmoid(fe_xi_flip - fe_xi)))
 
     def show_negative(self, v, k=1, n_images=-1, img_shape=None, figsize=(5,5),
@@ -1064,7 +1078,7 @@ class RBM(Module):
         # compute loss, pass backward through gradients
         loss = torch.sub(torch.mean(self.free_energy(input)),
                          torch.mean(self.free_energy(nv_sample)))
-        hidsize = torch.tensor(self.hidden_shape(input.shape)).unsqueeze(-1)
+        hidsize = torch.as_tensor(self.hidden_shape(input.shape)).unsqueeze(-1)
         hidsize = torch.prod(hidsize[2:])
         loss = torch.div(loss, hidsize)
         loss.backward()
@@ -1090,172 +1104,6 @@ class RBM(Module):
                 out = loss
         # reset default warning
         warnings.filterwarnings("default", message="Using a target size")
-        return out.item()
-
-class CRBM(RBM):
-    """
-    #TODO:WRITEME
-    """#TODO: Update to use apply for activation and sample functions
-    def __init__(self, top_down=None, y_activation_fn=None, y_sample_fn=None,
-                 **kwargs):
-        super(CRBM, self).__init__(**kwargs)
-        self.y_activation_fn = y_activation_fn
-        self.y_sample_fn = y_sample_fn
-        # update forward layer
-        self.update_layer('forward_layer', transpose=True, top_down=top_down)
-        # init weights
-        self.init_weights(pattern='weight', fn=lambda x: 0.01 * torch.randn_like(x))
-        # make reconstruct layer
-        self.make_layer('reconstruct_layer', top_down=top_down)
-        self.update_layer('reconstruct_layer', transpose=True,
-                          pool=kwargs.get('pool'), hidden=kwargs.get('hidden'))
-        self.update_layer('reconstruct_layer', activation=vis_activation)
-        # init biases
-        self.init_weights(pattern='bias', fn=torch.zeros_like)
-        # remove top_down_bias
-        self.reconstruct_layer.top_down.bias = None
-        # link parameters to self
-        self.link_parameters(self.forward_layer)
-        self.link_parameters(self.reconstruct_layer)
-        # set v_bias, h_bias, y_bias
-        self.v_bias = self.hidden_transpose_bias
-        self.y_bias = self.top_down_transpose_bias
-
-    def sample_h_given_vy(self, v, y):
-        # get top down input from y
-        Uy = self.apply(y, 'reconstruct_layer', ['top_down'])
-        return self.sample_h_given_vt(v, Uy)
-
-    def sample_y_given_h(self, h):
-        pre_act_y = self.apply(h, 'forward_layer', ['top_down_transpose'])
-        if self.y_activation_fn:
-            y_mean = self.y_activation_fn(pre_act_y)
-        else:
-            y_mean = pre_act_y
-        if self.y_sample_fn:
-            y_sample = self.hid_sample_fn(y_mean).sample()
-        else:
-            y_sample = y_mean
-        return pre_act_y, y_mean, y_sample
-
-    def sample_y_given_v(self, v):
-        h_sample = self.sample_h_given_v(v)[-1]
-        return self.sample_y_given_h(h_sample)
-
-    def gibbs_vhv(self, v_sample, y_sample=None, k=1):
-        for _ in range(k):
-            if y_sample is not None:
-                h_outputs = self.sample_h_given_vy(v_sample, y_sample)
-            else:
-                h_outputs = self.sample_h_given_v(v_sample)
-            h_sample = h_outputs[-1]
-            v_outputs = self.sample_v_given_h(h_sample)
-            y_outputs = self.sample_y_given_h(h_sample)
-        return h_outputs + v_outputs + y_outputs
-
-    def gibbs_hvh(self, h_sample, k=1):
-        for _ in range(k):
-            v_outputs = self.sample_v_given_h(h_sample)
-            v_sample = v_outputs[-1]
-            y_outputs = self.sample_y_given_h(h_sample)
-            y_sample = y_outputs[-1]
-            h_outputs = self.sample_h_given_vy(v_sample, y_sample)
-        return v_outputs + y_outputs + h_outputs
-
-    def energy(self, v, h, y):
-        #E(v,y,h) = −hTWv−bTv−cTh−dTy−hTUy
-        # reshape v_bias, hid_bias
-        v_dims = tuple([1 for _ in range(v.ndimension()-2)])
-        v_bias = torch.reshape(self.v_bias, (1,-1) + v_dims)
-        h_dims = tuple([1 for _ in range(h.ndimension()-2)])
-        h_bias = torch.reshape(self.hidden_bias, (1,-1) + h_dims)
-        y_dims = tuple([1 for _ in range(y.ndimension() - 2)])
-        y_bias = torch.reshape(self.y_bias, (1,-1) + y_dims)
-        # detach h from graph
-        h = h.detach()
-        # get Wv, Uy
-        Wv = self.apply(v, 'forward_layer', output_module='hidden')
-        Uy = self.apply(y, 'reconstruct_layer', ['top_down'])
-        Wv = Wv - h_bias
-        # get hWv, hUy, bv, ch, dy
-        hWv = torch.sum(torch.mul(h, Wv).flatten(1), 1)
-        hUy = torch.sum(torch.mul(h, Uy).flatten(1), 1)
-        bv = torch.sum(torch.mul(v, v_bias).flatten(1))
-        ch = torch.sum(torch.mul(h, h_bias).flatten(1), 1)
-        dy = torch.sum(torch.mul(y, y_bias).flatten(1), 1)
-        return -hWv - bv - ch - dy - hUy
-
-    def free_energy(self, v, y):
-        # reshape v_bias, hid_bias
-        v_dims = tuple([1 for _ in range(v.ndimension()-2)])
-        v_bias = torch.reshape(self.v_bias, (1,-1) + v_dims)
-        # get Wv_Uy_b
-        Wv_Uy_b = self.sample_h_given_vy(v, y)[0]
-        # get vbias, hidden terms
-        vbias_term = torch.flatten(v * v_bias, 1)
-        vbias_term = torch.sum(vbias_term, 1)
-        hidden_term = torch.sum(self.log_part_fn(Wv_Uy_b).flatten(1), 1)
-        return -hidden_term - vbias_term
-
-    def train(self, inputs, k=1, optimizer=None, monitor_fn=nn.MSELoss(),
-              **kwargs):
-        """
-        #TODO:WRITEME
-        """
-        # get input, top_down
-        input, top_down = inputs[:2]
-        if optimizer:
-            optimizer.zero_grad()
-        with torch.no_grad():
-            # positive phase
-            pre_act_ph, ph_mean, ph_sample = self.sample_h_given_vy(input, top_down)
-            # persistent
-            if self.persistent is not None:
-                ph_sample = self.persistent
-                self.hidden_weight.add_(self.persistent_weights)
-            elif kwargs.get('persistent') is not None:
-                self.persistent = kwargs.get('persistent')
-                ph_sample = self.persistent
-                self.persistent_weights = torch.zeros_like(self.hidden_weight,
-                                                           requires_grad=True)
-                self.persistent_weights = nn.Parameter(self.persistent_weights)
-                if optimizer and kwargs.get('persistent_lr'):
-                    optimizer.add_param_group({'params': self.persistent_weights,
-                                               'momentum': 0.,
-                                               'lr': kwargs.get('persistent_lr')})
-            # dropout
-            ph_sample = self.apply(ph_sample, 'forward_layer', ['dropout'])
-            # negative phase
-            [
-                pre_act_nv, nv_mean, nv_sample,
-                pre_act_ny, ny_mean, ny_sample,
-                pre_act_nh, nh_mean, nh_sample,
-            ] = self.gibbs_hvh(ph_sample, k=k)
-            # persistent
-            if self.persistent is not None:
-                self.hidden_weight.sub_(self.persistent_weights)
-        # compute loss, pass backward through gradients
-        loss = torch.sub(torch.mean(self.free_energy(input)),
-                         torch.mean(self.free_energy(nv_sample)))
-        hidsize = torch.tensor(self.hidden_shape(input.shape)).unsqueeze(-1)
-        hidsize = torch.prod(hidsize[2:])
-        loss = torch.div(loss, hidsize)
-        loss.backward()
-        # update persistent weights
-        with torch.no_grad():
-            if self.persistent is not None:
-                self.persistent = nh_sample
-                self.persistent_weights.mul_(0.95)
-                self.persistent_weights.grad = self.hidden_weight.grad
-        # update parameters
-        if optimizer:
-            optimizer.step()
-        # monitor loss
-        with torch.no_grad():
-            if monitor_loss is not None:
-                out = monitor_loss(input, nv_mean)
-            else:
-                out = loss
         return out.item()
 
 if __name__ == '__main__':
