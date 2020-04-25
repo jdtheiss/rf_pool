@@ -613,6 +613,19 @@ def confusion_matrix(feature_vectors, labels, interference_fn=cosine_similarity)
 
     return mean_matrix, std_matrix, unique_labels
 
+def proj(v, u):
+    P = torch.matmul(v, u.t()) / (torch.matmul(u, u.t()) + 1e-6)
+    return torch.matmul(P.reshape(1,-1), u.reshape(1, -1)).reshape(u.shape)
+
+def modified_gram_schmidt(V):
+    U = torch.zeros_like(V)
+    for i, v in enumerate(V):
+        U[i] = v
+        for j in range(i):
+            U[i] = U[i] - proj(U[i], U[j])
+        U[i] = U[i] / (torch.sqrt(torch.sum(torch.pow(U[i], 2))) + 1e-6)
+    return U
+
 if __name__ == '__main__':
     import doctest
     doctest.testmod()

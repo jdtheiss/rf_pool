@@ -1198,9 +1198,9 @@ class DeepBeliefNetwork(Model):
         w0_shape = getattr(layer, weight_name).shape
         to_ch = w0_shape[0]
         from_ch = wT.shape[0]
-        u, s, v = torch.svd(torch.randn(to_ch, from_ch) * wT.std() + wT.mean())
+        u = functions.modified_gram_schmidt(torch.randn(from_ch, to_ch))
         # create new weights with orthonormal transformation
-        w_prior = torch.matmul(wT.flatten(1).t(), torch.matmul(v, u.t())).t()
+        w_prior = torch.matmul(wT.flatten(1).t(), u).t()
         w_prior = w_prior.reshape(w0_shape)
         # init layer weights
         layer.init_weights(pattern=weight_name, fn=lambda x: w_prior)
