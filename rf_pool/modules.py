@@ -766,25 +766,44 @@ class RBM(Module):
         return pre_act_v, v_mean, v_sample, pre_act_h, h_mean, h_sample
 
     def energy(self, v, h):
-        #E(v,h) = −hTWv−bTv−cTh
+        """
+        Energy function for RBMs with binary hidden units and binary or
+        Gaussian visible units (assumes sigma=1 for Gaussian units)
+
+        Parameters
+        ----------
+        v : torch.Tensor
+            visible unit configuration with shape (batch,ch) or (batch,ch,h,w)
+        h : torch.Tensor
+            hidden unit configuration with shape (batch,ch) or (batch,ch,h,w)
+
+        Returns
+        -------
+        e : torch.Tensor
+            energy for given visible/hidden unit configuration
+
+        Notes
+        -----
+        Bernoulli RBM energy: `E(v, h) = -hWv - bv - ch`
+        Gaussian-Bernoulli RBM energy: `E(v, h) = -hWv/s - (v - b)**2/2s**2 - ch`
+        where `v` is visible units, `h` is hidden units, `W` is weight matrix,
+        `b` is visible unit biases, `c` is hidden unit biases, and `s` is sigma
+        for Gaussian visible units (assumed to be 1 here).
+        """
         # reshape v_bias, hid_bias
         v_dims = tuple([1 for _ in range(v.ndimension()-2)])
         v_bias = torch.reshape(self.v_bias, (1,-1) + v_dims)
-        # h_dims = tuple([1 for _ in range(h.ndimension()-2)])
-        # h_bias = torch.reshape(self.h_bias, (1,-1) + h_dims)
         # detach h from graph
         h = h.detach()
-        # get Wv
+        # get Wv (include h_bias)
         Wv = self.apply(v, 'forward_layer', output_module='hidden')
-        # Wv = Wv - h_bias
-        # get hWv, bv, ch
+        # get hWv, bv
         hWv = torch.sum(torch.mul(h, Wv).flatten(1), 1)
         if torch.all(torch.ge(v, 0.)):
             bv = torch.sum(torch.mul(v, v_bias).flatten(1), 1)
         else:
             bv = torch.sum((torch.pow(v - v_bias, 2) / 2.).flatten(1), 1)
-        # ch = torch.sum(torch.mul(h, h_bias).flatten(1), 1)
-        return -hWv - bv #- ch
+        return -hWv - bv
 
     def free_energy(self, v):
         # reshape v_bias
