@@ -400,10 +400,10 @@ class Branch(Module):
     branch_shapes : list, optional
         list of output shapes to which each branch output should be reshaped
         [default: None, no reshaping of branch outputs]
-    cat_output : boolean, optional
-        True/False of whether to concatenate branch outputs (along channel dim)
-        Note branch outputs must match shape on all dims other than channel.
-        [default: False, does not concatenate branches]
+    cat_dim : int, optional
+        dimension to concatenate branch outputs along
+        Note branch outputs must match shape on all dims other than `cat_dim`.
+        [default: None, does not concatenate branches]
     output_names : list, optional
         list of output names to associate each branch output into a dictionary
         Note output from forward pass will be dictionary like
@@ -420,14 +420,16 @@ class Branch(Module):
     None
     """
     def __init__(self, branches, branch_names=None, branch_shapes=None,
-                 cat_output=False, output_names=None, input_shape=None):
+                 cat_dim=None, output_names=None, input_shape=None):
         super(Branch, self).__init__(input_shape)
         self.branches = branches
+        self.n_branches = len(branches)
         if branch_names is not None:
             assert len(branch_names) == len(branches)
         self.branch_names = branch_names
         self.branch_shapes = branch_shapes
-        self.cat_output = cat_output
+        self.cat_dim = cat_dim
+        self.n_cat = [None,] * self.n_branches
         self.output_names = output_names
         for i, branch in enumerate(self.branches):
             if self.branch_names is not None:
@@ -441,11 +443,16 @@ class Branch(Module):
         return [output.shape for output in outputs]
 
     def forward(self, input, module_names=[], output={}, **kwargs):
-        if self.input_shape:
-            self.reconstruct_shape = input.shape
-            input = torch.reshape(input, self.input_shape)
+        # if not list, copy n_branches times
+        if isinstance(input, torch.Tensor):
+            input = [input] * self.n_branches
+        # for each branch, pass input
         outputs = []
+        self.reconstruct_shape = []
         for i, (name, branch) in enumerate(self.forward_layer.named_children()):
+            if self.input_shape:
+                self.reconstruct_shape.append(input[i].shape)
+                input[i] = torch.reshape(input[i], self.input_shape)
             if len(module_names) > 0 and name not in module_names:
                 continue
             # get module-specific kwargs
@@ -453,38 +460,48 @@ class Branch(Module):
             if mod_kwargs is None:
                 mod_kwargs = {}
             # apply module
-            outputs.append(branch.forward(input, **mod_kwargs))
+            outputs.append(branch.forward(input[i], **mod_kwargs))
             if self.branch_shapes:
                 outputs[-1] = torch.reshape(outputs[-1], self.branch_shapes[i])
             # set to output
             if type(output.get(name)) is list:
                 output.get(name).append(outputs[-1])
-        if self.cat_output:
-            outputs = torch.cat(outputs, 1)
+        # concatenate along cat_dim, record n_cat per output
+        if self.cat_dim is not None:
+            self.n_cat = [output.shape[self.cat_dim] for output in outputs]
+            outputs = torch.cat(outputs, self.cat_dim)
         if self.output_names is not None:
             outputs = OrderedDict([(k,v)
                                    for k, v in zip(self.output_names, outputs)])
         return outputs
 
     def reconstruct(self, input, module_names=[], output={}, **kwargs):
+        # reconstruct by passing input through each branch
         outputs = []
-        for name, branch in self.forward_layer.named_children():
+        start_slice = 0
+        for i, (name, branch) in enumerate(self.forward_layer.named_children()):
             if len(module_names) > 0 and name not in module_names:
                 continue
-            #TODO: slice input channels for each branch
+            # slice cat_dim using n_cat
+            if self.cat_dim is not None:
+                assert self.n_cat[i] is not None
+                end_slice = start_slice + self.n_cat[i]
+                input_i = input.transpose(0, self.cat_dim)[start_slice:end_slice]
+                input_i = input_i.transpose(0, self.cat_dim)
+                start_slice = end_slice
+            else:
+                input_i = input
             # get module-specific kwargs
             mod_kwargs = kwargs.get(name)
             if mod_kwargs is None:
                 mod_kwargs = {}
             # apply module
-            outputs.append(branch.reconstruct(input, **mod_kwargs))
+            outputs.append(branch.reconstruct(input_i, **mod_kwargs))
             if self.reconstruct_shape:
-                outputs[-1] = torch.reshape(outputs[-1], self.reconstruct_shape)
+                outputs[-1] = torch.reshape(outputs[-1], self.reconstruct_shape[i])
             # set to output
             if type(output.get(name)) is list:
                 output.get(name).append(outputs[-1])
-        if self.cat_output:
-            outputs = torch.cat(outputs, 1)
         return outputs
 
 class Control(Module):
@@ -673,6 +690,25 @@ class RBM(Module):
         self.v_bias = self.hidden_transpose_bias
         self.h_bias = self.hidden_bias
 
+    def untie_weights(self, pattern=''):
+        """
+        Untie `reconstruct_layer` weights from `forward_layer` weights
+
+        Parameters
+        ----------
+        pattern : str
+            pattern of weights in `reconstruct_layer` to be untied
+            [default: '', all weights in `reconstruct_layer` untied]
+
+        Returns
+        -------
+        None
+        """
+        for name, param in self.reconstruct_layer.named_parameters():
+            if name.find(pattern) >=0:
+                self.register_parameter(name.replace('.','_'),
+                                        torch.nn.Parameter(param.clone()))
+
     def hidden_shape(self, input_shape):
         if len(input_shape) == 4:
             v_shp = torch.as_tensor(input_shape[-2:]).numpy()
@@ -734,18 +770,21 @@ class RBM(Module):
         # reshape v_bias, hid_bias
         v_dims = tuple([1 for _ in range(v.ndimension()-2)])
         v_bias = torch.reshape(self.v_bias, (1,-1) + v_dims)
-        h_dims = tuple([1 for _ in range(h.ndimension()-2)])
-        h_bias = torch.reshape(self.h_bias, (1,-1) + h_dims)
+        # h_dims = tuple([1 for _ in range(h.ndimension()-2)])
+        # h_bias = torch.reshape(self.h_bias, (1,-1) + h_dims)
         # detach h from graph
         h = h.detach()
         # get Wv
         Wv = self.apply(v, 'forward_layer', output_module='hidden')
-        Wv = Wv - h_bias
+        # Wv = Wv - h_bias
         # get hWv, bv, ch
         hWv = torch.sum(torch.mul(h, Wv).flatten(1), 1)
-        bv = torch.sum(torch.mul(v, v_bias).flatten(1), 1)
-        ch = torch.sum(torch.mul(h, h_bias).flatten(1), 1)
-        return -hWv - bv - ch
+        if torch.all(torch.ge(v, 0.)):
+            bv = torch.sum(torch.mul(v, v_bias).flatten(1), 1)
+        else:
+            bv = torch.sum((torch.pow(v - v_bias, 2) / 2.).flatten(1), 1)
+        # ch = torch.sum(torch.mul(h, h_bias).flatten(1), 1)
+        return -hWv - bv #- ch
 
     def free_energy(self, v):
         # reshape v_bias
