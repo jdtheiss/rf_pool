@@ -516,7 +516,7 @@ class Model(nn.Module):
             [default: {}, function not called]
         label_params : dict
             dictionary with (label, params) pairs of parameters that should be
-            have `requires_grad=False` when the given label is observed in the
+            set to `requires_grad=True` when the given label is observed in the
             dataloader. See `set_grad_by_label`.
             [default: {}, function not called]
 
@@ -634,21 +634,22 @@ class Model(nn.Module):
                 # set label_parameters
                 if options.get('label_params'):
                     self.set_grad_by_label([label], label_params, False)
-                # monitor loss
-                with torch.no_grad():
-                    if options.get('monitor_loss'):
-                        running_loss += monitor_loss(layer_input)
-                    else:
-                        running_loss += loss
+                # add loss to running loss
+                running_loss += loss
                 i += 1
                 if i % monitor == 0:
                     # display loss
                     clear_output(wait=True)
                     display('learning rate: %g' % optimizer.param_groups[0]['lr'])
-                    display('[%g%%] loss: %.3f' % (i % n_batches/n_batches*100.,
-                                                   running_loss / monitor))
+                    display('%d [%g%%] loss: %.3f' % (epoch,
+                                                      i % n_batches/n_batches*100.,
+                                                      running_loss / monitor))
                     # append loss and show history
-                    loss_history.append(running_loss / monitor)
+                    with torch.no_grad():
+                        if options.get('monitor_loss'):
+                            loss_history.append(monitor_loss(layer_input))
+                        else:
+                            loss_history.append(running_loss / monitor)
                     plt.plot(loss_history)
                     plt.show()
                     running_loss = 0.
@@ -748,6 +749,22 @@ class Model(nn.Module):
         return seed
 
     def set_grad_by_label(self, labels, label_params, requires_grad=True):
+        """
+        Set `requires_grad` for parameters in `label_params.get(label)`
+
+        Parameters
+        ----------
+        labels : list or torch.Tensor
+            labels to set `requires_grad`
+        label_params : dict
+            dictionary with (label, parameters) pairs to set `requires_grad`
+        requires_grad : boolean
+            True/False to set `requires_grad` for given parameters
+
+        Returns
+        -------
+        None
+        """
         # set parameter gradients based on label
         for label in labels:
             if label_params.get(label) is not None:
@@ -1181,7 +1198,7 @@ class DeepBeliefNetwork(Model):
         References
         ----------
         Hinton, Osindero & Teh (2006)
-        """
+        """#TODO: update to allow for different kernel size
         # get weight, bias and transpose bias names
         weight_name = module_name + '_weight'
         bias_name = module_name + '_bias'
@@ -1258,8 +1275,29 @@ class DeepBeliefNetwork(Model):
             loss = loss + torch.sub(fe_loss_fn(p_sample), fe_loss_fn(n_sample))
         return loss
 
+    def untie_weights(self, pattern=''):
+        """
+        Untie `reconstruct_layer` weights from `forward_layer` weights
+        for learning directed graphical model
+
+        Parameters
+        ----------
+        pattern : str
+            pattern of weights in `reconstruct_layer` to be untied
+            [default: '', all weights in `reconstruct_layer` untied]
+
+        Returns
+        -------
+        None
+        """
+        layer_ids = self.get_layer_ids()
+        for layer in self.get_layers(layer_ids):
+            if hasattr(layer, 'untie_weights'):
+                layer.untie_weights(pattern=pattern)
+
     def train_layer(self, layer_id, n_epochs, trainloader, optimizer, k=1,
                     monitor=100, **kwargs):
+        #TODO: implement BEAM training (-KL based on NN of data/fantasy particles)
         return self.train(n_epochs, trainloader, None, optimizer, monitor=monitor,
                           layer_id=layer_id, k=k, **kwargs)
 
@@ -1341,7 +1379,7 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
         return self.train(n_epochs, trainloader, loss_fn, optimizer,
                           monitor=monitor, **kwargs)
 
-    def contrastive_divergence(self, input, k=5, n_iter=10):
+    def contrastive_divergence(self, input, k=1, n_iter=10):
         #TODO: update mean_field to condition on output
         # positive phase mean field
         layer_ids = self.get_layer_ids()
@@ -1354,10 +1392,10 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
         pos_energy = []
         for i, layer in enumerate(layers):
             if i == 0:
-                pos_energy_i = torch.mean(layer.free_energy(v)) #energy(input, hids[i][1])
+                pos_energy_i = torch.mean(layer.energy(input, hids[i][1]))
             else:
                 h_n = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[0]
-                pos_energy_i = torch.mean(layer.free_energy(h_n)) #energy(h_n, hids[i][1])
+                pos_energy_i = torch.mean(layer.energy(h_n, hids[i][1]))
             hidsize = torch.prod(torch.as_tensor(hids[i][1].shape[-2:]))
             pos_energy.append(torch.div(pos_energy_i, hidsize))
         # negative phase for each layer
@@ -1374,10 +1412,10 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
         neg_energy = []
         for i, layer in enumerate(layers):
             if i == 0:
-                neg_energy_i = torch.mean(layer.free_energy(v)) #energy(v, hids[i][1])
+                neg_energy_i = torch.mean(layer.energy(v, hids[i][1]))
             else:
                 h_n = layers[i-1].sample(hids[i-1][0], 'forward_layer', True)[0]
-                neg_energy_i = torch.mean(layer.free_energy(h_n)) #energy(h_n, hids[i][1])
+                neg_energy_i = torch.mean(layer.energy(h_n, hids[i][1]))
             hidsize = torch.prod(torch.as_tensor(hids[i][1].shape[-2:]))
             neg_energy.append(torch.div(neg_energy_i, hidsize))
         # return mean difference in energies
