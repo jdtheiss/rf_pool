@@ -1108,8 +1108,6 @@ class RBM(Module):
         if optimizer:
             optimizer.zero_grad()
         with torch.no_grad():
-            # positive phase
-            pre_act_ph, ph_mean, ph_sample = self.sample_h_given_v(input)
             # persistent
             if self.persistent is not None:
                 ph_sample = self.sample_h_given_v(self.persistent)[2]
@@ -1124,12 +1122,13 @@ class RBM(Module):
                     optimizer.add_param_group({'params': self.persistent_weights,
                                                'momentum': 0.,
                                                'lr': kwargs.get('persistent_lr')})
+            else:
+                # positive phase without persistent
+                ph_sample = self.sample_h_given_v(input)[2]
             # dropout
             ph_sample = self.apply(ph_sample, 'forward_layer', ['dropout'])
             # negative phase
-            [
-                pre_act_nv, nv_mean, nv_sample, pre_act_nh, nh_mean, nh_sample
-            ] = self.gibbs_hvh(ph_sample, k=k)
+            nv_mean, nv_sample = self.gibbs_hvh(ph_sample, k=k)[1:3]
             # persistent
             if self.persistent is not None:
                 self.hidden_weight.sub_(self.persistent_weights)
