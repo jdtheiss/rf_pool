@@ -638,18 +638,19 @@ class Model(nn.Module):
                 running_loss += loss
                 i += 1
                 if i % monitor == 0:
-                    # display loss
-                    clear_output(wait=True)
-                    display('learning rate: %g' % optimizer.param_groups[0]['lr'])
-                    display('%d [%g%%] loss: %.3f' % (epoch,
-                                                      i % n_batches/n_batches*100.,
-                                                      running_loss / monitor))
-                    # append loss and show history
+                    # monitor loss
                     with torch.no_grad():
                         if options.get('monitor_loss'):
                             loss_history.append(monitor_loss(layer_input))
                         else:
                             loss_history.append(running_loss / monitor)
+                    # display loss
+                    clear_output(wait=True)
+                    display('learning rate: %g' % optimizer.param_groups[0]['lr'])
+                    display('%d [%g%%] loss: %.3f' % (epoch,
+                                                      i % n_batches/n_batches*100.,
+                                                      loss_history[-1]))
+                    # show loss history
                     plt.plot(loss_history)
                     plt.show()
                     running_loss = 0.
