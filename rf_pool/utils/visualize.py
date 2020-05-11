@@ -110,6 +110,187 @@ def make_gif(images, n_frames=1, filename=None, **kwargs):
             plt.imshow(image, **kwargs)
             plt.show()
 
+def show_lattice(model, layer_id, module_name='pool', current=True, input=None,
+                 figsize=(5,5), cmap=None):
+    """
+    Show pooling lattice of given layer (requires `rf_pool.pool` module)
+
+    Parameters
+    ----------
+    model : rf_pool.models
+        model containing pooling module
+    layer_id : str
+        name of layer containing pooling module
+    module_name : str
+        name of pooling layer module [default: 'pool']
+    current : boolean
+        True/False display current lattice (e.g., after attention applied etc.)
+        [default: True]
+    input : torch.Tensor
+        input image to show with pooling lattice [default: None]
+    figsize : tuple
+        size of matplotlib figure to show [default: (5, 5)]
+    cmap : matplotlib.pyplot.cm
+        colormap used for showing images [default: None]
+
+    Returns
+    -------
+    fig : matplotlib.pyplot.Figure
+        figure containing images
+
+    See Also
+    --------
+    rf_pool.pool
+    """
+    # get rf layer
+    pool = model.layers[layer_id].get_modules('forward_layer', [module_name])[0]
+    assert hasattr(pool[0], 'rfs') and pool[0].rfs is not None
+
+    # show lattice
+    with torch.no_grad():
+        return pool.show_lattice(current, input, figsize, cmap)
+
+def show_weights(model, layer_id, field='hidden_weight', img_shape=None,
+                 figsize=(5, 5), cmap=None):
+    """
+    Show weights of given layer (as projection to image space if applicable)
+
+    Parameters
+    ----------
+    model : rf_pool.models
+        model containing weights to be shown
+    layer_id : str
+        layer id containing weights to be shown
+    field : str
+        name of layer weights (i.e. `getattr(model.layers[layer_id], field)`)
+        [default: 'hidden_weight']
+    img_shape : tuple or None
+        image shape to reshape weights for visualization [default: None]
+    figsize : tuple
+        size of matplotlib figure to show [default: (5, 5)]
+    cmap : matplotlib.pyplot.cm
+        colormap used for showing images [default: None]
+
+    Returns
+    -------
+    fig : matplotlib.pyplot.Figure
+        figure containing images
+
+    See Also
+    --------
+    rf_pool.utils.visualize.show_images
+
+    Notes
+    -----
+    If layers preceding `layer_id` have `reconstruct_layer` modules, the
+    weights will be passed through each preceding layer to obtain a
+    projection in the image space (e.g., for generative models).
+    """
+    # get field for weights
+    layer_id = str(layer_id)
+    if not hasattr(model.layers[layer_id], field):
+        raise Exception('attribute ' + field + ' not found')
+    with torch.no_grad():
+        w = getattr(model.layers[layer_id], field).detach()
+        # get weights reconstructed down if not first layer
+        pre_layer_ids = model.get_layer_ids(layer_id)[:-1]
+        pre_layer_ids.reverse()
+        if len(pre_layer_ids) > 0:
+            w = model.apply(w, pre_layer_ids, forward=False)
+    return show_images(w, img_shape=img_shape, figsize=figsize, cmap=cmap)
+
+def show_negative(model, layer_id, input, n_images=-1, k=1, persistent=True,
+                  img_shape=None, figsize=(5,5), cmap=None):
+    """
+    Show reconstruction of input after passed to layer_id
+
+    Parameters
+    ----------
+    model : rf_pool.models
+        model containing pooling module
+    layer_id : str
+        layer to reconstruct from
+    input : torch.Tensor
+        input to reconstruct
+    n_images : int
+        number of images to display [default: -1, all images]
+    k : int
+        number of gibbs sampling steps (if applicable) [default: 1]
+    persistent : boolean
+        True/False use persistent attribute of layer for reconstruction
+        (if applicable) [default: True]
+    img_shape : tuple or None
+        shape of image for reconstruction [default: None]
+    figsize : tuple
+        figure size for showing images [default: (5,5)]
+    cmap : matplotlib.pyplot.cm
+        colormap used for showing images [default: None]
+
+    Returns
+    -------
+    fig : matplotlib.pyplot.Figure
+        figure containing images
+
+    See Also
+    --------
+    DeepBeliefNetwork
+    DeepBoltzmannMachine
+
+    Notes
+    -----
+    This function requires `reconstruct_layer` to contain the modules needed
+    to reconstruct from the given layer, which is created automatically for
+    DeepBeliefNetwork/DeepBoltzmannMachine models.
+    """
+    layer_id = str(layer_id)
+    pre_layer_ids = model.get_layer_ids(layer_id)[:-1]
+    # get persistent if hasattr
+    if hasattr(model, 'persistent') and model.persistent is not None:
+        with torch.no_grad():
+            neg = model.apply(model.persistent.clone(), pre_layer_ids)
+    elif hasattr(model.layers[layer_id], 'persistent'):
+        neg = model.layers[layer_id].persistent
+        neg = neg.clone() if neg is not None else None
+    else:
+        neg = None
+    # pass forward, then reconstruct down
+    with torch.no_grad():
+        if neg is None or not persistent:
+            if len(pre_layer_ids) > 0:
+                neg = model.apply(input, pre_layer_ids)
+            else:
+                neg = input.clone()
+            if hasattr(model.layers[layer_id], 'gibbs_vhv'):
+                neg = model.layers[layer_id].gibbs_vhv(neg, k=k)[-1]
+            else:
+                neg = model.layers[layer_id].forward(neg)
+                neg = model.layers[layer_id].reconstruct(neg)
+        if len(pre_layer_ids) > 0:
+            pre_layer_ids.reverse()
+            neg = model.apply(neg, pre_layer_ids, forward=False)
+    # reshape, permute for plotting
+    if img_shape:
+        input = torch.reshape(input, (-1,1) + img_shape)
+        neg = torch.reshape(neg, (-1,1) + img_shape)
+    # check that negative has <= 3 channels
+    assert neg.shape[1] <= 3, ('negative image must have less than 4 channels')
+    input = torch.squeeze(input.permute(0,2,3,1), -1).numpy()
+    neg = torch.squeeze(neg.permute(0,2,3,1), -1).numpy()
+    input = functions.normalize_range(input, dims=(1,2))
+    neg = functions.normalize_range(neg, dims=(1,2))
+    # plot negatives
+    if n_images == -1:
+        n_images = neg.shape[0]
+    fig, ax = plt.subplots(n_images, 2, figsize=figsize)
+    ax = np.reshape(ax, (n_images, 2))
+    for r in range(n_images):
+        ax[r,0].axis('off')
+        ax[r,1].axis('off')
+        ax[r,0].imshow(input[np.minimum(r, input.shape[0]-1)], cmap=cmap)
+        ax[r,1].imshow(neg[r], cmap=cmap)
+    plt.show()
+    return fig
+
 def show_images(*args, img_shape=None, figsize=(5, 5), **kwargs):
     """
     Show images contained in tensor
@@ -244,7 +425,7 @@ def visualize_features(model, layer_id, module_name, feature_index,
     if not isinstance(loss_fn, losses.Loss):
         loss_fn = losses.FeatureLoss(model, {layer_id: {module_name: []}},
                                      feature_index, loss_fn,
-                                     output_layer=layer_id, 
+                                     output_layer=layer_id,
                                      **{layer_id: {'output_module': module_name}})
     # set optimizer
     optim = optim_fn([seed], lr=lr, **optim_kwargs)
