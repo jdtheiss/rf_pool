@@ -363,7 +363,8 @@ def kwarg_fn(modules=[list, OrderedDict, dict, __builtins__, np, torch], x=None,
 
     Returns
     -------
-    x : output from applied function calls
+    x : output from applied function calls. if x is None (default), output is a
+        dictionary of (fn, output) pairs
 
     Example
     -------
@@ -373,6 +374,10 @@ def kwarg_fn(modules=[list, OrderedDict, dict, __builtins__, np, torch], x=None,
     >>> print(y)
     20
     """
+    # if no input, output dict of outputs
+    no_input = (x is None)
+    if no_input:
+        x = {}
     # for each kwarg item, get/apply function
     for key, value in kwargs.items():
         # get function
@@ -381,7 +386,6 @@ def kwarg_fn(modules=[list, OrderedDict, dict, __builtins__, np, torch], x=None,
             if hasattr(module, key):
                 fn = getattr(module, key)
                 break
-        no_input = (x is None)
         if fn is None and hasattr(x, key):
             fn = getattr(x, key)
             no_input = True
@@ -397,7 +401,9 @@ def kwarg_fn(modules=[list, OrderedDict, dict, __builtins__, np, torch], x=None,
             output = fn(**value)
         elif (type(value) is dict or type(value) is OrderedDict):
             output = fn(x, **value)
-        if output is not None and x is not None:
+        if no_input:
+            x.update({key: output})
+        else:
             x = output
         if display_output and not isinstance(output, (plt.Figure, plt.Axes)):
             display(output)
