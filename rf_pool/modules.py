@@ -1046,7 +1046,7 @@ class RBM(Module):
         plt.show()
         return fig
 
-    def train(self, input, k=1, optimizer=None, monitor_loss=nn.MSELoss(),
+    def train(self, input, k=1, optimizer=None, monitor_loss=None,
               **kwargs):
         """
         Train RBM with given optimizer and k Gibbs sampling steps
@@ -1065,7 +1065,7 @@ class RBM(Module):
             update parameters), called as `monitor_loss(input, nv_mean)` where
             nv_mean is the probability of a visible unit being turned on during
             reconstruction after Gibbs sampling in the negative phase.
-            [default: torch.nn.MSELoss()]
+            [default: None, difference in free energy of positive/negative phases]
 
         Optional kwargs
         persistent : torch.Tensor
