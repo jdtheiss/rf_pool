@@ -31,7 +31,7 @@ def link_project(*args, dest=path_to_exp, overwrite=False):
         else:
             dest_i = dest
         if overwrite and p.exists(dest_i):
-            os.remove(dest_i)
+            os.remove(p.abspath(dest_i))
         os.symlink(p.abspath(arg), dest_i)
 link_project.__doc__ = link_project.__doc__ % (path_to_exp)
 
@@ -65,6 +65,6 @@ def link_file(*args, file=p.join(path_to_exp,'context.py'), overwrite=False):
         if p.isdir(arg):
             arg = p.join(arg, f)
         if overwrite and p.exists(arg):
-            os.remove(arg)
+            os.remove(p.abspath(arg))
         os.symlink(p.abspath(file), arg)
 link_file.__doc__ = link_file.__doc__ % (p.join(path_to_exp,'context.py'))
