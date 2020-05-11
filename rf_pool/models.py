@@ -487,6 +487,10 @@ class Model(nn.Module):
             [default: 100]
 
         Optional kwargs
+        tensorboard : torch.utils.tensorboard.SummaryWriter
+            SummaryWriter to monitor loss and figures plotted.
+            See `torch.utils.tensorboard.SummaryWriter` for more information.
+            [default: None]
         layer_id : str
             id of layer to train (especially for training RBMs layer-wise)
             [default: None, all layers trained]
@@ -508,12 +512,15 @@ class Model(nn.Module):
             [default: {}, loss_fn used for monitoring loss]
         scheduler : torch.optim.lr_scheduler
             scheduler used to periodically update learning rate
+        show_weights : dict
+            kwargs passed to `visualize.show_weights` function during monitoring
+            step. [default: {}, function not called]
         show_lattice : dict
-            kwargs passed to `show_lattice` function during monitoring step
-            [default: {}, function not called]
+            kwargs passed to `visualize.show_lattice` function during monitoring
+            step. [default: {}, function not called]
         show_negative : dict
-            kwargs passed to `show_negative` function during monitoring step
-            [default: {}, function not called]
+            kwargs passed to `visualize.show_negative` function during
+            monitoring step. [default: {}, function not called]
         label_params : dict
             dictionary with (label, params) pairs of parameters that should be
             set to `requires_grad=True` when the given label is observed in the
@@ -532,14 +539,14 @@ class Model(nn.Module):
         equal to 1.
         """
         # get layer_id (layer-wise training) from kwargs
-        options = functions.pop_attributes(kwargs, ['layer_id'], default=None)
+        options = functions.pop_attributes(kwargs, ['tensorboard','layer_id'],
+                                           default=None)
         options.update(functions.pop_attributes(kwargs, ['retain_graph'],
                                                 default=False))
         # get options from kwargs
         options.update(functions.pop_attributes(kwargs,
                                                 ['add_loss','sparse_loss',
                                                  'scheduler','label_params',
-                                                 'show_negative','show_lattice',
                                                  'monitor_loss'],
                                                 default={}))
         # added loss
@@ -654,20 +661,30 @@ class Model(nn.Module):
                     plt.plot(loss_history)
                     plt.show()
                     running_loss = 0.
+                    # show weights
+                    if kwargs.get('show_weights'):
+                        kwargs.get('show_weights').update({'model': self})
                     # show negative
-                    if options.get('show_negative'):
-                        self.show_negative(inputs[0],
-                                           **options.get('show_negative'))
+                    if kwargs.get('show_negative'):
+                        kwargs.get('show_negative').update({'model': self,
+                                                            'input': inputs[0]})
                     # show lattice
-                    if options.get('show_lattice'):
-                        if 'x' not in options.get('show_lattice'):
-                            self.show_lattice(x=inputs[0],
-                                              **options.get('show_lattice'))
-                        else:
-                            self.show_lattice(**options.get('show_lattice'))
+                    if kwargs.get('show_lattice'):
+                        kwargs.get('show_lattice').update({'model': self,
+                                                           'input': inputs[0]})
                     # call other monitoring functions
-                    functions.kwarg_fn([IPython.display, self, visualize],
-                                        None, **kwargs)
+                    outputs = functions.kwarg_fn([IPython.display, self,
+                                                  visualize,
+                                                  options.get('tensorboard')],
+                                                  None, **kwargs)
+                    # TensorBoard
+                    if options.get('tensorboard'):
+                        options.get('tensorboard').add_scalar('loss',
+                                                              loss_history[-1],
+                                                              i)
+                        for k, v in outputs.items():
+                            if isinstance(v, plt.Figure):
+                                options.get('tensorboard').add_figure(k, v, i)
         return loss_history
 
     def optimize_texture(self, n_steps, seed, loss_fn, optimizer, input=[],
@@ -775,163 +792,6 @@ class Model(nn.Module):
                 else:
                     self.set_requires_grad(label_params.get(label),
                                            requires_grad=requires_grad)
-
-    def show_lattice(self, current=True, x=None, figsize=(5,5), cmap=None):
-        # get rf_layers
-        rf_layers = []
-        for layer_id, layer in self.layers.named_children():
-            pool = layer.get_modules('forward_layer', ['pool'])
-            if len(pool) == 1 and hasattr(pool[0], 'rfs') and \
-               pool[0].rfs is not None:
-                rf_layers.append(pool[0])
-        n_lattices =  len(rf_layers)
-        if n_lattices == 0:
-            raise Exception('No rf_pool layers found.')
-
-        # show lattices
-        with torch.no_grad():
-            # get lattices
-            lattices = []
-            for pool in rf_layers:
-                pool.show_lattice(current, x, figsize, cmap)
-
-    def show_weights(self, layer_id, field='hidden_weight', img_shape=None,
-                     figsize=(5, 5), cmap=None):
-        """
-        Show weights of given layer (as projection to image space if applicable)
-
-        Parameters
-        ----------
-        layer_id : str
-            layer id containing weights to be shown
-        field : str
-            name of layer weights (i.e. `getattr(self.layers[layer_id], field)`)
-            [default: 'hidden_weight']
-        img_shape : tuple or None
-            image shape to reshape weights for visualization [default: None]
-        figsize : tuple
-            size of matplotlib figure to show [default: (5, 5)]
-        cmap : matplotlib.pyplot.cm
-            colormap used for showing images [default: None]
-
-        Returns
-        -------
-        fig : matplotlib.pyplot.Figure
-            figure containing images
-
-        See Also
-        --------
-        rf_pool.utils.visualize.show_images
-
-        Notes
-        -----
-        If layers preceding `layer_id` have `reconstruct_layer` modules, the
-        weights will be passed through each preceding layer to obtain a
-        projection in the image space (e.g., for generative models).
-        """
-        # get field for weights
-        layer_id = str(layer_id)
-        if not hasattr(self.layers[layer_id], field):
-            raise Exception('attribute ' + field + ' not found')
-        with torch.no_grad():
-            w = getattr(self.layers[layer_id], field).detach()
-            # get weights reconstructed down if not first layer
-            pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
-            pre_layer_ids.reverse()
-            if len(pre_layer_ids) > 0:
-                w = self.apply(w, pre_layer_ids, forward=False)
-        return visualize.show_images(w, img_shape=img_shape, figsize=figsize,
-                                     cmap=cmap)
-
-    def show_negative(self, input, layer_id, n_images=-1, k=1, persistent=True,
-                      img_shape=None, figsize=(5,5), cmap=None):
-        """
-        Show reconstruction of input after passed to layer_id
-
-        Parameters
-        ----------
-        input : torch.Tensor
-            input to reconstruct
-        layer_id : str
-            layer to reconstruct from
-        n_images : int
-            number of images to display [default: -1, all images]
-        k : int
-            number of gibbs sampling steps (if applicable) [default: 1]
-        persistent : boolean
-            True/False use persistent attribute of layer for reconstruction
-            (if applicable) [default: True]
-        img_shape : tuple or None
-            shape of image for reconstruction [default: None]
-        figsize : tuple
-            figure size for showing images [default: (5,5)]
-        cmap : matplotlib.pyplot.cm
-            colormap used for showing images [default: None]
-
-        Returns
-        -------
-        fig : matplotlib.pyplot.Figure
-            figure containing images
-
-        See Also
-        --------
-        DeepBeliefNetwork
-        DeepBoltzmannMachine
-
-        Notes
-        -----
-        This function requires `reconstruct_layer` to contain the modules needed
-        to reconstruct from the given layer, which is created automatically for
-        DeepBeliefNetwork/DeepBoltzmannMachine models.
-        """
-        layer_id = str(layer_id)
-        pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
-        # get persistent if hasattr
-        if hasattr(self, 'persistent') and self.persistent is not None:
-            with torch.no_grad():
-                neg = self.apply(self.persistent.clone(), pre_layer_ids)
-        elif hasattr(self.layers[layer_id], 'persistent'):
-            neg = self.layers[layer_id].persistent
-            neg = neg.clone() if neg is not None else None
-        else:
-            neg = None
-        # pass forward, then reconstruct down
-        with torch.no_grad():
-            if neg is None or not persistent:
-                if len(pre_layer_ids) > 0:
-                    neg = self.apply(input, pre_layer_ids)
-                else:
-                    neg = input.clone()
-                if hasattr(self.layers[layer_id], 'gibbs_vhv'):
-                    neg = self.layers[layer_id].gibbs_vhv(neg, k=k)[-1]
-                else:
-                    neg = self.layers[layer_id].forward(neg)
-                    neg = self.layers[layer_id].reconstruct(neg)
-            if len(pre_layer_ids) > 0:
-                pre_layer_ids.reverse()
-                neg = self.apply(neg, pre_layer_ids, forward=False)
-        # reshape, permute for plotting
-        if img_shape:
-            input = torch.reshape(input, (-1,1) + img_shape)
-            neg = torch.reshape(neg, (-1,1) + img_shape)
-        # check that negative has <= 3 channels
-        assert neg.shape[1] <= 3, ('negative image must have less than 4 channels')
-        input = torch.squeeze(input.permute(0,2,3,1), -1).numpy()
-        neg = torch.squeeze(neg.permute(0,2,3,1), -1).numpy()
-        input = functions.normalize_range(input, dims=(1,2))
-        neg = functions.normalize_range(neg, dims=(1,2))
-        # plot negatives
-        if n_images == -1:
-            n_images = neg.shape[0]
-        fig, ax = plt.subplots(n_images, 2, figsize=figsize)
-        ax = np.reshape(ax, (n_images, 2))
-        for r in range(n_images):
-            ax[r,0].axis('off')
-            ax[r,1].axis('off')
-            ax[r,0].imshow(input[np.minimum(r, input.shape[0]-1)], cmap=cmap)
-            ax[r,1].imshow(neg[r], cmap=cmap)
-        plt.show()
-        return fig
 
     def sparseness(self, input, layer_id, module_name=None, **kwargs):
         # equation from Hoyer (2004) used in Ji et al. (2014)
