@@ -684,11 +684,12 @@ class Model(nn.Module):
                                 if isinstance(v, dict):
                                     v.update({'global_step': i})
                     # call other monitoring functions
-                    outputs = functions.kwarg_fn([IPython.display, self,
-                                                  visualize,
-                                                  options.get('metrics'),
-                                                  options.get('tensorboard')],
-                                                  None, **kwargs)
+                    with torch.no_grad():
+                        outputs = functions.kwarg_fn([IPython.display, self,
+                                                      visualize,
+                                                      options.get('metrics'),
+                                                      options.get('tensorboard')],
+                                                      None, **kwargs)
                     # TensorBoard
                     if options.get('tensorboard'):
                         options.get('tensorboard').add_scalar('loss',
