@@ -487,10 +487,6 @@ class Model(nn.Module):
             [default: 100]
 
         Optional kwargs
-        tensorboard : torch.utils.tensorboard.SummaryWriter
-            SummaryWriter to monitor loss and figures plotted.
-            See `torch.utils.tensorboard.SummaryWriter` for more information.
-            [default: None]
         layer_id : str
             id of layer to train (especially for training RBMs layer-wise)
             [default: None, all layers trained]
@@ -510,6 +506,14 @@ class Model(nn.Module):
             update parameters). if dict, kwargs passed to
             `rf_pool.losses.KwargsLoss`
             [default: {}, loss_fn used for monitoring loss]
+        metrics : module
+            module from which metric functions can be called, which should be
+            passed as separate **kwargs (e.g., `metrics=numpy, add=[1,2]`).
+            [default: None]
+        tensorboard : torch.utils.tensorboard.SummaryWriter
+            SummaryWriter to monitor loss, metrics, and figures plotted.
+            See `torch.utils.tensorboard.SummaryWriter` for more information.
+            [default: None]
         scheduler : torch.optim.lr_scheduler
             scheduler used to periodically update learning rate
         show_weights : dict
@@ -539,7 +543,8 @@ class Model(nn.Module):
         equal to 1.
         """
         # get layer_id (layer-wise training) from kwargs
-        options = functions.pop_attributes(kwargs, ['tensorboard','layer_id'],
+        options = functions.pop_attributes(kwargs, ['layer_id','tensorboard',
+                                                    'metrics'],
                                            default=None)
         options.update(functions.pop_attributes(kwargs, ['retain_graph'],
                                                 default=False))
@@ -672,9 +677,16 @@ class Model(nn.Module):
                     if kwargs.get('show_lattice'):
                         kwargs.get('show_lattice').update({'model': self,
                                                            'input': inputs[0]})
+                    # update global_step in any tensorboard calls
+                    if options.get('tensorboard'):
+                        for k, v in kwargs.items():
+                            if hasattr(options.get('tensorboard'), k):
+                                if isinstance(v, dict):
+                                    v.update({'global_step': i})
                     # call other monitoring functions
                     outputs = functions.kwarg_fn([IPython.display, self,
                                                   visualize,
+                                                  options.get('metrics'),
                                                   options.get('tensorboard')],
                                                   None, **kwargs)
                     # TensorBoard
@@ -685,6 +697,8 @@ class Model(nn.Module):
                         for k, v in outputs.items():
                             if isinstance(v, plt.Figure):
                                 options.get('tensorboard').add_figure(k, v, i)
+                            elif isinstance(v, (int, float)):
+                                options.get('tensorboard').add_scalar(k, v, i)
         return loss_history
 
     def optimize_texture(self, n_steps, seed, loss_fn, optimizer, input=[],
