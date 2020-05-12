@@ -406,7 +406,7 @@ def kwarg_fn(modules=[list, OrderedDict, dict, __builtins__, np, torch], x=None,
         else:
             x = output
         if display_output and not isinstance(output, (plt.Figure, plt.Axes)):
-            display(output)
+            display('%s: %a' % (key, output))
     return x
 
 def get_deepattr(obj, path):
