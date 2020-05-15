@@ -55,7 +55,8 @@ class Module(nn.Module):
                     new_param = fn(param)
                     param.mul_(0.).add_(new_param)
 
-    def make_layer(self, layer_name, transpose=False, **kwargs):
+    def make_layer(self, layer_name, transpose=False, tie_weights=False,
+                   **kwargs):
         # init layer to nn.Sequential()
         setattr(self, layer_name, nn.Sequential())
         # set None to nn.Sequential()
@@ -63,9 +64,11 @@ class Module(nn.Module):
             if module is None:
                 kwargs.update({name: nn.Sequential()})
         # update layers
-        self.update_layer(layer_name, transpose=transpose, **kwargs)
+        self.update_layer(layer_name, transpose=transpose,
+                          tie_weights=tie_weights, **kwargs)
 
-    def update_layer(self, layer_name, transpose=False, **kwargs):
+    def update_layer(self, layer_name, transpose=False, tie_weights=False,
+                     **kwargs):
         # get layer
         if hasattr(self, layer_name):
             layer = getattr(self, layer_name)
@@ -80,7 +83,7 @@ class Module(nn.Module):
                 module = ops.Op(module)
             if transpose:
                 name = name + '_transpose'
-                module = self.transposed_fn(module)
+                module = self.transposed_fn(module, tie_weights=tie_weights)
             # add reshape op if linear
             if self.input_shape is None and isinstance(module, torch.nn.Linear):
                 reshape_op = ops.Op(ops.flatten_fn(1))
@@ -93,7 +96,8 @@ class Module(nn.Module):
     def update_module(self, layer_name, module_name, module):
         self.update_layer(layer_name, **{module_name: module})
 
-    def insert_module(self, layer_name, idx, transpose=False, **kwargs):
+    def insert_module(self, layer_name, idx, transpose=False, tie_weights=False,
+                      **kwargs):
         # get layer
         layer = nn.Sequential()
         if hasattr(self, layer_name):
@@ -108,7 +112,8 @@ class Module(nn.Module):
         new_mods.reverse()
         [mods.insert(idx, new_mod) for new_mod in new_mods]
         # update layer
-        self.update_layer(layer_name, transpose=transpose, **OrderedDict(mods))
+        self.update_layer(layer_name, transpose=transpose,
+                          tie_weights=tie_weights, **OrderedDict(mods))
 
     def remove_module(self, layer_name, module_name):
         # get layer
@@ -125,18 +130,20 @@ class Module(nn.Module):
         # set layer
         setattr(self, layer_name, layer)
 
-    def transposed_fn(self, fn):
+    def transposed_fn(self, fn, tie_weights=False):
         # transposed conv
         if hasattr(fn, 'weight') and isinstance(fn, torch.nn.Conv2d):
             conv_kwargs = functions.get_attributes(fn, ['stride','padding',
                                                         'dilation'])
             transposed_fn = nn.ConvTranspose2d(fn.out_channels, fn.in_channels,
                                                fn.kernel_size, **conv_kwargs)
-            transposed_fn.weight = fn.weight
+            if tie_weights:
+                transposed_fn.weight = fn.weight
         # transposed linear
         elif hasattr(fn, 'weight') and isinstance(fn, torch.nn.Linear):
             transposed_fn = nn.Linear(fn.out_features, fn.in_features)
-            transposed_fn.weight = nn.Parameter(fn.weight.t())
+            if tie_weights:
+                transposed_fn.weight = nn.Parameter(fn.weight.t())
         elif hasattr(fn, 'weight') and not isinstance(fn, pool.Pool):
             #TODO: how to use transposed version of fn implicitly
             raise Exception('%a type not understood' % (fn))
@@ -380,8 +387,6 @@ class FeedForward(Module):
         super(FeedForward, self).__init__(input_shape)
         # build layer
         self.make_layer('forward_layer', **kwargs)
-        # initialize biases to zeros
-        self.init_weights(pattern='bias', fn=torch.zeros_like)
         # link parameters
         self.link_parameters(self.forward_layer)
 
@@ -569,6 +574,34 @@ class Control(Module):
                 output.get(name).append(input)
         return input
 
+class Autoencoder(Module):
+    """
+    Autoencoder layer with forward and reconstruction components
+    (`reconstruct_layer` will be reverse/transpose of `forward_layer`)
+
+    Parameters
+    ----------
+    input_shape : list, optional
+        shape to which input data should be reshaped
+        [default: None, input data not reshaped]
+    **kwargs : dict
+        modules for layer like {module_name: module}
+
+    Returns
+    -------
+    None
+    """
+    def __init__(self, input_shape=None, **kwargs):
+        super(Autoencoder, self).__init__(input_shape)
+        # make forward layer
+        self.make_layer('forward_layer', **kwargs)
+        # make reconstruct layer
+        self.make_layer('reconstruct_layer', transpose=True, tie_weights=False,
+                        **kwargs)
+        # link parameters
+        self.link_parameters(self.forward_layer)
+        self.link_parameters(self.reconstruct_layer)
+
 class Lambda(Module):
     """
     Lambda function wrapped in a torch.nn.Module
@@ -677,8 +710,8 @@ class RBM(Module):
         # init weights
         self.init_weights(pattern='weight', fn=lambda x: 0.01*torch.randn_like(x))
         # make reconstruct layer
-        self.make_layer('reconstruct_layer', transpose=True, pool=pool,
-                        hidden=hidden)
+        self.make_layer('reconstruct_layer', transpose=True, tie_weights=True,
+                        pool=pool, hidden=hidden)
         self.update_layer('reconstruct_layer', activation=vis_activation,
                           sample=vis_sample)
         # init biases
