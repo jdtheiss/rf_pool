@@ -74,6 +74,7 @@ class Dataset(torch.utils.data.Dataset):
 
     def get_img_url(self, url, pattern='', replace=['',''], timeout=5.):
         try:
+            img_url = None
             with urllib.request.urlopen(url, timeout=timeout) as response:
                 html = response.read()
                 img_url = re.findall(pattern, html.decode('utf-8'))
@@ -83,7 +84,10 @@ class Dataset(torch.utils.data.Dataset):
             else:
                 img_url = None
         except Exception as detail:
-            print('Error: %s' % detail)
+            if img_url is not None:
+                print('Error %a: %s' % (img_url, detail))
+            else:
+                print('Error: %s' % detail)
             img_url = None
         return img_url
 
