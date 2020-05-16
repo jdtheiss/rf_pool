@@ -9,10 +9,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 
 from . import losses, ops, pool
-from .modules import Module, FeedForward, RBM
+from .modules import Module, Branch, FeedForward, RBM
 from .utils import functions, visualize
 
 def _get_dict_shapes(d):
@@ -467,8 +468,305 @@ class Model(nn.Module):
                     display('[%5d] accuracy: %.2f%%' % (i+1, 100.*correct/total))
         return 100. * correct / total
 
-    def train(self, n_epochs, trainloader, loss_fn, optimizer, monitor=100,
-              **kwargs):
+    def monitor_fn(self, iter, n_batches, input, loss, loss_history=[],
+                   optimizer=None, monitor_loss=None, metrics=None,
+                   tensorboard=None, **kwargs):
+        """
+        Monitoring step during training: plot loss history, figures, etc.
+
+        Parameters
+        ----------
+        iter : int
+            current global iteration of training
+        n_batches : int
+            number of iterations per epoch
+        input : torch.Tensor
+            input for current iteration
+        loss : float
+            loss for current iteration
+        loss_history : list
+            losses from previous iterations [default: []]
+        optimizer : torch.optim
+            optional, optimizer used for updating parameters (to show
+            learning rate) [default: None]
+        monitor_loss : rf_pool.losses or dict
+            loss function used only during monitoring step (i.e. not used to
+            update parameters). if dict, kwargs passed to
+            `rf_pool.losses.KwargsLoss`
+            [default: {}, loss_fn used for monitoring loss]
+        metrics : module
+            module from which metric functions can be called, which should be
+            passed as separate **kwargs (e.g., `metrics=numpy, add=[1,2]`).
+            [default: None]
+        tensorboard : torch.utils.tensorboard.SummaryWriter
+            SummaryWriter to monitor loss, metrics, and figures plotted.
+            See `torch.utils.tensorboard.SummaryWriter` for more information.
+            [default: None]
+
+        Returns
+        -------
+        loss_history : list
+            list of loss values at each monitoring step
+            (i.e., len(loss_history) == (n_epochs * len(trainloader) / monitor))
+
+        Notes
+        -----
+        This function is called by `train_n_epochs` and would not usually be
+        called in isolation.
+        """
+        # monitor loss
+        with torch.no_grad():
+            if monitor_loss is not None:
+                loss_history.append(monitor_loss(input))
+            else:
+                loss_history.append(loss)
+        # display loss
+        clear_output(wait=True)
+        if optimizer is not None:
+            display('learning rate: %g' % optimizer.param_groups[0]['lr'])
+        epoch = iter // n_batches
+        display('%d [%g%%] loss: %.3f' % (epoch,
+                                          iter % n_batches/n_batches*100.,
+                                          loss_history[-1]))
+        # show loss history
+        plt.plot(loss_history)
+        plt.show()
+        # show weights
+        if kwargs.get('show_weights'):
+            kwargs.get('show_weights').update({'model': self})
+        # show negative
+        if kwargs.get('show_negative'):
+            kwargs.get('show_negative').update({'model': self, 'input': input})
+        # show lattice
+        if kwargs.get('show_lattice'):
+            kwargs.get('show_lattice').update({'model': self, 'input': input})
+        # update global_step in any tensorboard calls
+        if tensorboard is not None:
+            for k, v in kwargs.items():
+                if hasattr(tensorboard, k):
+                    if isinstance(v, dict):
+                        v.update({'global_step': iter})
+        # call other monitoring functions
+        with torch.no_grad():
+            outputs = functions.kwarg_fn([IPython.display, visualize, metrics,
+                                          tensorboard], None, **kwargs)
+        # TensorBoard
+        if tensorboard is not None:
+            tensorboard.add_scalar('loss', loss_history[-1], iter)
+            for k, v in outputs.items():
+                if isinstance(v, plt.Figure):
+                    tensorboard.add_figure(k, v, iter)
+                elif isinstance(v, (int, float)):
+                    tensorboard.add_scalar(k, v, iter)
+        return loss_history
+
+    def train_once(self, inputs, label, loss_fn, optimizer=None, forward_fn=None,
+                   **kwargs):
+        """
+        Train for one update (i.e., a single batch of data and labels)
+
+        Parameters
+        ----------
+        inputs : tuple of torch.Tensor
+            inputs to model
+        label : torch.Tensor or None
+            label to be predicted by model or otherwise used in training
+        loss_fn : torch.nn.modules.loss or rf_pool.losses
+            loss function to opimize during training
+        optimizer : torch.optim
+            optimizer used to update parameters during training
+            [default: None]
+        forward_fn : function
+            function used to pass inputs through model
+            [default: None, uses `self.forward(inputs[0])`]
+
+        Optional kwargs
+        retain_graph : boolean
+            passed to `loss.backward()` to maintain graph if True
+            [default: False]
+
+        Return
+        ------
+        loss : float
+            loss from current iteration
+
+        Notes
+        -----
+        This function is called by `train_n_epochs` and would not usually be
+        called in isolation.
+        """
+        # zero gradients
+        if optimizer:
+            optimizer.zero_grad()
+        # get outputs and loss
+        if forward_fn is None:
+            output = self.forward(inputs[0])
+        else:
+            output = forward_fn(inputs)
+        loss = loss_fn(output, label)
+        # backprop
+        if hasattr(loss, 'backward'):
+            loss.backward(retain_graph=kwargs.get('retain_graph'))
+        if hasattr(loss, 'item'):
+            loss = loss.item()
+        # update parameters
+        if optimizer:
+            optimizer.step()
+        return loss
+
+    def train_n_epochs(self, n_epochs, trainloader, loss_fn, optimizer=None,
+                       train_fn=None, monitor=100, **kwargs):
+        """
+        Train for number passes through `trainloader`
+
+        Parameters
+        ----------
+        n_epochs : int
+            number of epochs to train for (complete passes through dataloader)
+        trainloader : torch.utils.data.DataLoader
+            dataloader containing training (data, label) pairs
+        loss_fn : torch.nn.modules.loss or rf_pool.losses
+            loss function to opimize during training
+        optimizer : torch.optim
+            optimizer used to update parameters during training
+            [default: None]
+        train_fn : function
+            training function used to update parameters
+            [default: None, uses `train_once`]
+        monitor : int
+            number of batches between plotting loss, showing weights, etc.
+            [default: 100]
+        **kwargs : **dict
+            see `train_model` for optional keyword arguments
+
+        Returns
+        -------
+        loss_history : list
+            list of loss values at each monitoring step
+            (i.e., len(loss_history) == (n_epochs * len(trainloader) / monitor))
+
+        Notes
+        -----
+        This function is called by `train_n_epochs` and would not usually be
+        called in isolation.
+        """
+        # get options from kwargs
+        options = functions.pop_attributes(kwargs, ['scheduler','label_params',
+                                                    'add_loss','sparse_loss'],
+                                           default={})
+        # set label parameter gradients to false
+        if options.get('label_params'):
+            label_params = options.get('label_params')
+            self.set_grad_by_label(label_params.keys(), label_params, False)
+        # init loss_history, running_loss, i
+        loss_history = []
+        running_loss = 0.
+        i = 0
+        n_batches = len(trainloader)
+        # train for n_epochs through trainloader
+        for epoch in range(int(np.ceil(n_epochs))):
+            for data in trainloader:
+                # check if more than requested epochs
+                if (i+1) > (n_epochs * n_batches):
+                    return loss_history
+                try:
+                    # get inputs, labels
+                    inputs = data[:-1]
+                    label = data[-1]
+                    # turn on label-based parameter gradients
+                    if options.get('label_params'):
+                        self.set_grad_by_label([label], label_params, True)
+                    # train once
+                    if train_fn is None:
+                        loss = self.train_once(inputs, label, loss_fn,
+                                               optimizer=optimizer, **kwargs)
+                    else:
+                        loss = train_fn(inputs, label, loss_fn,
+                                        optimizer=optimizer, **kwargs)
+                    # additional losses
+                    if not hasattr(loss, 'backward'):
+                        loss = torch.tensor(loss, requires_grad=True)
+                    optimizer.zero_grad()
+                    if options.get('add_loss'):
+                        loss = loss + options.get('add_loss')(*inputs)
+                    if options.get('sparse_loss'):
+                        loss = loss + options.get('sparse_loss')(*inputs)
+                    if loss.grad_fn is not None:
+                        loss.backward()
+                        optimizer.step()
+                    # update scheduler
+                    if options.get('scheduler'):
+                        options.get('scheduler').step()
+                    # set label_parameters
+                    if options.get('label_params'):
+                        self.set_grad_by_label([label], label_params, False)
+                    # monitor loss, metrics
+                    running_loss += loss
+                    i += 1
+                    if i % monitor == 0:
+                        loss_history = self.monitor_fn(i, n_batches, inputs[0],
+                                                       running_loss / monitor,
+                                                       loss_history, optimizer,
+                                                       **kwargs)
+                        running_loss = 0.
+                except KeyboardInterrupt:
+                    # if interrupted, return loss_history
+                    return loss_history
+                except:
+                    raise
+        return loss_history
+
+    def train_layer(self, layer_id, n_epochs, trainloader, loss_fn, optimizer,
+                    monitor=100, **kwargs):
+        """
+        Train a specific layer using the training function from
+        `self.layers[layer_id].train_layer`.
+
+        Parameters
+        ----------
+        layer_id : str
+            layer id to be trained
+        n_epochs : int
+            number of epochs to train for (complete passes through dataloader)
+        trainloader : torch.utils.data.DataLoader
+            dataloader containing training (data, label) pairs
+        loss_fn : torch.nn.modules.loss or rf_pool.losses
+            loss function to opimize during training
+        optimizer : torch.optim
+            optimizer used to update parameters during training
+        monitor : int
+            number of batches between plotting loss, showing weights, etc.
+            [default: 100]
+        **kwargs : **dict
+            see `train_model` and `self.layers[layer_id].train_layer` for optional
+            keyword arguments
+
+        Returns
+        -------
+        loss_history : list
+            list of loss values at each monitoring step
+            (i.e., len(loss_history) == (n_epochs * len(trainloader) / monitor))
+
+        Notes
+        -----
+        This function is primarily used for "greedy layer-wise training".
+        """
+        # set forward function
+        pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
+        if len(pre_layer_ids) > 0:
+            forward_fn = lambda x: self.apply(x[0], pre_layer_ids)
+        else:
+            forward_fn = lambda x: x[0]
+        # set loss function to self.layers[layer_id].train_layer(...,loss_fn,**kwargs)
+        layer_loss_fn = losses.KwargsLoss(self.layers[layer_id].train_layer,
+                                          n_args=2, loss_fn=loss_fn, **kwargs)
+        # train for n_epochs
+        return self.train_n_epochs(n_epochs, trainloader, loss_fn=layer_loss_fn,
+                                   optimizer=optimizer, forward_fn=forward_fn,
+                                   monitor=monitor, **kwargs)
+
+    def train_model(self, n_epochs, trainloader, loss_fn, optimizer, monitor=100,
+                    **kwargs):
         """
         Train model using loss function and optimizer for given dataloader
 
@@ -487,9 +785,6 @@ class Model(nn.Module):
             [default: 100]
 
         Optional kwargs
-        layer_id : str
-            id of layer to train (especially for training RBMs layer-wise)
-            [default: None, all layers trained]
         retain_graph : boolean
             kwarg passed to `loss.backward()` to maintain graph if True
             [default: False]
@@ -542,165 +837,8 @@ class Model(nn.Module):
         When using kwarg `label_params`, `batch_size` in dataloader should be
         equal to 1.
         """
-        # get layer_id (layer-wise training) from kwargs
-        options = functions.pop_attributes(kwargs, ['layer_id','tensorboard',
-                                                    'metrics'],
-                                           default=None)
-        options.update(functions.pop_attributes(kwargs, ['retain_graph'],
-                                                default=False))
-        # get options from kwargs
-        options.update(functions.pop_attributes(kwargs,
-                                                ['add_loss','sparse_loss',
-                                                 'scheduler','label_params',
-                                                 'monitor_loss'],
-                                                default={}))
-        # added loss
-        if options.get('add_loss'):
-            if isinstance(options.get('add_loss'), (dict, OrderedDict)):
-                add_loss = losses.LayerLoss(self, **options.get('add_loss'))
-            else:
-                add_loss = options.get('add_loss')
-        # sparsity loss
-        if options.get('sparse_loss'):
-            if isinstance(options.get('sparse_loss'), (dict, OrderedDict)):
-                sparse_loss = losses.SparseLoss(self, **options.get('sparse_loss'))
-            else:
-                sparse_loss = options.get('sparse_loss')
-        # monitor loss
-        if options.get('monitor_loss'):
-            if isinstance(options.get('monitor_loss'), (dict, OrderedDict)):
-                monitor_loss = losses.KwargsLoss(**options.get('monitor_loss'))
-            else:
-                monitor_loss = options.get('monitor_loss')
-        # if layer-wise training, ensure layer_id str and get pre_layer_ids
-        if options.get('layer_id') is not None:
-            layer_id = str(options.get('layer_id'))
-            pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
-        # set label parameter gradients to false
-        if options.get('label_params'):
-            label_params = options.get('label_params')
-            self.set_grad_by_label(label_params.keys(), label_params, False)
-        # train for n_epochs
-        loss_history = []
-        running_loss = 0.
-        i = 0
-        n_batches = len(trainloader)
-        for epoch in range(int(np.ceil(n_epochs))):
-            for data in trainloader:
-                # check if more than requested epochs
-                if (i+1) > (n_epochs * n_batches):
-                    return loss_history
-                # get inputs, labels
-                inputs = data[:-1]
-                label = data[-1]
-                # turn on label-based parameter gradients
-                if options.get('label_params'):
-                    self.set_grad_by_label([label], label_params, True)
-                # layerwise training
-                if options.get('layer_id') is not None:
-                    # get inputs for layer_id
-                    if len(pre_layer_ids) > 0:
-                        layer_input = self.apply(inputs[0], pre_layer_ids)
-                    else:
-                        layer_input = inputs[0].clone()
-                    if len(inputs[1:]) > 0 and options.get('add_loss') == {}:
-                        layer_input = (layer_input,) + tuple(inputs[1:])
-                    # train
-                    loss = self.layers[layer_id].train(layer_input,
-                                                       optimizer=optimizer,
-                                                       **kwargs)
-                    # backprop extra losses if given
-                    ext_loss = 0.
-                    if options.get('add_loss'):
-                        ext_loss = ext_loss + add_loss(*inputs)
-                    if options.get('sparse_loss'):
-                        ext_loss = ext_loss + sparse_loss(*inputs)
-                    if isinstance(ext_loss, torch.Tensor):
-                        ext_loss.backward(retain_graph=options.get('retain_graph'))
-                        optimizer.step()
-                else: # normal training
-                    # zero gradients
-                    layer_input = inputs[0]
-                    optimizer.zero_grad()
-                    # get loss
-                    if isinstance(loss_fn, losses.LayerLoss):
-                        loss = loss_fn(*data)
-                    else:
-                        # get outputs then loss
-                        output = self.forward(layer_input)
-                        loss = loss_fn(output, label)
-                    # additional loss
-                    if options.get('add_loss'):
-                        loss = loss + add_loss(*inputs)
-                    # sparse_loss
-                    if options.get('sparse_loss'):
-                        loss = loss + sparse_loss(*inputs)
-                    # backprop
-                    loss.backward(retain_graph=options.get('retain_graph'))
-                    loss = loss.item()
-                    # update parameters
-                    optimizer.step()
-                # update scheduler
-                if options.get('scheduler'):
-                    options.get('scheduler').step()
-                # set label_parameters
-                if options.get('label_params'):
-                    self.set_grad_by_label([label], label_params, False)
-                # add loss to running loss
-                running_loss += loss
-                i += 1
-                if i % monitor == 0:
-                    # monitor loss
-                    with torch.no_grad():
-                        if options.get('monitor_loss'):
-                            loss_history.append(monitor_loss(layer_input))
-                        else:
-                            loss_history.append(running_loss / monitor)
-                    # display loss
-                    clear_output(wait=True)
-                    display('learning rate: %g' % optimizer.param_groups[0]['lr'])
-                    display('%d [%g%%] loss: %.3f' % (epoch,
-                                                      i % n_batches/n_batches*100.,
-                                                      loss_history[-1]))
-                    # show loss history
-                    plt.plot(loss_history)
-                    plt.show()
-                    running_loss = 0.
-                    # show weights
-                    if kwargs.get('show_weights'):
-                        kwargs.get('show_weights').update({'model': self})
-                    # show negative
-                    if kwargs.get('show_negative'):
-                        kwargs.get('show_negative').update({'model': self,
-                                                            'input': inputs[0]})
-                    # show lattice
-                    if kwargs.get('show_lattice'):
-                        kwargs.get('show_lattice').update({'model': self,
-                                                           'input': inputs[0]})
-                    # update global_step in any tensorboard calls
-                    if options.get('tensorboard'):
-                        for k, v in kwargs.items():
-                            if hasattr(options.get('tensorboard'), k):
-                                if isinstance(v, dict):
-                                    v.update({'global_step': i})
-                    # call other monitoring functions
-                    with torch.no_grad():
-                        outputs = functions.kwarg_fn([IPython.display, self,
-                                                      visualize,
-                                                      options.get('metrics'),
-                                                      options.get('tensorboard')],
-                                                      None, **kwargs)
-                    # TensorBoard
-                    if options.get('tensorboard'):
-                        options.get('tensorboard').add_scalar('loss',
-                                                              loss_history[-1],
-                                                              i)
-                        for k, v in outputs.items():
-                            if isinstance(v, plt.Figure):
-                                options.get('tensorboard').add_figure(k, v, i)
-                            elif isinstance(v, (int, float)):
-                                options.get('tensorboard').add_scalar(k, v, i)
-        return loss_history
+        return self.train_n_epochs(n_epochs, trainloader, loss_fn=loss_fn,
+                                   optimizer=optimizer, monitor=monitor, **kwargs)
 
     def optimize_texture(self, n_steps, seed, loss_fn, optimizer, input=[],
                          transform=None, monitor=100, **kwargs):
@@ -736,6 +874,7 @@ class Model(nn.Module):
         rf_pool.losses.LayerLoss
         rf_pool.utils.visualize.visualize_features
         """
+        #TODO: figure out way to incorporate into `train_n_epochs` usage
         # turn off model gradients
         on_parameters = self.get_trainable_params()
         self.set_requires_grad(pattern='', requires_grad=False)
@@ -900,8 +1039,7 @@ class Model(nn.Module):
             # if pool, upsample
             if isinstance(module, pool.Pool) or \
                torch.typename(module).lower().find('pool') > -1:
-                heatmap = torch.nn.functional.interpolate(heatmap,
-                                                          scale_factor=size)
+                heatmap = F.interpolate(heatmap, scale_factor=size)
             else:
                 w = torch.ones((1,1) + size)
                 heatmap = torch.conv_transpose2d(heatmap, w)
@@ -1009,7 +1147,9 @@ class FeedForwardNetwork(Model):
     remove(layer_id)
     apply(input, layer_ids=[], forward=True, output={}, output_layer=None,
           **kwargs)
-    train(n_epochs, trainloader, loss_fn, optimizer, monitor=100, **kwargs)
+    train_layer(layer_id, n_epochs, trainloader, loss_fn, optimizer,
+                monitor=100, **kwargs)
+    train_model(n_epochs, trainloader, loss_fn, optimizer, monitor=100, **kwargs)
     optimize_texture(n_steps, seed, loss_fn, optimizer, input=[],
                      transform=None, monitor=100, **kwargs)
     """
@@ -1174,8 +1314,8 @@ class DeepBeliefNetwork(Model):
     def train_layer(self, layer_id, n_epochs, trainloader, optimizer, k=1,
                     monitor=100, **kwargs):
         #TODO: implement BEAM training (-KL based on NN of data/fantasy particles)
-        return self.train(n_epochs, trainloader, None, optimizer, monitor=monitor,
-                          layer_id=layer_id, k=k, **kwargs)
+        return Model.train_layer(self, layer_id, n_epochs, trainloader, None,
+                                 optimizer, monitor=monitor, k=k, **kwargs)
 
     def train_model(self, n_epochs, trainloader, optimizer, k=1, persistent=None,
                     monitor=100, **kwargs):
@@ -1185,8 +1325,8 @@ class DeepBeliefNetwork(Model):
         cd_loss = losses.KwargsLoss(self.contrastive_divergence, n_args=1, k=k)
         loss_fn = losses.LayerLoss(self, {None: []}, cd_loss, layer_ids=[None])
         # train
-        return self.train(n_epochs, trainloader, loss_fn, optimizer,
-                          monitor=monitor, **kwargs)
+        return Model.train_model(self, n_epochs, trainloader, loss_fn, optimizer,
+                                 monitor=monitor, **kwargs)
 
 class DeepBoltzmannMachine(DeepBeliefNetwork):
     """
@@ -1232,8 +1372,9 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
                                           append=False)
         # train
         try:
-            output = self.train(n_epochs, trainloader, None, optimizer,
-                                monitor=monitor, layer_id=layer_id, k=k, **kwargs)
+            output = Model.train_layer(self, layer_id, n_epochs, trainloader,
+                                       None, optimizer, monitor=monitor, k=k,
+                                       **kwargs)
         finally:
             # replace mul_op with original activation operation
             self.update_modules([layer_ids[0]], 'forward_layer', 'activation',
@@ -1252,8 +1393,8 @@ class DeepBoltzmannMachine(DeepBeliefNetwork):
                                     k=k, n_iter=n_iter)
         loss_fn = losses.LayerLoss(self, {None: []}, cd_loss, layer_ids=[None])
         # train
-        return self.train(n_epochs, trainloader, loss_fn, optimizer,
-                          monitor=monitor, **kwargs)
+        return Model.train_model(self, n_epochs, trainloader, loss_fn, optimizer,
+                                 monitor=monitor, **kwargs)
 
     def contrastive_divergence(self, input, k=1, n_iter=10):
         #TODO: update mean_field to condition on output
