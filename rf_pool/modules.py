@@ -309,8 +309,7 @@ class Module(nn.Module):
     def __call__(self, *args, **kwargs):
         return self.apply(*args, **kwargs)
 
-    def train(self, input, label, loss_fn, optimizer=None, monitor_loss=None,
-              **kwargs):
+    def train_layer(self, input, label, loss_fn, optimizer=None, **kwargs):
         if optimizer:
             optimizer.zero_grad()
         # get output and loss
@@ -320,13 +319,7 @@ class Module(nn.Module):
         loss.backward()
         if optimizer:
             optimizer.step()
-        # monitor loss
-        with torch.no_grad():
-            if monitor_loss is not None:
-                out = monitor_loss(input, output)
-            else:
-                out = loss
-        return out.item()
+        return loss.item()
 
     def show_weights(self, field='hidden_weight', img_shape=None, transpose=False,
                      **kwargs):
@@ -673,7 +666,7 @@ class RBM(Module):
         compute energy for visible and hidden samples
     free_energy(v)
         compute free energy for visible sample
-    train(input, optimizer, k=1, monitor_fn=nn.MSELoss(), **kwargs)
+    train_layer(input, optimizer, k=1, monitor_fn=nn.MSELoss(), **kwargs)
         train with contrastive divergence with k gibbs steps
 
     Notes
@@ -1079,8 +1072,7 @@ class RBM(Module):
         plt.show()
         return fig
 
-    def train(self, input, k=1, optimizer=None, monitor_loss=None,
-              **kwargs):
+    def train_layer(self, input, label=None, k=1, optimizer=None, **kwargs):
         """
         Train RBM with given optimizer and k Gibbs sampling steps
 
@@ -1088,17 +1080,14 @@ class RBM(Module):
         ----------
         input : torch.Tensor
             input data
+        label : torch.Tensor
+            optional label for given input data (i.e. conditional RBM)
+            [default: None] #TODO: not currently implemented
         k : int
             number of Gibbs sampling steps to perform [default: 1]
         optimizer : torch.optim
             optimizer used to update parameres in RBM
             [default: None, parameters are not updated]
-        monitor_loss : torch.nn.modules.loss or rf_pool.losses
-            loss function used only for monitoring loss (i.e., not used to
-            update parameters), called as `monitor_loss(input, nv_mean)` where
-            nv_mean is the probability of a visible unit being turned on during
-            reconstruction after Gibbs sampling in the negative phase.
-            [default: None, difference in free energy of positive/negative phases]
 
         Optional kwargs
         persistent : torch.Tensor
@@ -1181,20 +1170,7 @@ class RBM(Module):
         # update parameters
         if optimizer:
             optimizer.step()
-        # if persistent reshape input and nv_mean
-        if self.persistent is not None:
-            warnings.filterwarnings("ignore", message="Using a target size")
-            input = torch.unsqueeze(input, 1)
-            nv_mean = torch.unsqueeze(nv_mean, 0)
-        # monitor loss
-        with torch.no_grad():
-            if monitor_loss is not None:
-                out = monitor_loss(input, nv_mean)
-            else:
-                out = loss
-        # reset default warning
-        warnings.filterwarnings("default", message="Using a target size")
-        return out.item()
+        return loss.item()
 
 if __name__ == '__main__':
     import doctest
