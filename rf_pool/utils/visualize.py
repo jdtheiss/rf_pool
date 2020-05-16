@@ -144,7 +144,7 @@ def show_lattice(model, layer_id, module_name='pool', current=True, input=None,
     """
     # get rf layer
     pool = model.layers[layer_id].get_modules('forward_layer', [module_name])[0]
-    assert hasattr(pool[0], 'rfs') and pool[0].rfs is not None
+    assert hasattr(pool, 'rfs') and pool.rfs is not None
 
     # show lattice
     with torch.no_grad():
