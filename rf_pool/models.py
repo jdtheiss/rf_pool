@@ -529,6 +529,7 @@ class Model(nn.Module):
                                           iter % n_batches/n_batches*100.,
                                           loss_history[-1]))
         # show loss history
+        plt.figure()
         plt.plot(loss_history)
         plt.show()
         # show weights
