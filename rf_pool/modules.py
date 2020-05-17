@@ -216,7 +216,7 @@ class Module(nn.Module):
 
     def forward(self, input, module_names=[], output={}, **kwargs):
         if self.input_shape:
-            self.reconstruct_shape = input.shape
+            self.reconstruct_shape = (-1, *input.shape[1:])
             input = torch.reshape(input, self.input_shape)
         for name, module in self.forward_layer.named_children():
             if len(module_names) > 0 and name not in module_names:
@@ -449,7 +449,7 @@ class Branch(Module):
         self.reconstruct_shape = []
         for i, (name, branch) in enumerate(self.forward_layer.named_children()):
             if self.input_shape:
-                self.reconstruct_shape.append(input[i].shape)
+                self.reconstruct_shape.append((-1, *input[i].shape[1:]))
                 input[i] = torch.reshape(input[i], self.input_shape)
             if len(module_names) > 0 and name not in module_names:
                 continue
@@ -539,7 +539,7 @@ class Control(Module):
 
     def forward(self, input, module_names=[], output={}, **kwargs):
         if self.input_shape:
-            self.reconstruct_shape = input.shape
+            self.reconstruct_shape = (-1, *input.shape[1:])
             input = torch.reshape(input, self.input_shape)
         # apply module
         control_out = None
