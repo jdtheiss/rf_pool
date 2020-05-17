@@ -695,6 +695,7 @@ class Model(nn.Module):
                     if loss.grad_fn is not None:
                         loss.backward()
                         optimizer.step()
+                    loss = loss.item()
                     # update scheduler
                     if options.get('scheduler'):
                         options.get('scheduler').step()
