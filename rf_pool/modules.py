@@ -82,8 +82,9 @@ class Module(nn.Module):
             elif not isinstance(module, torch.nn.modules.Module):
                 module = ops.Op(module)
             if transpose:
-                name = name + '_transpose'
-                module = self.transposed_fn(module, tie_weights=tie_weights)
+                if hasattr(module, 'weight'):
+                    name = name + '_transpose'
+                module = self.transpose_fn(module, tie_weights=tie_weights)
             # add reshape op if linear
             if self.input_shape is None and isinstance(module, torch.nn.Linear):
                 reshape_op = ops.Op(ops.flatten_fn(1))
@@ -130,7 +131,7 @@ class Module(nn.Module):
         # set layer
         setattr(self, layer_name, layer)
 
-    def transposed_fn(self, fn, tie_weights=False):
+    def transpose_fn(self, fn, tie_weights=False):
         # transposed conv
         if hasattr(fn, 'weight') and isinstance(fn, torch.nn.Conv2d):
             conv_kwargs = functions.get_attributes(fn, ['stride','padding',
@@ -578,7 +579,10 @@ class Autoencoder(Module):
         shape to which input data should be reshaped
         [default: None, input data not reshaped]
     **kwargs : dict
-        modules for layer like {module_name: module}
+        modules for layer like {module_name: module}. To set `reconstruct_layer`
+        modules different from `forward_layer` modules, prepend the module_name
+        with `reconstruct_`. Set `reconstruct_module_name=None` to not set the
+        corresponding module in the `reconstruct_layer`.
 
     Returns
     -------
@@ -586,11 +590,21 @@ class Autoencoder(Module):
     """
     def __init__(self, input_shape=None, **kwargs):
         super(Autoencoder, self).__init__(input_shape)
+        # parse reconstruct kwargs
+        forward_kwargs = OrderedDict()
+        recon_kwargs = OrderedDict()
+        for k, v in kwargs.items():
+            if k.startswith('reconstruct_'):
+                if v is not None:
+                    recon_kwargs.update({k.replace('reconstruct_', ''): v})
+            else:
+                forward_kwargs.update({k: v})
+                recon_kwargs.update({k: v})
         # make forward layer
-        self.make_layer('forward_layer', **kwargs)
+        self.make_layer('forward_layer', **forward_kwargs)
         # make reconstruct layer
         self.make_layer('reconstruct_layer', transpose=True, tie_weights=False,
-                        **kwargs)
+                        **recon_kwargs)
         # link parameters
         self.link_parameters(self.forward_layer)
         self.link_parameters(self.reconstruct_layer)
