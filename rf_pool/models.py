@@ -1334,18 +1334,26 @@ class VAE(Model):
             number of batches between plotting loss, showing weights, etc.
             [default: 100]
         **kwargs : **dict
-            see `train_model` for optional keyword arguments
+            #TODO: use kwargs from Model.train_model
 
         Returns
         -------
         loss_history : list
             list of loss values at each monitoring step
             (i.e., len(loss_history) == (n_epochs * len(trainloader) / monitor))
+
+        See Also
+        --------
+        vae_loss_fn
         """
         # set forward function to just pass inputs[0]
         kwargs.setdefault('forward_fn', lambda x: x[0])
+        # set layer_id, pre_layer_ids for vae_loss_fn
         if loss_fn is None:
-            loss_fn = self.vae_loss_fn
+            options = functions.pop_attributes(kwargs, ['layer_id','branch_name',
+                                                        'pre_layer_ids'],
+                                               ignore_keys=True)
+            loss_fn = losses.KwargsLoss(self.vae_loss_fn, n_args=2, **options)
         # train for n_epochs
         return self.train_n_epochs(n_epochs, trainloader, loss_fn, optimizer,
                                    monitor=100, **kwargs)
@@ -1375,7 +1383,7 @@ class VAE(Model):
             number of batches between plotting loss, showing weights, etc.
             [default: 100]
         **kwargs : **dict
-            see `train_model` for optional keyword arguments
+            see `train_model` and `vae_loss_fn` for optional keyword arguments
 
         Returns
         -------
@@ -1402,10 +1410,14 @@ class VAE(Model):
         else:
             forward_fn = lambda x: x[0]
         kwargs.setdefault('forward_fn', forward_fn)
-        # set pre_layer_ids for vae_loss_fn
-        kwargs.setdefault('pre_layer_ids', [])
+        # set layer_id, pre_layer_ids for vae_loss_fn
         if loss_fn is None:
-            loss_fn = self.vae_loss_fn
+            kwargs.setdefault('layer_id', layer_id)
+            kwargs.setdefault('pre_layer_ids', [])
+            options = functions.pop_attributes(kwargs, ['layer_id','branch_name',
+                                                        'pre_layer_ids'],
+                                               ignore_keys=True)
+            loss_fn = losses.KwargsLoss(self.vae_loss_fn, n_args=2, **options)
         # train for n_epochs
         return self.train_n_epochs(n_epochs, trainloader, loss_fn, optimizer,
                                    monitor=monitor, **kwargs)
