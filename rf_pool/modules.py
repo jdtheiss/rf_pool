@@ -597,9 +597,10 @@ class Autoencoder(Module):
             if k.startswith('reconstruct_'):
                 if v is not None:
                     recon_kwargs.update({k.replace('reconstruct_', ''): v})
-            else:
-                forward_kwargs.update({k: v})
+                continue
+            elif 'reconstruct_' + k not in kwargs:
                 recon_kwargs.update({k: v})
+            forward_kwargs.update({k: v})
         # make forward layer
         self.make_layer('forward_layer', **forward_kwargs)
         # make reconstruct layer
