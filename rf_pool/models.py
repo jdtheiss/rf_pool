@@ -1165,11 +1165,11 @@ class VAE(Model):
     Variational Autoencoder
 
     Model should contain `forward_layer` and `reconstruct_layer` (e.g.,
-    `modules.Autoencoder`), with output factored into branches `mu` and `var`:
+    `modules.Autoencoder`), with output factored into branches `mu` and `logvar`:
         `Branch(
            (forward_layer): Sequential(
              (mu): Linear(in_features=1024, out_features=1024, bias=True)
-             (var): Linear(in_features=1024, out_features=1024, bias=True)
+             (logvar): Linear(in_features=1024, out_features=1024, bias=True)
            )
            (reconstruct_layer): Sequential()
          )`
@@ -1188,7 +1188,9 @@ class VAE(Model):
     -------
     append(layer_id, layer)
     add_output_branch(layer_id, input_dim, output_dim)
-    vae_loss_fn(input, label=None, layer_id=None, branch_name='branch')
+    vae_train_fn(input, label=None, loss_fn=torch.nn.functional.mse_loss,
+                 optimizer=None, layer_id=None, branch_name='branch',
+                 forward_fn=None, **kwargs)
     insert(idx, layer_id, layer)
     remove(layer_id)
     apply(input, layer_ids=[], forward=True, output={}, output_layer=None,
@@ -1207,10 +1209,35 @@ class VAE(Model):
     def __init__(self, model=None):
         super(VAE, self).__init__(model)
 
+    def gaussian_sample(self, args):
+        """
+        Sample from `mu`, `logvar` as:
+
+            `mu + exp(logvar/2) * randn_like(logvar)`
+
+        if `self.training==True` otherwise, return `mu`.
+
+        Parameters
+        ----------
+        args : tuple or list
+            mu, logvar passed as tuple from branching module
+            (see `add_output_branch`)
+
+        Returns
+        -------
+        sample : torch.Tensor
+            sample from `mu`, `logvar`
+        """
+        mu, logvar = args
+        if self.training:
+            return mu + torch.exp(logvar/2.) * torch.randn_like(logvar)
+        else:
+            return mu
+
     def add_output_branch(self, output_dim, layer_id=None, branch_name='branch'):
         """
-        Add branching module which factorizes latent units into `mu`, `var`
-        and outputs samples as `mu + exp(var/2.) * randn_like(var)`.
+        Add branching module which factorizes latent units into `mu`, `logvar`
+        and outputs samples as `mu + exp(logvar/2.) * randn_like(logvar)`.
 
         Parameters
         ----------
@@ -1230,12 +1257,12 @@ class VAE(Model):
 
         Notes
         -----
-        When training with `vae_loss_fn`, the given `layer_id` and `branch_name`
+        When training with `vae_train_fn`, the given `layer_id` and `branch_name`
         should be used.
 
         See Also
         --------
-        vae_loss_fn
+        vae_train_fn
         """
         if layer_id is None:
             layer_id = self.get_layer_ids()[-1]
@@ -1243,31 +1270,62 @@ class VAE(Model):
         # set branching module
         branch = Branch([torch.nn.Linear(output_dim, output_dim),
                          torch.nn.Linear(output_dim, output_dim)],
-                        ['mu','var'])
-        # set sample function using reparametrization trick
-        sample_fn = lambda muvar: torch.add(muvar[0],
-                                            torch.mul(torch.exp(muvar[1]/2.),
-                                                      torch.randn_like(muvar[1])))
+                        ['mu','logvar'])
         # update modules in layer_id
         self.update_modules([layer_id], 'forward_layer', branch_name, branch)
-        self.update_modules([layer_id], 'forward_layer', 'sample', sample_fn)
+        self.update_modules([layer_id], 'forward_layer', 'sample',
+                            self.gaussian_sample)
 
-    def vae_loss_fn(self, input, label=None, layer_id=None, branch_name='branch',
-                    pre_layer_ids=None):
+    def kl_loss(self, mu, logvar):
         """
-        VAE loss function combining MSE loss and KL loss:
+        KL divergence for VAE:
 
-            `mse(recon, input) + 0.5 * sum(exp(var) * mu**2 - 1 - var)`
-
-        where `recon` is the reconstructed input.
+            `-0.5 * sum(1 + logvar - mu**2 - exp(logvar), -1)`
 
         Parameters
         ----------
-        input : torch.Tensor
+        mu : torch.Tensor
+            mu of latent space with shape (batch_size, latent_dim)
+        logvar : torch.Tensor
+            log of variance of latent space with shape (batch_size, latent_dim)
+
+        Returns
+        -------
+        kl_div : torch.Tensor
+            KL divergence between q(z|x) and p(z)
+
+        See Also
+        --------
+        vae_train_fn
+        add_output_branch
+        """
+        mu = mu.flatten(1)
+        logvar = logvar.flatten(1)
+        return -0.5 * torch.sum(1. + logvar - mu**2 - torch.exp(logvar), -1)
+
+    def vae_train_fn(self, inputs, label=None, loss_fn=nn.MSELoss(reduction='sum'),
+                     optimizer=None, layer_id=None, branch_name='branch',
+                     pre_layer_ids=None, forward_fn=None, **kwargs):
+        """
+        VAE training function combining reconstruction and KL loss:
+
+            `recon(x_hat, input) - 0.5 * sum(exp(logvar) * mu**2 - 1 - logvar)`
+
+        where `x_hat` is the reconstructed input.
+
+        Parameters
+        ----------
+        inputs : torch.Tensor
             input to model for training
         label : torch.Tensor or None
             label passed from trainloader (currently unused)
             [default: None]
+        loss_fn : torch.nn.modules.loss or rf_pool.losses
+            loss function for reconstruction error
+            [default: torch.nn.MSELoss(reduction='sum')]
+        optimizer : torch.optim
+            optional, optimizer used for updating parameters (to show
+            learning rate) [default: None]
         layer_id : str
             layer id for the layer containing the `mu` and `var` branch
             [default: None, set to `self.get_layer_ids()[-1]`]
@@ -1280,42 +1338,59 @@ class VAE(Model):
             only `layer_id` will be used as `input` is considered to be output
             of previous layer).
             [default: None, set to `self.get_layer_ids(layer_id)[:-1]`]
+        forward_fn : function or None
+            forward function used to pass inputs through model e.g. to obtain
+            inputs to a given layer if training layer-wise.
+            [default: None, set to `lambda x: x[0]`]
 
         Returns
         -------
         loss : torch.Tensor
-            combined MSE and KL loss for training VAE
+            combined reconstruction and KL loss for training VAE
 
         Notes
         -----
         The layer `self.layers[layer_id]` should contain the branching module
-        that models `mu` and `var`. This can be set using `add_output_branch`.
+        that models `mu` and `logvar`. This can be set using `add_output_branch`.
 
         See Also
         --------
         add_output_branch
         """
-        # get layer_id if None
         if layer_id is None:
             layer_id = self.get_layer_ids()[-1]
         # get pre_layer_ids is None
         if pre_layer_ids is None:
             pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
-        # get forward pass, collecting mu, var
+        # get x from potentially passing through model
+        if forward_fn is None:
+            x = inputs[0]
+        else:
+            x = forward_fn(inputs)
+        # zero gradients
+        if optimizer is not None:
+            optimizer.zero_grad()
+        # get forward pass, collecting mu, logvar
         output = {layer_id: {branch_name: []}}
-        h = self.apply(input, pre_layer_ids + [layer_id], output=output)
+        h = self.apply(x, pre_layer_ids + [layer_id], output=output)
         pre_layer_ids.reverse()
         # reconstruct from h for MSE loss
         recon = self.apply(h, [layer_id] + pre_layer_ids, forward=False)
         # compute KL loss
-        mu, var = output.get(layer_id).get(branch_name)[0]
-        KL_loss = 0.5 * torch.sum(torch.exp(var) + mu**2 - 1 - var, -1)
-        return F.mse_loss(recon, input) + KL_loss.mean()
+        mu, logvar = output.get(layer_id).get(branch_name)[0]
+        loss = torch.add(loss_fn(recon, x),
+                         torch.sum(self.kl_loss(mu, logvar)))
+        loss.backward()
+        # step for generator
+        if optimizer is not None:
+            optimizer.step()
+        return loss.item()
 
-    def train_model(self, n_epochs, trainloader, loss_fn=None, optimizer=None,
+    def train_model(self, n_epochs, trainloader,
+                    loss_fn=nn.MSELoss(reduction='sum'), optimizer=None,
                     monitor=100, **kwargs):
         """
-        Train VAE using `vae_loss_fn` and factorized `mu` and `var` in last
+        Train VAE using `vae_train_fn` and factorized `mu` and `logvar` in last
         layer of model (i.e., `self.get_layer_ids()[-1]`).
 
         Parameters
@@ -1326,7 +1401,7 @@ class VAE(Model):
             dataloader containing training (data, label) pairs
         loss_fn : torch.nn.modules.loss or rf_pool.losses
             loss function to opimize during training
-            [default: None, set to `self.vae_loss_fn`]
+            [default: torch.nn.MSELoss(reduction='sum')]
         optimizer : torch.optim
             optimizer used to update parameters during training
             [default: None]
@@ -1344,38 +1419,34 @@ class VAE(Model):
 
         See Also
         --------
-        vae_loss_fn
+        vae_train_fn
         """
         # set forward function to just pass inputs[0]
         kwargs.setdefault('forward_fn', lambda x: x[0])
-        # set layer_id, pre_layer_ids for vae_loss_fn
-        if loss_fn is None:
-            options = functions.pop_attributes(kwargs, ['layer_id','branch_name',
-                                                        'pre_layer_ids'],
-                                               ignore_keys=True)
-            loss_fn = losses.KwargsLoss(self.vae_loss_fn, n_args=2, **options)
+        kwargs.setdefault('train_fn', self.vae_train_fn)
         # train for n_epochs
         return self.train_n_epochs(n_epochs, trainloader, loss_fn, optimizer,
                                    monitor=100, **kwargs)
 
-    def train_layer(self, layer_id, n_epochs, trainloader, loss_fn=None,
-                    optimizer=None, monitor=100, **kwargs):
+    def train_layer(self, layer_id, n_epochs, trainloader,
+                    loss_fn=nn.MSELoss(reduction='sum'), optimizer=None,
+                    monitor=100, **kwargs):
         """
-        Train VAE layer-wise using `vae_loss_fn`, for which `layer_id` should
-        be the layer containing the branching module modeling `mu` and `var`.
+        Train VAE layer-wise using `vae_train_fn`, for which `layer_id` should
+        be the layer containing the branching module modeling `mu` and `logvar`.
 
         Parameters
         ----------
         layer_id : str
             layer id of `Autoencoder` layer to train (should also contain
-            branching module if `loss_fn=vae_loss_fn`)
+            branching module if using `vae_train_fn`)
         n_epochs : int
             number of epochs to train for (complete passes through dataloader)
         trainloader : torch.utils.data.DataLoader
             dataloader containing training (data, label) pairs
         loss_fn : torch.nn.modules.loss or rf_pool.losses
             loss function to opimize during training
-            [default: None, set to `self.vae_loss_fn`]
+            [default: torch.nn.MSELoss(reduction='sum')]
         optimizer : torch.optim
             optimizer used to update parameters during training
             [default: None]
@@ -1383,7 +1454,7 @@ class VAE(Model):
             number of batches between plotting loss, showing weights, etc.
             [default: 100]
         **kwargs : **dict
-            see `train_model` and `vae_loss_fn` for optional keyword arguments
+            see `train_model` and `vae_train_fn` for optional keyword arguments
 
         Returns
         -------
@@ -1393,15 +1464,15 @@ class VAE(Model):
 
         Notes
         -----
-        When using `loss_fn=vae_loss_fn`, `forward_fn` is set to either
+        When using `vae_train_fn`, `forward_fn` is set to either
         `lambda x: x[0]` if `len(self.get_layer_ids(layer_id)[:-1]) == 0` or
         `lambda x: self.apply(x[0], self.get_layer_ids(layer_id)[:-1])` and
-        `pre_layer_ids` is set to []. See `vae_loss_fn` for more details.
+        `pre_layer_ids` is set to []. See `vae_train_fn` for more details.
 
         See Also
         --------
         train_model
-        vae_loss_fn
+        vae_train_fn
         """
         # set forward function
         pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
@@ -1410,14 +1481,10 @@ class VAE(Model):
         else:
             forward_fn = lambda x: x[0]
         kwargs.setdefault('forward_fn', forward_fn)
-        # set layer_id, pre_layer_ids for vae_loss_fn
-        if loss_fn is None:
-            kwargs.setdefault('layer_id', layer_id)
-            kwargs.setdefault('pre_layer_ids', [])
-            options = functions.pop_attributes(kwargs, ['layer_id','branch_name',
-                                                        'pre_layer_ids'],
-                                               ignore_keys=True)
-            loss_fn = losses.KwargsLoss(self.vae_loss_fn, n_args=2, **options)
+        # set default layer_id, pre_layer_ids for vae_train_fn layer-wise
+        kwargs.setdefault('layer_id', layer_id)
+        kwargs.setdefault('pre_layer_ids', [])
+        kwargs.setdefault('train_fn', self.vae_train_fn)
         # train for n_epochs
         return self.train_n_epochs(n_epochs, trainloader, loss_fn, optimizer,
                                    monitor=monitor, **kwargs)
@@ -1538,7 +1605,7 @@ class GAN(Model):
         forward_fn : function or None
             forward function used to pass inputs through model to obtain
             probability of real and fake data to be passed to `loss_fn`
-            [default: `self.forward`]
+            [default: None, set to `self.forward`]
 
         Returns
         -------
@@ -1624,9 +1691,9 @@ class GAN(Model):
         # init _k_updates to 0
         self._k_updates = 0
         # train with minimax_train_fn and k discriminator updates
+        kwargs.setdefault('train_fn', self.minimax_train_fn)
         return self.train_n_epochs(n_epochs, trainloader, loss_fn, optimizer,
-                                   train_fn=self.minimax_train_fn, k=k,
-                                   monitor=monitor, **kwargs)
+                                   k=k, monitor=monitor, **kwargs)
 
 class DeepBeliefNetwork(Model):
     """
