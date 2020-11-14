@@ -9,3 +9,5 @@ imageio>=2.5
 Ipython>=5.1
 matplotlib>=3.0
 Pillow>=4.2
+pytorch_lightning>=1.0.6
+wand>=0.10.10 
