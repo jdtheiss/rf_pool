@@ -22,6 +22,11 @@ After downloading, run the following from command line:
 
 Note: rf_pool requires python version >= 3.6.
 
+## Example
+After installing, run the following from command line to train on MNIST:
+
+    $ python rf_pool/scripts/train.py --config examples/mnist_example.yaml --max_epochs 1
+
 ## Demos
 Open a jupyter notebook, and begin exploring the notebooks in the "example" folder.
 These notebooks cover most of the typical cases for using rf_pool.

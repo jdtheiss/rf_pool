@@ -1,4 +1,6 @@
+# set solver for training
 Solver: Solver
+# build 3-layer network
 Model:
     ConvBlock:
         - in_channels: 1
@@ -22,24 +24,28 @@ Model:
           normalization: 
           activation: 
     Flatten: {}
+    # insert attention at layer 1
     insert_modules:
         LAYERS: [1]
         IMAGE_SHAPE: [1,28,28]
         Attention:
             n_hidden: 10
-            feature_attention: True
-            spatial_attention: False
             img_shape: [12, 12]
+    # set parameters for training
     set_parameters:
         rbm_parameters: attention
         other_parameters: ConvBlock
+# log rbm losses
 LOG:
     fields: [spatial_rbm_loss, feature_rbm_loss]
     reduce: mean
+# set cross entropy loss
 Loss:
     CrossEntropyLoss: {}
+# set accuracy metric
 Metric:
     Accuracy: {}
+# set Adam optimizer with separate parameters
 Optimizer:
     Adam:
         params:
@@ -47,6 +53,7 @@ Optimizer:
               lr: 1.0e-4
             - params: other_parameters
         lr: 1.0e-3
+# set training dataloader for MNIST
 Train:
     DataLoader:
         MNIST:
