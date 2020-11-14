@@ -65,28 +65,26 @@ def _get_out_channels(model, img_shape=[3,12,12]):
 
 class Model(nn.Module):
     """
+    Base model class
+
+    Parameters
+    ----------
+    model : dict or nn.Module
+        model to be set or built (if `isinstance(model, dict)`)
+    **kwargs : **dict
+        (method, kwargs) pairs for calling additional methods (see Methods)
+
+    Methods
+    -------
+    insert_modules(**modules:**dict) : insert modules into model at specified layers
+    set_parameters(**params:**dict) : set parameters for training
+    print_model(verbose:bool) : print model and other attributes
+
+    See Also
+    --------
+    rf_pool.solver.build.build_model
     """
     def __init__(self, model, **kwargs):
-        """
-        Base model class
-
-        Parameters
-        ----------
-        model : dict or nn.Module
-            model to be set or built (if `isinstance(model, dict)`)
-        **kwargs : **dict
-            (method, kwargs) pairs for calling additional methods (see Methods)
-
-        Methods
-        -------
-        insert_modules(insert:dict) : insert modules into model at specified layers
-        set_parameters(params:dict) : set parameters for training
-        print_model(verbose:bool) : print model and other attributes
-
-        See Also
-        --------
-        rf_pool.solver.build.build_model
-        """
         super(Model, self).__init__()
         # build model
         if isinstance(model, dict):
@@ -96,20 +94,20 @@ class Model(nn.Module):
         # apply methods
         for k, v in kwargs.items():
             assert hasattr(self, k)
-            getattr(self, k)(v)
+            getattr(self, k)(**v)
 
     def __repr__(self):
         # set _model repr as self repr
         return self._model.__repr__()
 
-    def insert_modules(self, insert={}):
+    def insert_modules(self, **kwargs):
         """
         Insert modules into network at given layer indices
 
         Parameters
         ----------
-        modules : dict
-            dictionary with following keys:
+        **kwargs : **dict
+            key/value pairs with following structure:
             LAYERS : list
                 indices of network `_modules` to insert module
             NETWORK : str, optional
@@ -162,22 +160,22 @@ class Model(nn.Module):
         )
         """
         # get network and layers
-        net_name = insert.pop('NETWORK', '_model')
+        net_name = kwargs.pop('NETWORK', '_model')
         if net_name == '_model':
             net = getattr(self, net_name)
         else:
             net = getattr(self._model, net_name, None)
-        layers = insert.pop('LAYERS', [])
+        layers = kwargs.pop('LAYERS', [])
         n_layers = len(layers)
         if net is None or n_layers == 0:
             return
         # get network modules
         net_mods = list(net._modules.items())
         # get out channels of network modules
-        img_shape = insert.pop('IMAGE_SHAPE', [3,12,12])
+        img_shape = kwargs.pop('IMAGE_SHAPE', [3,12,12])
         net_out_channels = _get_out_channels(net, img_shape)
         # get modules to insert
-        insert_mods = list(insert.items())
+        insert_mods = list(kwargs.items())
         insert_mods = (insert_mods + insert_mods[-1:] * n_layers)[:n_layers]
         # insert modules to network
         cnt = 0
@@ -217,7 +215,7 @@ class Model(nn.Module):
                 params.append(param)
         return params
 
-    def set_parameters(self, params):
+    def set_parameters(self, **kwargs):
         """
         Set parameters from model components for training
 
@@ -245,7 +243,7 @@ class Model(nn.Module):
         ['number of weight_parameters: 2', 'number of bias_parameters: 2']
         """
         # set parameters for each set of patterns
-        for name, patterns in params.items():
+        for name, patterns in kwargs.items():
             # set parameters to model
             setattr(self, name, self._find_parameters(patterns))
 
@@ -276,206 +274,7 @@ class Model(nn.Module):
             x = mod(x)
         return x
 
-class _Model_OLD(nn.Module):
-    def __init__(self, **cfg):
-        super(Model, self).__init__()
-
-    #TODO: move these functions to visualize
-    def rf_output(self, input, layer_id, module_name='pool', **kwargs):
-        if module_name is None:
-            rf_layer = self.layers[layer_id]
-        else:
-            rf_layer = getattr(self.layers[layer_id].forward_layer, module_name)
-        assert hasattr(rf_layer, 'rfs'), (
-            'No rf_pool layer found.'
-        )
-        # get layer_id kwargs
-        layer_kwargs = copy.deepcopy(kwargs)
-        layer_kwargs.setdefault(layer_id, {})
-        layer_kwargs.get(layer_id).update({'output_module': 'pool'})
-        # apply layers with output_module as pool for layer_id
-        return self.apply(input.detach(), output_layer=layer_id, **layer_kwargs)
-
-    def rf_index(self, input, layer_id, module_name='pool', thr=0.):
-        # get heatmap
-        heatmap = self.rf_heatmap(layer_id, module_name=module_name)
-        # get RFs where any pixel is greater than threshold
-        return torch.max(torch.gt(torch.mul(input,heatmap),thr).flatten(-2),-1)[0]
-
-    def rf_heatmap(self, layer_id, module_name='pool',
-                   layer_type='forward_layer'):
-        """
-        Show heatmap of receptive fields in image space (requires
-        `rf_pool.pool.Pool` module)
-
-        Parameters
-        ----------
-        layer_id : str
-            layer id of layer containing pooling module
-        module_name : str
-            name of pooling module within layer [default: 'pool']
-        layer_type : str
-            layer name containing module [default: 'forward_layer']
-
-        Returns
-        -------
-        heatmap : torch.Tensor
-            heatmap with shape (n_RF, h, w) as a binary map of RF area in image
-            space
-        """
-        if module_name is None:
-            rf_layer = self.layers[layer_id]
-        elif layer_type is None:
-            rf_layer = getattr(self.layers[layer_id], module_name)
-        else:
-            rf_layer = getattr(getattr(self.layers[layer_id], layer_type),
-                               module_name)
-        assert hasattr(rf_layer, 'rfs'), (
-            'No rf_pool layer found.'
-        )
-        # get layers up to layer id
-        pre_layer_ids = self.get_layer_ids(layer_id)
-        # for each layer apply transpose convolution of ones and unpooling
-        rf_layer._update_rfs(rf_layer.mu, rf_layer.sigma)
-        rfs = torch.unsqueeze(rf_layer.rfs, 1).detach()
-        # get modules with kernel_size attribute
-        modules = []
-        for id in pre_layer_ids:
-            modules.extend(self.layers[id].get_modules_by_attr(layer_type,
-                                                               'kernel_size'))
-        modules.reverse()
-        # find rf_layer for start
-        idx = [i for i, m in enumerate(modules) if m is rf_layer][0]
-        modules = modules[idx+1:]
-        # for each module, upsample or transpose convolution
-        heatmap = rfs.clone()
-        for module in modules:
-            # get kernel_size
-            size = getattr(module, 'kernel_size')
-            if size is None:
-                continue
-            if type(size) is not tuple:
-                size = (size,)*2
-            # if pool, upsample
-            if isinstance(module, pool.Pool) or \
-               torch.typename(module).lower().find('pool') > -1:
-                heatmap = F.interpolate(heatmap, scale_factor=size)
-            else:
-                w = torch.ones((1,1) + size)
-                heatmap = torch.conv_transpose2d(heatmap, w)
-            heatmap = torch.gt(heatmap, 0.).float()
-        return heatmap.squeeze(1)
-
-    def rf_to_image_space(self, layer_id, *args, module_name='pool',
-                          layer_type='forward_layer', output_space=False):
-        """
-        Get image-space coordinates/sizes for RF `mu`/`sigma` values (or other)
-
-        Parameters
-        ----------
-        layer_id : str
-            layer id of layer containing pooling module
-        *args : float, int, array-like
-            inputs to obtain image-space coordinates/sizes
-            [default: `mu`/`sigma` from RF pooling module]
-        module_name : str
-            name of pooling module within layer [default: 'pool']
-        layer_type : str
-            layer name containing module [default: 'forward_layer']
-        output_space : boolean
-            True/False whether to return image-space coordiantes based on
-            output of module [default: False]
-
-        Returns
-        -------
-        coords : list
-            torch.Tensor of image-space coordinate/size per arg in *args
-
-        Notes
-        -----
-        If `output_space is True`, image-space coordinates are in reference to
-        the output of the given module. If `output_space is False`, image-space
-        coordinates are in reference to the input to the given module (i.e.,
-        the module `kernel_size` is not included in the coordinate computation).
-        This distinction is useful for `rf_pool.pool` classes which use the
-        input image shape as reference for RF locations.
-        """
-        #TODO: need to update for stride, dilation, etc.
-        # start module
-        if module_name is None:
-            start_module = self.layers[layer_id]
-        elif layer_type is None:
-            start_module = getattr(self.layers[layer_id], module_name)
-        else:
-            start_module = getattr(getattr(self.layers[layer_id], layer_type),
-                                   module_name)
-        # get mu, sigma
-        if len(args) == 0:
-            args = start_module.get('mu','sigma')
-            args = list(args.values())
-        # ensure args are tensor
-        args = [torch.as_tensor(a) for a in args]
-        arg_shapes = [a.shape for a in args]
-        # get layers up to layer_id
-        layers = self.get_layers(self.get_layer_ids(layer_id))
-        # get modules with kernel_size
-        modules = []
-        for layer in layers:
-            modules.extend(layer.get_modules_by_attr('forward_layer',
-                                                     'kernel_size'))
-        modules.reverse()
-        # find start_module
-        idx = [i for i, m in enumerate(modules) if m is start_module][0]
-        # if using input space, add 1 to idx
-        if output_space is False:
-            idx += 1
-        # get reversed modules from start_module
-        modules = modules[idx:]
-        # for each module, add half weight and multiply by pool size
-        for module in modules:
-            size = getattr(module, 'kernel_size')
-            if size is None:
-                continue
-            size = torch.as_tensor(size)
-            # if pool, upsample
-            if isinstance(module, pool.Pool) or \
-               torch.typename(module).lower().find('pool') > -1:
-                args = [a * size.type(a.dtype) for a in args]
-            else:
-                half_kernel = (size - 1) // 2
-                args = [a + half_kernel.type(a.dtype) for a in args]
-        # ensure same shape by averaging over different dim
-        args = [torch.mean(a, -1).reshape(a_shp) if a.shape != a_shp else a
-                for (a, a_shp) in zip(args, arg_shapes)]
-        return args
-
-class FeedForwardNetwork(Model):
-    """
-    Feed Forward Network
-
-    Attributes
-    ----------
-    data_shape : tuple
-        shape of input data
-    layers : torch.nn.ModuleDict
-        layers containing computations to be performed
-
-    Methods
-    -------
-    append(layer_id, layer)
-    insert(idx, layer_id, layer)
-    remove(layer_id)
-    apply(input, layer_ids=[], forward=True, output={}, output_layer=None,
-          **kwargs)
-    train_layer(layer_id, n_epochs, trainloader, loss_fn, optimizer,
-                monitor=100, **kwargs)
-    train_model(n_epochs, trainloader, loss_fn, optimizer, monitor=100, **kwargs)
-    optimize_texture(n_steps, seed, loss_fn, optimizer, input=[],
-                     transform=None, monitor=100, **kwargs)
-    """
-    def __init__(self, model=None):
-        super(FeedForwardNetwork, self).__init__(model)
-
+#TODO: update classes to work as Model class does
 class VAE(Model):
     """
     Variational Autoencoder
