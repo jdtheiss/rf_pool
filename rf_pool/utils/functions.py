@@ -1,6 +1,8 @@
 from collections import OrderedDict
 from itertools import product
 import re
+import warnings
+import yaml
 
 import IPython.display
 from IPython.display import clear_output, display
@@ -9,6 +11,73 @@ import numpy as np
 import scipy
 from scipy.io import loadmat
 import torch
+from torch import nn
+
+def load_from_yaml(file):
+    """
+    Return dictionary loaded from yaml file
+
+    Parameters
+    ----------
+    file : str
+        .yaml file containing structure to return as dictionary
+
+    Returns
+    -------
+    d : dict
+        dictionary loaded from yaml file
+    """
+    with open(file, 'r') as f:
+        try:
+            d = yaml.safe_load(f)
+        except yaml.YAMLError as exc:
+            raise(exc)
+    return d
+
+def init_weights(model, named_parameters=None, **kwargs):
+    """
+    Initialize weights of a model using nn.init functions
+
+    Parameters
+    ----------
+    model : nn.Module
+        model for which to initialize weights using `model.apply()`
+    **kwargs : **dict
+        (key,value) pairs for `nn.init` functions to use.
+        key : str
+            function in `nn.init` to use (e.g., 'normal_')
+        value : dict
+            kwargs passed to `getattr(nn.init, key.lower())`
+
+            additional (key, value) pairs:
+            'class_names' : list
+                class names of modules to initialize (e.g., ['Conv','Linear'])
+            'fields' : list
+                fields of modules containing parameters to initialize
+                (e.g., ['weight'])
+
+    Returns
+    -------
+    None, `model.apply()` is called
+    """
+    if len(kwargs) == 0:
+        warnings.warn('No weight initialization functions found.')
+        return
+    # create function to apply
+    def apply_fn(mod):
+        # initialize params
+        for k, v in kwargs.items():
+            # pop class names and fields from v
+            class_names = v.pop('class_names', ['Conv','Linear'])
+            fields = v.pop('fields', ['weight'])
+            # get init_fn
+            init_fn = getattr(nn.init, k)
+            if any(mod.__class__.__name__.find(name) != -1 for name in class_names):
+                param = [getattr(mod, field) for field in fields
+                         if hasattr(mod, field)][0]
+                init_fn(param, **v)
+    # apply through model
+    model.apply(fn)
 
 def get_doc(docstr, field='', lines=[], end_field=None):
     """
@@ -524,10 +593,12 @@ def pairwise_cosine_similarity(feat_i, feat_j, axis=-1):
 
     Parameters
     ----------
-    feat_i: torch.tensor
+    feat_i : torch.tensor
         features corresponding to class label i
-    feat_j: torch.tensor
+    feat_j : torch.tensor
         features corresponding to class label j
+    axis : int
+        dimension for which to compute cosine similarity
 
     Returns
     -------
