@@ -1,0 +1,58 @@
+Solver: Solver
+Model:
+    ConvBlock:
+        - in_channels: 1
+          out_channels: 32
+          kernel_size: 5
+          padding: 0
+          normalization: 
+          activation: {ReLU: {}}
+          pool: {MaxPool2d: 2}
+        - in_channels: 32
+          out_channels: 64
+          kernel_size: 5
+          padding: 0
+          normalization: 
+          activation: {ReLU: {}}
+          pool: {MaxPool2d: 2}
+        - in_channels: 64
+          out_channels: 10
+          kernel_size: 4
+          padding: 0
+          normalization: 
+          activation: 
+    Flatten: {}
+    insert_modules:
+        LAYERS: [1]
+        IMAGE_SHAPE: [1,28,28]
+        Attention:
+            n_hidden: 10
+            feature_attention: True
+            spatial_attention: False
+            img_shape: [12, 12]
+    set_parameters:
+        rbm_parameters: attention
+        other_parameters: ConvBlock
+LOG:
+    fields: [spatial_rbm_loss, feature_rbm_loss]
+    reduce: mean
+Loss:
+    CrossEntropyLoss: {}
+Metric:
+    Accuracy: {}
+Optimizer:
+    Adam:
+        params:
+            - params: rbm_parameters
+              lr: 1.0e-4
+            - params: other_parameters
+        lr: 1.0e-3
+Train:
+    DataLoader:
+        MNIST:
+            root: datasets/
+            train: True
+            download: True
+            transform: {ToTensor: {}}
+        batch_size: 10
+        num_workers: 4
