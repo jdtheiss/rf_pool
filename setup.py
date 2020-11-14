@@ -40,9 +40,9 @@ elif platform == 'darwin':
     extra_compile_args = ['-stdlib=libc++']
 else:
     extra_compile_args = []
-    
+
 # set pool C++ extension
-pool_module = Extension('pool',
+pool_module = Extension('_pool',
                         sources=['src/poolmodule.cpp'],
                         language='C++',
                         include_dirs=[numpy.get_include()],
@@ -55,7 +55,7 @@ with open('README.md', 'r') as f:
     long_description = f.read()
 
 setup(name='rf_pool',
-      version='0.1',
+      version='0.2',
       author='Justin Theiss, Joel Bowen',
       author_email='theissjd@berkeley.edu',
       description='Receptive field pooling',

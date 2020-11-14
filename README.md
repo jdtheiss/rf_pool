@@ -18,7 +18,7 @@ After downloading, run the following from command line:
 
     $ cd rf_pool
     $ pip install -r requirements.txt
-    $ python setup.py install
+    $ pip install -e .
 
 Note: rf_pool requires python version >= 3.6.
 

@@ -9,8 +9,8 @@ from matplotlib import patches
 import numpy as np
 import torch
 
-from . import functions
-from .. import losses
+from rf_pool import losses
+from rf_pool.utils import functions
 
 def plot_with_kwargs(fn, args, fn_prefix=None, **kwargs):
     # .Collection kwargs

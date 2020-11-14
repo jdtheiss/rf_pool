@@ -65,19 +65,19 @@ static PyObject* rf_pool(PyObject* args, PyObject* kwargs, fn pool_fn)
     if (check_kwargs(kwargs, "apply_mask")) {
         apply_mask = PyObject_IsTrue(PyDict_GetItemString(kwargs, "apply_mask"));
     }
-    
+
     // get ndim, dims, type from array
     int ndim_a = PyArray_NDIM(array);
     npy_intp* dims_a = PyArray_DIMS(array);
     int type_a = PyArray_TYPE(array);
-    
+
     // init mask_indices data
     int ndim_m = PyArray_NDIM(mask_indices);
     size_t size_m = PyArray_SIZE(mask_indices);
     npy_intp* dims_m = PyArray_DIMS(mask_indices);
     size_t mask_size = size_m / dims_m[0];
-    
-    // init data as zeros 
+
+    // init data as zeros
     // if retain_shape set output to (batch*ch, n_rfs, img_h, img_w)
     PyArrayObject* output;
     PyArrayObject* indices;
@@ -95,7 +95,7 @@ static PyObject* rf_pool(PyObject* args, PyObject* kwargs, fn pool_fn)
     }
     PyArray_ENABLEFLAGS(output, NPY_ARRAY_OWNDATA);
     PyArray_ENABLEFLAGS(indices, NPY_ARRAY_OWNDATA);
-    
+
     // get mask
     PyArrayObject* mask;
     if (apply_mask && check_kwargs(kwargs, "mask")) {
@@ -104,7 +104,7 @@ static PyObject* rf_pool(PyObject* args, PyObject* kwargs, fn pool_fn)
         mask = (PyArrayObject*) PyArray_ZEROS(ndim_m, dims_m, type_a, 0);
         apply_mask = false;
     }
-    
+
     // loop through batch*channels
     #pragma omp parallel for collapse(2)
     for (size_t i=0; i < size_t(dims_a[0]); ++i) {
@@ -114,7 +114,7 @@ static PyObject* rf_pool(PyObject* args, PyObject* kwargs, fn pool_fn)
                 // call rf pooling function while retaining mask_indices shape
                 pool_fn((T*) PyArray_GETPTR1(array, i), (T*) PyArray_GETPTR1(mask, j),
                         mask_size, (T*) PyArray_GETPTR1(mask_indices, j),
-                        (T*) PyArray_GETPTR1(output, i*dims_m[0] + j), 
+                        (T*) PyArray_GETPTR1(output, i*dims_m[0] + j),
                         (size_t*) PyArray_GETPTR1(indices, i*dims_m[0] + j), apply_mask);
             } else {
                 // call rf pooling function
@@ -146,16 +146,16 @@ static PyObject* kernel_pool(PyObject* args, PyObject* kwargs, fn pool_fn, bool 
         stride[0] = kernel[0];
         stride[1] = kernel[1];
     }
-    
+
     // get ndim, dims, type from array
     int ndim_a = PyArray_NDIM(array);
     npy_intp* dims_a = PyArray_DIMS(array);
     int type_a = PyArray_TYPE(array);
-    
+
     // set img_shape
     size_t img_shape[] = {size_t(dims_a[ndim_a - 2]), size_t(dims_a[ndim_a - 1])};
     size_t img_size = img_shape[0] * img_shape[1];
-    
+
     // init data as zeros with subsampled shape
     if (subsample) {
         int cnt = 0;
@@ -170,11 +170,11 @@ static PyObject* kernel_pool(PyObject* args, PyObject* kwargs, fn pool_fn, bool 
     PyArrayObject* indices = (PyArrayObject*) PyArray_ZEROS(ndim_a, dims_a, NPY_LONG, 0);
     PyArray_ENABLEFLAGS(output, NPY_ARRAY_OWNDATA);
     PyArray_ENABLEFLAGS(indices, NPY_ARRAY_OWNDATA);
-    
+
     // loop through batch*channels
     #pragma omp parallel for
     for (size_t i=0; i < size_t(dims_a[0]); ++i) {
-        pool_fn((T*) PyArray_GETPTR1(array, i), kernel, img_shape, stride, img_size, 
+        pool_fn((T*) PyArray_GETPTR1(array, i), kernel, img_shape, stride, img_size,
                 (T*) PyArray_GETPTR1(output, i), (size_t*) PyArray_GETPTR1(indices, i));
     }
     Py_DECREF(array);
@@ -197,12 +197,12 @@ static PyObject* kernel_unpool(PyObject* args, PyObject* kwargs, fn unpool_fn)
         stride[0] = kernel[0];
         stride[1] = kernel[1];
     }
-    
+
     // get ndim, dims, type from array
     int ndim_a = PyArray_NDIM(array);
     npy_intp* dims_a = PyArray_DIMS(array);
     int type_a = PyArray_TYPE(array);
-    
+
     // init data as zeros with un-subsampled shape
     int cnt = 0;
     for (int i=0; i < ndim_a; ++i) {
@@ -213,7 +213,7 @@ static PyObject* kernel_unpool(PyObject* args, PyObject* kwargs, fn unpool_fn)
     }
     PyArrayObject* output = (PyArrayObject*) PyArray_ZEROS(ndim_a, dims_a, type_a, 0);
     PyArray_ENABLEFLAGS(output, NPY_ARRAY_OWNDATA);
-    
+
     // get mask
     if (PyDict_Contains(kwargs, PyUnicode_FromString("mask"))) {
         mask = (PyArrayObject*) PyArray_FROM_OT(PyDict_GetItemString(kwargs, "mask"), type_a);
@@ -222,12 +222,12 @@ static PyObject* kernel_unpool(PyObject* args, PyObject* kwargs, fn unpool_fn)
         PyArray_FillWithScalar(mask, PyFloat_FromDouble(1));
     }
     PyArray_ENABLEFLAGS(mask, NPY_ARRAY_OWNDATA);
-    
+
     // set img_shape
     size_t img_shape[] = {size_t(dims_a[ndim_a - 2]), size_t(dims_a[ndim_a - 1])};
-    
+
     // call kernel pooling function
-    unpool_fn((T*) PyArray_DATA(array), kernel, img_shape, stride, PyArray_SIZE(output), 
+    unpool_fn((T*) PyArray_DATA(array), kernel, img_shape, stride, PyArray_SIZE(output),
               (T*) PyArray_DATA(mask), (T*) PyArray_DATA(output));
     Py_DECREF(array);
     Py_DECREF(mask);
@@ -236,7 +236,7 @@ static PyObject* kernel_unpool(PyObject* args, PyObject* kwargs, fn unpool_fn)
 
 template<typename T, typename rf_fn, typename kernel_fn>
 static PyObject* max_pool(PyObject* self, PyObject* args, PyObject* kwargs)
-{   
+{
     // apply rf pooling function
     PyObject* output_tuple = NULL;
     PyObject* index_mask = Py_None;
@@ -330,7 +330,7 @@ static PyObject* probmax_pool(PyObject* self, PyObject* args, PyObject* kwargs)
 
 template<typename T, typename rf_fn, typename kernel_fn>
 static PyObject* stochastic_pool(PyObject* self, PyObject* args, PyObject* kwargs)
-{   
+{
     // apply rf pooling function
     PyObject* output_tuple = NULL;
     PyObject* index_mask = Py_None;
@@ -362,7 +362,7 @@ static PyObject* stochastic_pool(PyObject* self, PyObject* args, PyObject* kwarg
 
 template<typename T, typename grad_fn>
 static PyObject* unpool(PyObject* self, PyObject* args, PyObject* kwargs)
-{   
+{
     // apply unpooling functions
     PyObject* output = kernel_unpool<T, grad_fn>(args, kwargs, pool<T>::kernel_unpool);
     return Py_BuildValue("(N)", output);
@@ -372,9 +372,9 @@ typedef void (rf_fn)(const float*, const float*, size_t, const float*, float*, s
 typedef void (kernel_fn)(const float*, size_t*, size_t*, size_t*, size_t, float*, size_t*);
 typedef void (grad_fn)(const float*, size_t*, size_t*, size_t*, size_t, const float*, float*);
 static PyMethodDef pool_methods[] = {
-    {"max_pool", 
+    {"max_pool",
      (PyCFunction) max_pool<float, rf_fn, kernel_fn>,
-     METH_VARARGS | METH_KEYWORDS, 
+     METH_VARARGS | METH_KEYWORDS,
      "max_pool(array, mask_indices=None, kernel=None, img_shape=None, stride=None)\n\n \
      Ouput max across each receptive field (if mask_indices given) at max index,\n \
      followed by max across kernel (if given).\n\n \
@@ -395,9 +395,9 @@ static PyMethodDef pool_methods[] = {
          with the maximum value within each receptive field maintained and\n \
          all other values set to zero (if mask_indices != None). If kernel is given\n \
          kernel pooling is subsequently applied to the output (or input)."},
-    {"probmax", 
+    {"probmax",
      (PyCFunction) probmax<float, rf_fn, kernel_fn>,
-     METH_VARARGS | METH_KEYWORDS, 
+     METH_VARARGS | METH_KEYWORDS,
      "probmax(array, mask_indices=None, kernel=None, img_shape=None, stride=None)\n\n \
      Ouput (1 - prob(all pixels off)) across kernel (if given) at multinomial index,\n \
      followed by (1 - prob(all pixels off)) across each receptive field (if mask_indices given)\n \
@@ -425,9 +425,9 @@ static PyMethodDef pool_methods[] = {
      deep belief networks for scalable unsupervised learning of hierarchical\n \
      representations. In Proceedings of the 26th annual international conference\n \
      on machine learning (pp. 609-616). ACM."},
-    {"probmax_pool", 
+    {"probmax_pool",
      (PyCFunction) probmax_pool<float, rf_fn, kernel_fn>,
-     METH_VARARGS | METH_KEYWORDS, 
+     METH_VARARGS | METH_KEYWORDS,
      "probmax_pool(array, mask_indices=None, kernel=None, img_shape=None, stride=None)\n\n \
      Ouput (1 - prob(all pixels off)) across kernel (if given),\n \
      followed by (1 - prob(all pixels off)) across each receptive field (if mask_indices given)\n \
@@ -455,9 +455,9 @@ static PyMethodDef pool_methods[] = {
      deep belief networks for scalable unsupervised learning of hierarchical\n \
      representations. In Proceedings of the 26th annual international conference\n \
      on machine learning (pp. 609-616). ACM."},
-    {"stochastic_pool", 
+    {"stochastic_pool",
      (PyCFunction) stochastic_pool<float, rf_fn, kernel_fn>,
-     METH_VARARGS | METH_KEYWORDS, 
+     METH_VARARGS | METH_KEYWORDS,
      "stochastic_pool(array, mask_indices=None, kernel=None, img_shape=None, stride=None)\n\n \
      Ouput max across each receptive field (if mask_indices given) at multinomial index,\n \
      followed by max across kernel (if given) at multinomial index.\n\n \
@@ -482,9 +482,9 @@ static PyMethodDef pool_methods[] = {
      ----------\n \
      Zeiler, M. D., & Fergus, R. (2013). Stochastic pooling for regularization\n \
      of deep convolutional neural networks. arXiv preprint arXiv:1301.3557."},
-    {"unpool", 
+    {"unpool",
      (PyCFunction) unpool<float, grad_fn>,
-     METH_VARARGS | METH_KEYWORDS, 
+     METH_VARARGS | METH_KEYWORDS,
      "unpool(array, mask=None, kernel=None, img_shape=None, stride=None)\n\n \
      Output values from array to a resized array at indexed locations in mask.\n\n \
      Parameters\n \
@@ -512,7 +512,7 @@ static struct PyModuleDef pool_definition = {
     pool_methods
 };
 
-PyMODINIT_FUNC PyInit_pool(void) {
+PyMODINIT_FUNC PyInit__pool(void) {
     import_array();
     return PyModule_Create(&pool_definition);
 };

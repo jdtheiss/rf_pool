@@ -1,5 +1,2 @@
-from . import utils
-from . import ops
-from . import pool
-from . import modules
-from . import models
+from . import data, losses, metrics, models, modules, pool, solver, utils
+from .version import __version__

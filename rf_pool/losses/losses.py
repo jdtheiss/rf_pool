@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from .utils import functions
+from rf_pool.utils import functions
 
 def _count_items(d):
     if not isinstance(d, (dict, OrderedDict)):
@@ -25,10 +25,40 @@ def _get_items(d):
 
 class Loss(nn.Module):
     """
-    Base Class for losses
+    Base class for losses
+
+    Parameters
+    ----------
+    losses : dict
+        dictionary of loss functions as (name, loss_fn) key/value pairs
+    weights : dict
+        dictionary of weights (per loss function in `losses`) as (name, weight)
+        key/value pairs
+        [default: {}, dict((k, 1.) for k in losses.keys())]
+
+    Methods
+    -------
+    add_loss(name, loss_fn, weight=1.) : add another loss to `losses` attribute
     """
-    def __init__(self):
+    def __init__(self, losses, weights={}):
         super(Loss, self).__init__()
+        self.losses = losses
+        for k in losses.keys():
+            weights.setdefault(k, 1.)
+        self.weights = weights
+
+    def add_loss(self, name, loss_fn, weight=1.):
+        self.losses.update({name: loss_fn})
+        self.weights.update({name: weight})
+
+    def forward(self, *args):
+        loss = 0
+        self.logs = {}
+        for name, loss_fn in self.losses.items():
+            loss_i = loss_fn(*args)
+            loss = loss + loss_i * self.weights.get(name, 1.)
+            self.logs.update({name: loss_i.detach()})
+        return loss
 
     def L2(self, x):
         return torch.sqrt(torch.sum(torch.pow(x, 2)))
@@ -48,46 +78,6 @@ class Loss(nn.Module):
             self.model.set_requires_grad(self.parameters, requires_grad=False)
             self.model.set_requires_grad(on_parameters, requires_grad=True)
         return None
-
-class MultiLoss(Loss):
-    """
-    Combine multiple losses as weighted sum
-
-    Parameters
-    ----------
-    losses : list
-        list of loss functions to be called
-    weights : list
-        list of weights (per loss function in `losses`)
-        [default: [1.] * len(losses)]
-
-    Returns
-    -------
-    None
-
-    Methods
-    -------
-    add_loss(loss, weight=1.) : add another loss to `losses` attribute
-    """
-    def __init__(self, losses=[], weights=[]):
-        super(MultiLoss, self).__init__()
-        self.losses = losses
-        self.weights = weights
-        if len(losses) > len(weights):
-            for i in range(len(losses) - len(weights)):
-                self.weights.append(1.)
-        assert len(self.losses) == len(self.weights)
-
-    def add_loss(self, loss, weight=1.):
-        self.losses.append(loss)
-        self.weights.append(weight)
-
-    def forward(self, *args):
-        list_args = functions.parse_list_args(len(self.losses), *args)[0]
-        loss = torch.zeros(1, requires_grad=True)
-        for loss_fn, weight, args_i in zip(self.losses, self.weights, list_args):
-            loss = loss + torch.mul(loss_fn(*args_i), weight)
-        return loss
 
 class ArgLoss(Loss):
     """
@@ -152,9 +142,11 @@ class KwargsLoss(Loss):
     --------
     ArgLoss
     """
-    def __init__(self, loss_fn, n_args=1, **kwargs):
+    def __init__(self, *args, n_args=1, **kwargs):
         super(KwargsLoss, self).__init__()
-        self.loss_fn = loss_fn
+        assert len(args) == 1, ('Only 1 loss function can be used.')
+        # use `args` to avoid loss_fn being a necessary kwarg
+        self.loss_fn = args[0]
         self.n_args = n_args
         self.kwargs = kwargs
 
@@ -509,7 +501,7 @@ class SparseLoss(LayerLoss):
     kernel_size : tuple or None, optional
         kernel size for type='group_lasso'
     **kwargs
-        keyword arguments for apply method if module_name is not None
+        keyword arguments passed to model.apply function
 
     Returns
     -------
@@ -585,3 +577,115 @@ class SparseLoss(LayerLoss):
                 sparse_cost = torch.mean(torch.flatten(sparse_cost, 2), -1)
             loss = loss + torch.mul(self.cost[i], torch.sum(sparse_cost))
         return loss / self.n_features
+
+class BEAMLoss(LayerLoss):
+    """
+    Boltzmann Encoded Adversarial Machines Loss
+
+    Seeks to minimize reverse KL divergence (i.e., KL(p_model || p_data)) by
+    using a GAN-inspired approach where the adversarial loss is based on a
+    "distance-weighted nearest-neighbor critic" on the hidden units of an RBM.
+
+    Parameters
+    ----------
+    model : rf_pool.models
+        model used to obtain layer outputs
+    layer_modules : dict
+        dictionary containing {layer_id: []} for obtaining layer-specific
+        outputs on which to compute the loss (see model.apply). use
+        {layer_id: {module_name: []}} to set specific module within layer.
+        This should represent the module computing p(h|v) for the layer.
+    n_neighbors : int
+        number of nearest neightbors to include in discriminator calculation
+        (see Notes). [default: 5]
+    epsilon : float
+        regularizer for the inverse distance (see Notes). [default: 1e-6]
+    cost : float or list, optional
+        cost per layer/module pair or float value applied to all losses
+        [default: 1.]
+    parameters : torch.nn.parameter.Parameter
+        parameters to use in update from loss
+        [default: None, gets parameters via
+        `model.layers[list(layer_modules.keys())[0]].parameters()`]
+    **kwargs : **dict
+        keyword arguments passed to model.apply function
+
+    Returns
+    -------
+    None
+
+    Notes
+    -----
+    The `loss_fn` is set to `beam_loss`, which finds the nearest neighbors in
+    the feature space (i.e., `{layer_id: {module_name: []}}`) for a random input
+    compared to other inputs in the batch as well as model fantasy particles
+    (i.e., `model.layers[layer_id].persistent`). The loss is then computed as
+
+    `-T(h) * p_{model}(h)`,
+    `T(h) = 2 * \sum_j{1./(d_j + epsilon)} / \sum_k{1./(d_k + epsilon)} - 1`,
+
+    where `k` indicates the nearest neighbors (i.e., `n_neighbors`), `j` is the
+    set of nearest neighbors in the batch of data, and `d_j` (or `d_k`) are the
+    distances for each nearest neighbor. This is the distance-weighted
+    nearest-neighbor critic in Fisher et al. (2018) (see References).
+
+    References
+    ----------
+    Fisher, C. K., Smith, A. M., & Walsh, J. R. (2018). Boltzmann encoded
+    adversarial machines. arXiv preprint arXiv:1804.08682.
+    """
+    def __init__(self, model, layer_modules, n_neighbors=5, epsilon=1e-6,
+                 cost=1., parameters=None, **kwargs):
+        assert len(layer_modules) == 1, (
+            '`layer_modules` should be `{layer_id: {module_name: []}}`.'
+        )
+        # get layer_id, set parameters if None
+        self.layer_id = list(layer_modules.keys())[0]
+        if parameters is None:
+            parameters = model.layers[self.layer_id].parameters()
+        # init n_neighbors, epsilon
+        self.n_neighbors = n_neighbors
+        self.epsilon = epsilon
+        self.X = None
+        super(BEAMLoss, self).__init__(model, layer_modules, self.beam_loss,
+                                       cost=cost, parameters=parameters,
+                                       **kwargs)
+
+    def beam_loss(self, feat_X):
+        # if self.X is None:
+        #     self.X = feat_X
+        #     return None
+        assert feat_X.shape[0] > 1, ('Batch size must be greater than 1.')
+        # check for persistent attribute
+        assert hasattr(self.model.layers[self.layer_id], 'persistent')
+        persistent = getattr(self.model.layers[self.layer_id], 'persistent')
+        assert persistent is not None
+        assert feat_X.shape[0] + persistent.shape[0] > self.n_neighbors, (
+            'Batch size + number of persistent chains must be greater than \
+            `n_neighbors`.'
+        )
+        # get features for persistent (only apply current layer_id)
+        layer_ids = self.kwargs.get('layer_ids')
+        self.kwargs.update({'layer_ids': [self.layer_id]})
+        feat_p = self.get_features(persistent)[0][0]
+        if layer_ids is not None:
+            self.kwargs.update({'layer_ids': layer_ids})
+        else:
+            self.kwargs.pop('layer_ids')
+        # choose random input from x as comparison
+        idx = np.random.permutation(feat_X.shape[0])
+        feat_x = feat_X[idx[:1]]
+        # concatenate feat_X and feat_p
+        feat_Xp = torch.cat([feat_X[idx[1:]], feat_p], 0)
+        # compute distance between feat_Xp and feat_x
+        d = torch.sqrt(torch.matmul(feat_Xp.flatten(1), feat_x.flatten(1).t()))
+        # sort and get nearest neighbors
+        d, sort_idx = torch.sort(d)
+        d = 1. / (d[:self.n_neighbors] + self.epsilon)
+        sort_idx = sort_idx[:self.n_neighbors]
+        # return 2 * sum_j(d) / sum_k(d) - 1
+        loss = torch.zeros(1, requires_grad=True)
+        for i, d_i in zip(sort_idx, d):
+            if i < (len(idx)-1):
+                loss = loss + d_i
+        return -(2. * loss / torch.sum(d_i) - 1.).mean()

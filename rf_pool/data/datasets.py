@@ -14,7 +14,8 @@ from PIL import Image
 import torch
 import torchvision
 
-from . import stimuli, functions
+from rf_pool.data import stimuli
+from rf_pool.utils import functions
 
 class Dataset(torch.utils.data.Dataset):
     """

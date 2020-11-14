@@ -1,970 +1,286 @@
 from collections import OrderedDict
-import copy
-import pickle
-import re
+import inspect
+import warnings
 
-import IPython.display
-from IPython.display import clear_output, display
-import matplotlib.pyplot as plt
-import numpy as np
+import pytorch_lightning as pl
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
+from torch import nn
+from torch.nn import functional as F
 
-from . import losses, ops, pool
-from .modules import Module, Branch, FeedForward, RBM
-from .utils import functions, visualize
+from rf_pool import modules, pool
+from rf_pool.solver import build
 
-def _get_dict_shapes(d):
+def _sequential(mods):
     """
-    Helper function to replace array-like with its shape within a dictionary
+    Convenience function to create Sequential model with Flatten added before
+    Linear modules
     """
-    if not isinstance(d, (dict, OrderedDict)):
-        return None
-    # update with shapes
-    for k, v in d.items():
-        if type(v) is list:
-            v = [v_i.shape if hasattr(v_i, 'shape') else None for v_i in v]
-        elif hasattr(v, 'shape'):
-            v = v.shape
-        elif isinstance(v, (dict, OrderedDict)):
-            v = _get_dict_shapes(v)
-        d.update({k: v})
-    return d
+    flat = False
+    net = nn.Sequential()
+    for k, v in mods.items():
+        if isinstance(v, nn.Linear) and not flat:
+            net.add_module('%s_flatten' % k, nn.Flatten(1))
+            flat = True
+        net.add_module(k, v)
+    return net
+
+@torch.no_grad()
+def _get_out_channels(model, img_shape=[3,12,12]):
+    """Convenience function to get output channels from intermediate layers"""
+    # set training to False
+    _training = model.training
+    model.eval()
+    # ensure img_shape is list
+    img_shape = list(img_shape)
+    channels = []
+    for mod in model.children():
+        ch = None
+        try:
+            # get out channels from weight or out_channels
+            if hasattr(mod, 'weight') and mod.weight.ndim >= 4:
+                channels.append(mod.weight.size(0))
+                continue
+            elif hasattr(mod, 'out_channels'):
+                channels.append(mod.out_channels)
+                continue
+            # otherwise set img_shape and pass a dummy input
+            elif hasattr(mod, 'in_channels') and hasattr(mod, 'kernel_size'):
+                img_shape = [mod.in_channels]
+                if isinstance(mod.kernel_size, int):
+                    img_shape.extend([mod.kernel_size]*2)
+                else:
+                    img_shape.extend(mod.kernel_size)
+            elif len(channels) > 0:
+                img_shape[0] = channels[-1]
+            # pass dummy input to get output shape
+            x = torch.zeros(1, *img_shape)
+            img_shape = list(mod(x).shape[1:])
+            ch = img_shape[0]
+        except Exception as msg:
+            warnings.warn('Warning: %s' % msg)
+        channels.append(ch)
+    # reset training
+    model.train(_training)
+    return channels
 
 class Model(nn.Module):
     """
-    Base class for initializing, training, saving, loading, visualizing models
-
-    Attributes
-    ----------
-    data_shape : tuple
-        shape of input data
-    layers : torch.nn.ModuleDict
-        layers containing computations to be performed
     """
-    def __init__(self, model=None):
-        super(Model, self).__init__()
-        self.data_shape = None
-        self.layers = nn.ModuleDict({})
-        # import model if given
-        if model is not None:
-            self.load_architecture(model)
-
-    def n_layers(self):
-        return len(self.layers)
-
-    def get_layers(self, layer_ids):
-        layers = []
-        for layer_id in layer_ids:
-            if layer_id is None:
-                layers.append(lambda x: x)
-            else:
-                layers.append(self.layers[layer_id])
-        return layers
-
-    def get_layer_ids(self, output_layer_id=None, forward=True):
-        layer_ids = [id for id, _ in self.layers.named_children()]
-        if not forward:
-            layer_ids.reverse()
-        if type(output_layer_id) is not list:
-            output_layer_id = [output_layer_id]
-        cnt = -1
-        for i, name in enumerate(layer_ids):
-            if name in output_layer_id:
-                cnt = i + 1
-        if cnt > -1:
-            return layer_ids[:cnt]
-        return layer_ids
-
-    def get_layers_by_type(self, layer_types=(), layer_str_types=[]):
-        # ensure layer_types is tuple and layer_str_types is list
-        if isinstance(layer_types, type):
-            layer_types = (layer_types,)
-        layer_types = tuple(layer_types)
-        if isinstance(layer_str_types, str):
-            layer_str_types = [layer_str_types]
-        layer_str_types = list(layer_str_types)
-        # get layers in layer_types or layer_str_types
-        layers = []
-        for name, layer in self.layers:
-            # if isinstance or endswith type name, append
-            l_type = torch.typename(layer)
-            if isinstance(layer, layer_types) or \
-               any([l_type.endswith(s) for s in layer_str_types]):
-                layers.append(layer)
-        return layers
-
-    def get_layers_by_attr(self, attributes):
-        # ensure attributes is list
-        if isinstance(attributes, str):
-            attributes = [attributes]
-        attributes = list(attributes)
-        # get layers with attributes
-        layers = []
-        for name, layer in self.layers:
-            # if hasattr, append
-            if any([hasattr(layer, attr) for attr in attributes]):
-                layers.append(layer)
-        return layers
-
-    def append(self, layer_id, layer):
-        layer_id = str(layer_id)
-        self.layers.add_module(layer_id, layer)
-
-    def insert(self, idx, layer_id, layer):
-        layer_id = str(layer_id)
-        new_layers = nn.ModuleDict({})
-        for i, (layer_id_i, layer_i) in enumerate(self.layers.named_children()):
-            if i == idx:
-                new_layers.add_module(layer_id, layer)
-            new_layers.add_module(layer_id_i, layer_i)
-        self.layers = new_layers
-
-    def remove(self, layer_id):
-        return self.layers.pop(layer_id)
-
-    def apply(self, input, layer_ids=[], forward=True, output={},
-              output_layer=None, **kwargs):
+    def __init__(self, model, **kwargs):
         """
-        Apply layers with layer-specific kwargs and/or collect outputs in dict
+        Base model class
 
         Parameters
         ----------
-        input : torch.Tensor
-            input passed through model layers
-        layer_ids : list, optional
-            names of layers to apply to input [default: [], apply all layers]
-        forward : boolean, optional
-            True/False to apply forward (vs. reverse) pass through layers
-            [default: True]
-        output : dict, optional
-            dictionary like {layer_id: []} to be updated with specific results
-            [default: {}, will not set outputs to dictionary]
-        output_layer : str, optional
-            name of layer to stop passing input through model (i.e., get layer_ids
-            for each layer up to and including output_layer)
-            [default: None, uses layer_ids]
-        **kwargs : dict
-            layer-specific keyword arguments like {layer_id: kwargs} to be applied
-            for a given layer
-
-        Results
-        -------
-        output : torch.Tensor
-            output of passing input through layers
-
-        Examples
-        --------
-        >>> # pass input through model and obtain outputs of specific layer
-        >>> model = FeedForwardNetwork()
-        >>> model.append('0', FeedForward(hidden=torch.nn.Conv2d(1,16,5),
-                                          activation=torch.nn.ReLU(),
-                                          pool=torch.nn.MaxPool2d(2)))
-        >>> model.append('1', FeedForward(hidden=torch.nn.Linear(16, 10)))
-        >>> saved_outputs = {'0': {'pool': []}}
-        >>> output = model.apply(torch.rand(1,1,6,6), layer_ids=['0','1'],
-                                 output=saved_outputs)
-        >>> print(output.shape, saved_outputs.get('0').get('pool')[0].shape)
-        torch.Size([1, 10]) torch.Size([1, 16, 1, 1])
-        """
-        # get layers for layer_ids
-        if len(layer_ids) == 0:
-            layer_ids = self.get_layer_ids(output_layer, forward=forward)
-        layers = self.get_layers(layer_ids)
-        # set layer_name
-        layer_name = ['reconstruct_layer','forward_layer'][forward]
-        # for each layer, apply modules
-        for layer_id, layer in zip(layer_ids, layers):
-            # get layer_kwargs and set default layer_name
-            layer_kwargs = kwargs.get(layer_id)
-            if layer_kwargs is None:
-                layer_kwargs = {}
-            layer_kwargs.setdefault('layer_name', layer_name)
-            # get output dict for layer
-            layer_output = output.get(layer_id)
-            if not isinstance(layer_output, (dict, OrderedDict)):
-                layer_output = {}
-            # apply modules
-            if layer_id is not None:
-                input = layer.apply(input, output=layer_output, **layer_kwargs)
-            # append to output if list
-            if type(output.get(layer_id)) is list:
-                output.get(layer_id).append(input)
-        return input
-
-    def __call__(self, *args, **kwargs):
-        return self.apply(*args, **kwargs)
-
-    def output_shapes(self, input_shape=None, layer_ids=[], output_layer=None,
-                      **kwargs):
-        """
-        Get output shapes for layers within model
-
-        Parameters
-        ----------
-        input_shape : tuple, optional
-            shape of input data for which to get output shapes
-            [default: None, tries self.data_shape]
-        layer_ids : list, optional
-            layer ids for which to get output shapes
-            [default: [], all layers]
-        output_layer : str, optional
-            layer id at which to stop getting output shapes (i.e., output shapes
-            for all layers up to and including output_layer)
-            [default: None, uses layer_ids]
-        **kwargs : dict, optional
-            keyword arguments used in apply call (see self.apply)
-
-        Returns
-        -------
-        output_shapes : dict
-            dictionary like {layer_id: [output_shape]} containing output shapes
-            for given input_shape and layer_ids
-
-        Examples
-        --------
-        >>> # obtain output shapes for modules within model
-        >>> model = FeedForwardNetwork()
-        >>> model.append('0', FeedForward(hidden=torch.nn.Conv2d(1,16,5),
-                                          activation=torch.nn.ReLU(),
-                                          pool=torch.nn.MaxPool2d(2)))
-        >>> model.append('1', FeedForward(hidden=torch.nn.Linear(16, 10)))
-        >>> output = {'0': {'pool': []}, '1': {'hidden': []}}
-        >>> shapes = output_shapes((1,1,6,6), output=output)
-        >>> print(shapes)
-        {'0': {'pool': [torch.Size([1, 16, 1, 1])]}, '1': {'hidden': [torch.Size([1, 10])]}}
-        """
-        if input_shape is None:
-            input_shape = self.data_shape
-        # get layer_ids
-        if len(layer_ids) == 0:
-            layer_ids = self.get_layer_ids(output_layer)
-        # set outputs based on layer_ids
-        output = kwargs.get('output')
-        if output is None:
-            output = dict([(id, []) for id in layer_ids])
-            kwargs.update({'output': output})
-        # create dummy input
-        input = torch.zeros(input_shape)
-        # get output shapes
-        self.apply(input, layer_ids, **kwargs)
-        # update with shapes
-        return _get_dict_shapes(output)
-
-    def update_modules(self, layer_ids, layer_name, module_name, op,
-                       overwrite=True, append=True):
-        """
-        Update `self.layers[layer_id].layer_name.module_name` for each `layer_id`
-        in `layer_ids` by appending, prepending, or overwriting with op.
-
-        Parameters
-        ----------
-        layer_ids : list
-            string ids of layers to update module_name
-        layer_name : str
-            name of layer to update (e.g., 'forward_layer')
-        module_name : str
-            name of module to update (e.g., 'activation')
-        op : torch.nn.Module or list
-            module(s) set for each layer_id
-        overwrite : bool
-            Boolean whether to overwrite current module (overrides append below)
-            [default: True]
-        append : bool
-            If append=True, append as nn.Sequential(mod, op); otherwise,
-            prepend as nn.Sequential(op, mod) [default: True]
-
-        Returns
-        -------
-        mods : list
-            list of current modules (one per layer_id) if exists, otherwise None
-        """
-        # get current modules
-        mods = [layer.get_modules(layer_name, [module_name])[0]
-                if len(layer.get_modules(layer_name, [module_name])) == 1
-                else None
-                for layer in self.get_layers(layer_ids)]
-        # update modules
-        for i, layer_id in enumerate(layer_ids):
-            if type(op) is list and len(op) > i:
-                op_i = op[i]
-            elif type(op) is list:
-                op_i = op[-1]
-            else:
-                op_i = op
-            if overwrite:
-                new_mod = op_i
-            elif append:
-                new_mod = torch.nn.Sequential(mods[i], op_i)
-            else:
-                new_mod = torch.nn.Sequential(op_i, mods[i])
-            self.layers[layer_id].update_module(layer_name, module_name, new_mod)
-        return mods
-
-    def forward(self, input):
-        for name, layer in self.layers.named_children():
-            input = layer.forward(input)
-        return input
-
-    def reconstruct(self, input):
-        layer_ids = list(self.layers.keys())
-        layer_ids.reverse()
-        for layer_id in layer_ids:
-            input = self.layers[layer_id].reconstruct(input)
-        return input
-
-    def save_model(self, filename, **kwargs):
-        """
-        Save current model as dictionary containing `str(model)` and model
-        weights.
-
-        Parameters
-        ----------
-        filename : str
-            file name to save model
+        model : dict or nn.Module
+            model to be set or built (if `isinstance(model, dict)`)
         **kwargs : **dict
-            optional extras to save like `key=value`
+            (method, kwargs) pairs for calling additional methods (see Methods)
 
-        Returns
+        Methods
         -------
-        None
-
-        Notes
-        -----
-        Model saved as dictionary containing following keys 'model_str',
-        'model_weights', and `kwargs.keys()`.
-        """
-        kwargs.update({'model_str': str(self)})
-        kwargs.update({'model_weights': self.download_weights()})
-        with open(filename, 'wb') as f:
-            pickle.dump(kwargs, f)
-
-    def load_architecture(self, model, pattern='^.+$', verbose=False):
-        # function to get typename
-        get_typename = lambda v: torch.typename(v).split('.')[-1].lower()
-        # for each child, append to layers
-        for layer_id, layer in model.named_children():
-            layer_id = re.findall(pattern, layer_id)
-            if len(layer_id) == 0:
-                continue
-            # get alphanumeric layer_id, and typename
-            layer_id = re.sub('[^a-zA-Z0-9_]*', '', layer_id[0])
-            if len(layer_id) == 0:
-                continue
-            # print
-            if verbose:
-                print(layer_id)
-            # append to layers if is Module
-            if isinstance(layer, Module):
-                self.append(layer_id, layer)
-            else: # get inputs for FeedForward
-                inputs = dict([('%s%s' % (get_typename(v), k.replace('.','_')), v)
-                               for k, v in layer.named_modules()
-                               if type(v) is not torch.nn.Sequential])
-                self.append(layer_id, FeedForward(**inputs))
-
-    def load_model(self, filename, dtype=torch.float, verbose=False):
-        extras = pickle.load(open(filename, 'rb'))
-        model = []
-        if type(extras) is list:
-            model = extras.pop(0)
-        elif isinstance(extras, (dict, OrderedDict)) and 'model_weights' in extras:
-            self.load_weights(extras.get('model_weights'), dtype, verbose)
-            model = self
-        if isinstance(model, (dict, OrderedDict)):
-            self.load_weights(model, dtype, verbose)
-            model = self
-        return model, extras
-
-    def download_weights(self, pattern='', verbose=False):
-        model_dict = OrderedDict()
-        for name, param in self.named_parameters():
-            if name.find(pattern) >=0:
-                if verbose:
-                    print(name)
-                model_dict.update({name: param.detach().numpy()})
-        return model_dict
-
-    def load_weights(self, model_dict, dtype=torch.float, verbose=False):
-        # for each param, register new param from model_dict
-        for name, param in self.named_parameters():
-            # get layer to register parameter
-            fields = name.split('.')
-            layer = self
-            for field in fields:
-                layer = getattr(layer, field)
-            # get param name in model_dict
-            if model_dict.get(name) is not None:
-                key = name
-            elif any([name.endswith(k) for k in model_dict.keys()]):
-                key = [k for k in model_dict.keys()
-                       if name.endswith(k)][0]
-            else: # skip param
-                continue
-            if verbose:
-                print(key)
-            # update parameter
-            param = model_dict.get(key)
-            setattr(layer, 'data', torch.as_tensor(param).type(dtype))
-
-    def init_weights(self, named_parameters=None, pattern='weight',
-                     fn=torch.randn_like):
-        if named_parameters is None:
-            named_parameters = self.named_parameters()
-        for name, param in named_parameters:
-            with torch.no_grad():
-                if name.find(pattern) >=0:
-                    param.set_(fn(param))
-
-    def get_param_names(self):
-        param_names = []
-        for (name, param) in self.named_parameters():
-            param_names.append(name)
-        return param_names
-
-    def get_trainable_params(self, parameters=None, pattern=''):
-        trainable_params = []
-        if parameters:
-            for param in parameters:
-                if param.requires_grad:
-                    trainable_params.append(param)
-        else:
-            for (name, param) in self.named_parameters():
-                if param.requires_grad and name.find(pattern) >=0:
-                    trainable_params.append(param)
-        return trainable_params
-
-    def set_requires_grad(self, parameters=None, pattern='', requires_grad=True):
-        if parameters:
-            for param in parameters:
-                param.requires_grad = requires_grad
-        else:
-            for (name, param) in self.named_parameters():
-                if name.find(pattern) >=0:
-                    param.requires_grad = requires_grad
-
-    def get_prediction(self, input, crop=None, top_n=1):
-        with torch.no_grad():
-            output = self.forward(input)
-            if crop:
-                output = output[:,:,crop[0],crop[1]]
-            if output.ndimension() == 4:
-                output = torch.max(output.flatten(-2), -1)[0]
-            pred = torch.sort(output, -1)[1]
-        return pred[:,-top_n:]
-
-    def get_accuracy(self, dataloader, crop=None, monitor=100, top_n=1):
-        correct = 0.
-        total = 0.
-        for i, (data, labels) in enumerate(dataloader):
-            with torch.no_grad():
-                # get predicted labels, update accuracy
-                pred = self.get_prediction(data, crop=crop, top_n=top_n)
-                total += float(labels.shape[0])
-                correct += float(torch.eq(pred, labels.reshape(-1,1)).sum())
-                # monitor accuracy
-                if (i+1) % monitor == 0:
-                    clear_output(wait=True)
-                    display('[%5d] accuracy: %.2f%%' % (i+1, 100.*correct/total))
-        return 100. * correct / total
-
-    def monitor_fn(self, iter, n_batches, input, loss, loss_history=[],
-                   optimizer=None, monitor_loss=None, metrics=None,
-                   tensorboard=None, **kwargs):
-        """
-        Monitoring step during training: plot loss history, figures, etc.
-
-        Parameters
-        ----------
-        iter : int
-            current global iteration of training
-        n_batches : int
-            number of iterations per epoch
-        input : torch.Tensor
-            input for current iteration
-        loss : float
-            loss for current iteration
-        loss_history : list
-            losses from previous iterations [default: []]
-        optimizer : torch.optim
-            optional, optimizer used for updating parameters (to show
-            learning rate) [default: None]
-        monitor_loss : rf_pool.losses or dict
-            loss function used only during monitoring step (i.e. not used to
-            update parameters). if dict, kwargs passed to
-            `rf_pool.losses.KwargsLoss`
-            [default: {}, loss_fn used for monitoring loss]
-        metrics : module
-            module from which metric functions can be called, which should be
-            passed as separate **kwargs (e.g., `metrics=numpy, add=[1,2]`).
-            [default: None]
-        tensorboard : torch.utils.tensorboard.SummaryWriter
-            SummaryWriter to monitor loss, metrics, and figures plotted.
-            See `torch.utils.tensorboard.SummaryWriter` for more information.
-            [default: None]
-
-        Returns
-        -------
-        loss_history : list
-            list of loss values at each monitoring step
-            (i.e., len(loss_history) == (n_epochs * len(trainloader) / monitor))
-
-        Notes
-        -----
-        This function is called by `train_n_epochs` and would not usually be
-        called in isolation.
-        """
-        # monitor loss
-        with torch.no_grad():
-            if monitor_loss is not None:
-                loss_history.append(monitor_loss(input))
-            else:
-                loss_history.append(loss)
-        # display loss
-        clear_output(wait=True)
-        if optimizer is not None:
-            display('learning rate: %g' % optimizer.param_groups[0]['lr'])
-        epoch = iter // n_batches
-        display('%d [%g%%] loss: %.3f' % (epoch,
-                                          iter % n_batches/n_batches*100.,
-                                          loss_history[-1]))
-        # show loss history
-        plt.figure()
-        plt.plot(loss_history)
-        plt.show()
-        # show weights
-        if kwargs.get('show_weights'):
-            kwargs.get('show_weights').update({'model': self})
-        # show negative
-        if kwargs.get('show_negative'):
-            kwargs.get('show_negative').update({'model': self, 'input': input})
-        # show lattice
-        if kwargs.get('show_lattice'):
-            kwargs.get('show_lattice').update({'model': self, 'input': input})
-        # update global_step in any tensorboard calls
-        if tensorboard is not None:
-            for k, v in kwargs.items():
-                if hasattr(tensorboard, k):
-                    if isinstance(v, dict):
-                        v.update({'global_step': iter})
-        # call other monitoring functions
-        with torch.no_grad():
-            outputs = functions.kwarg_fn([IPython.display, visualize, metrics,
-                                          tensorboard], None, **kwargs)
-        # TensorBoard
-        if tensorboard is not None:
-            tensorboard.add_scalar('loss', loss_history[-1], iter)
-            for k, v in outputs.items():
-                if isinstance(v, plt.Figure):
-                    tensorboard.add_figure(k, v, iter)
-                elif isinstance(v, (int, float)):
-                    tensorboard.add_scalar(k, v, iter)
-        return loss_history
-
-    def train_once(self, inputs, label, loss_fn, optimizer=None, forward_fn=None,
-                   **kwargs):
-        """
-        Train for one update (i.e., a single batch of data and labels)
-
-        Parameters
-        ----------
-        inputs : tuple of torch.Tensor
-            inputs to model
-        label : torch.Tensor or None
-            label to be predicted by model or otherwise used in training
-        loss_fn : torch.nn.modules.loss or rf_pool.losses
-            loss function to opimize during training
-        optimizer : torch.optim
-            optimizer used to update parameters during training
-            [default: None]
-        forward_fn : function
-            function used to pass inputs through model
-            [default: None, uses `self.forward(inputs[0])`]
-
-        Optional kwargs
-        retain_graph : boolean
-            passed to `loss.backward()` to maintain graph if True
-            [default: False]
-
-        Return
-        ------
-        loss : float
-            loss from current iteration
-
-        Notes
-        -----
-        This function is called by `train_n_epochs` and would not usually be
-        called in isolation.
-        """
-        # zero gradients
-        if optimizer:
-            optimizer.zero_grad()
-        # get outputs and loss
-        if forward_fn is None:
-            output = self.forward(inputs[0])
-        else:
-            output = forward_fn(inputs)
-        loss = loss_fn(output, label)
-        # backprop
-        if hasattr(loss, 'backward'):
-            loss.backward(retain_graph=kwargs.get('retain_graph'))
-        if hasattr(loss, 'item'):
-            loss = loss.item()
-        # update parameters
-        if optimizer:
-            optimizer.step()
-        return loss
-
-    def train_n_epochs(self, n_epochs, trainloader, loss_fn, optimizer=None,
-                       train_fn=None, monitor=100, **kwargs):
-        """
-        Train for number passes through `trainloader`
-
-        Parameters
-        ----------
-        n_epochs : int
-            number of epochs to train for (complete passes through dataloader)
-        trainloader : torch.utils.data.DataLoader
-            dataloader containing training (data, label) pairs
-        loss_fn : torch.nn.modules.loss or rf_pool.losses
-            loss function to opimize during training
-        optimizer : torch.optim
-            optimizer used to update parameters during training
-            [default: None]
-        train_fn : function
-            training function used to update parameters
-            [default: None, uses `train_once`]
-        monitor : int
-            number of batches between plotting loss, showing weights, etc.
-            [default: 100]
-        **kwargs : **dict
-            see `train_model` for optional keyword arguments
-
-        Returns
-        -------
-        loss_history : list
-            list of loss values at each monitoring step
-            (i.e., len(loss_history) == (n_epochs * len(trainloader) / monitor))
-
-        Notes
-        -----
-        This function is called by `train_n_epochs` and would not usually be
-        called in isolation.
-        """
-        # get options from kwargs
-        options = functions.pop_attributes(kwargs, ['scheduler','label_params',
-                                                    'add_loss','sparse_loss'],
-                                           default={})
-        # set label parameter gradients to false
-        if options.get('label_params'):
-            label_params = options.get('label_params')
-            self.set_grad_by_label(label_params.keys(), label_params, False)
-        # init loss_history, running_loss, i
-        loss_history = []
-        running_loss = 0.
-        i = 0
-        n_batches = len(trainloader)
-        # train for n_epochs through trainloader
-        for epoch in range(int(np.ceil(n_epochs))):
-            for data in trainloader:
-                # check if more than requested epochs
-                if (i+1) > (n_epochs * n_batches):
-                    return loss_history
-                try:
-                    # get inputs, labels
-                    inputs = data[:-1]
-                    label = data[-1]
-                    # turn on label-based parameter gradients
-                    if options.get('label_params'):
-                        self.set_grad_by_label([label], label_params, True)
-                    # train once
-                    if train_fn is None:
-                        loss = self.train_once(inputs, label, loss_fn,
-                                               optimizer=optimizer, **kwargs)
-                    else:
-                        loss = train_fn(inputs, label, loss_fn,
-                                        optimizer=optimizer, **kwargs)
-                    # additional losses
-                    if not hasattr(loss, 'backward'):
-                        loss = torch.tensor(loss, requires_grad=True)
-                    optimizer.zero_grad()
-                    if options.get('add_loss'):
-                        loss = loss + options.get('add_loss')(*inputs)
-                    if options.get('sparse_loss'):
-                        loss = loss + options.get('sparse_loss')(*inputs)
-                    if loss.grad_fn is not None:
-                        loss.backward()
-                        optimizer.step()
-                    loss = loss.item()
-                    # update scheduler
-                    if options.get('scheduler'):
-                        options.get('scheduler').step()
-                    # set label_parameters
-                    if options.get('label_params'):
-                        self.set_grad_by_label([label], label_params, False)
-                    # monitor loss, metrics
-                    running_loss += loss
-                    i += 1
-                    if i % monitor == 0:
-                        loss_history = self.monitor_fn(i, n_batches, inputs[0],
-                                                       running_loss / monitor,
-                                                       loss_history, optimizer,
-                                                       **kwargs)
-                        running_loss = 0.
-                except KeyboardInterrupt:
-                    # if interrupted, return loss_history
-                    return loss_history
-                except:
-                    raise
-        return loss_history
-
-    def train_layer(self, layer_id, n_epochs, trainloader, loss_fn, optimizer,
-                    monitor=100, **kwargs):
-        """
-        Train a specific layer using the training function from
-        `self.layers[layer_id].train_layer`.
-
-        Parameters
-        ----------
-        layer_id : str
-            layer id to be trained
-        n_epochs : int
-            number of epochs to train for (complete passes through dataloader)
-        trainloader : torch.utils.data.DataLoader
-            dataloader containing training (data, label) pairs
-        loss_fn : torch.nn.modules.loss or rf_pool.losses
-            loss function to opimize during training
-        optimizer : torch.optim
-            optimizer used to update parameters during training
-        monitor : int
-            number of batches between plotting loss, showing weights, etc.
-            [default: 100]
-        **kwargs : **dict
-            see `train_model` and `self.layers[layer_id].train_layer` for optional
-            keyword arguments
-
-        Returns
-        -------
-        loss_history : list
-            list of loss values at each monitoring step
-            (i.e., len(loss_history) == (n_epochs * len(trainloader) / monitor))
-
-        Notes
-        -----
-        This function is primarily used for "greedy layer-wise training".
-        """
-        # set forward function
-        pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
-        if len(pre_layer_ids) > 0:
-            forward_fn = lambda x: self.apply(x[0], pre_layer_ids)
-        else:
-            forward_fn = lambda x: x[0]
-        # set loss function to self.layers[layer_id].train_layer(...,loss_fn,**kwargs)
-        layer_loss_fn = losses.KwargsLoss(self.layers[layer_id].train_layer,
-                                          n_args=2, loss_fn=loss_fn, **kwargs)
-        # train for n_epochs
-        return self.train_n_epochs(n_epochs, trainloader, loss_fn=layer_loss_fn,
-                                   optimizer=optimizer, forward_fn=forward_fn,
-                                   monitor=monitor, **kwargs)
-
-    def train_model(self, n_epochs, trainloader, loss_fn, optimizer, monitor=100,
-                    **kwargs):
-        """
-        Train model using loss function and optimizer for given dataloader
-
-        Parameters
-        ----------
-        n_epochs : int
-            number of epochs to train for (complete passes through dataloader)
-        trainloader : torch.utils.data.DataLoader
-            dataloader containing training (data, label) pairs
-        loss_fn : torch.nn.modules.loss or rf_pool.losses
-            loss function to opimize during training
-        optimizer : torch.optim
-            optimizer used to update parameters during training
-        monitor : int
-            number of batches between plotting loss, showing weights, etc.
-            [default: 100]
-
-        Optional kwargs
-        retain_graph : boolean
-            kwarg passed to `loss.backward()` to maintain graph if True
-            [default: False]
-        add_loss : rf_pool.losses or dict
-            additional loss function added to loss_fn. if dict, kwargs passed to
-            `rf_pool.losses.LayerLoss`
-            [default: {}, no added loss]
-        sparse_loss : rf_pool.losses or dict
-            sparse loss function added to loss_fn. if dict, kwargs passed to
-             `rf_pool.losses.SparseLoss`
-            [default: {}, no added loss]
-        monitor_loss : rf_pool.losses or dict
-            loss function used only during monitoring step (i.e. not used to
-            update parameters). if dict, kwargs passed to
-            `rf_pool.losses.KwargsLoss`
-            [default: {}, loss_fn used for monitoring loss]
-        metrics : module
-            module from which metric functions can be called, which should be
-            passed as separate **kwargs (e.g., `metrics=numpy, add=[1,2]`).
-            [default: None]
-        tensorboard : torch.utils.tensorboard.SummaryWriter
-            SummaryWriter to monitor loss, metrics, and figures plotted.
-            See `torch.utils.tensorboard.SummaryWriter` for more information.
-            [default: None]
-        scheduler : torch.optim.lr_scheduler
-            scheduler used to periodically update learning rate
-        show_weights : dict
-            kwargs passed to `visualize.show_weights` function during monitoring
-            step. [default: {}, function not called]
-        show_lattice : dict
-            kwargs passed to `visualize.show_lattice` function during monitoring
-            step. [default: {}, function not called]
-        show_negative : dict
-            kwargs passed to `visualize.show_negative` function during
-            monitoring step. [default: {}, function not called]
-        label_params : dict
-            dictionary with (label, params) pairs of parameters that should be
-            set to `requires_grad=True` when the given label is observed in the
-            dataloader. See `set_grad_by_label`.
-            [default: {}, function not called]
-
-        Returns
-        -------
-        loss_history : list
-            list of loss values at each monitoring step
-            (i.e., len(loss_history) == (n_epochs * len(trainloader) / monitor))
-
-        Note
-        ----
-        When using kwarg `label_params`, `batch_size` in dataloader should be
-        equal to 1.
-        """
-        return self.train_n_epochs(n_epochs, trainloader, loss_fn=loss_fn,
-                                   optimizer=optimizer, monitor=monitor, **kwargs)
-
-    def optimize_texture(self, n_steps, seed, loss_fn, optimizer, input=[],
-                         transform=None, monitor=100, **kwargs):
-        """
-        Optimize texture seed image
-
-        Parameters
-        ----------
-        n_steps : int
-            number of steps to optimizer seed image
-        seed : torch.Tensor
-            seed image to be optimized
-        loss_fn : function or rf_pool.losses or torch.nn.modules.loss
-            loss function used to optimize seed image.
-            See `rf_pool.losses.LayerLoss`
-        input : torch.Tensor or list
-            input image(s) to use as target for loss function [default: []]
-        transform : rf_pool.utils.transforms
-            transforms to be applied to seed/input images [default: None]
-        monitor : int
-            number of optimization steps between monitoring loss, images
-        **kwargs : **dict
-            keyword arguments passed to `rf_pool.utils.visualize.show_images`
-            during monitoring step
-
-        Returns
-        -------
-        seed : torch.Tensor
-            updated seed image based on optimization
+        insert_modules(insert:dict) : insert modules into model at specified layers
+        set_parameters(params:dict) : set parameters for training
+        print_model(verbose:bool) : print model and other attributes
 
         See Also
         --------
-        rf_pool.losses.LayerLoss
-        rf_pool.utils.visualize.visualize_features
+        rf_pool.solver.build.build_model
         """
-        #TODO: figure out way to incorporate into `train_n_epochs` usage
-        # turn off model gradients
-        on_parameters = self.get_trainable_params()
-        self.set_requires_grad(pattern='', requires_grad=False)
-        if input is None:
-            input = []
-        if type(input) is not list:
-            input = [input]
-        # optimize texture
-        loss_history = []
-        running_loss = 0.
-        for i in range(n_steps):
-            # apply transformation to seed, input
-            if transform:
-                seed.data = transform(seed)
-                loss_input = [transform(input_n) for input_n in input]
-            else:
-                loss_input = input
-            # zero gradients
-            optimizer.zero_grad()
-            # get loss
-            if len(loss_input) > 0:
-                loss = loss_fn(seed, loss_input)
-            else:
-                loss = loss_fn(seed)
-            loss.backward(retain_graph=True)
-            # update seed
-            optimizer.step()
-            running_loss += loss.item()
-            # monitor loss, show_images
-            if (i+1) % monitor == 0:
-                # display loss
-                clear_output(wait=True)
-                display('learning rate: %g' % optimizer.param_groups[0]['lr'])
-                display('[%5d] loss: %.3f' % (i+1, running_loss / monitor))
-                # append loss and show history
-                loss_history.append(running_loss / monitor)
-                plt.plot(loss_history)
-                plt.show()
-                running_loss = 0.
-                # monitor texture
-                visualize.show_images(seed, *loss_input, **kwargs)
-        # turn on model gradients
-        self.set_requires_grad(on_parameters, requires_grad=True)
-        return seed
+        super(Model, self).__init__()
+        # build model
+        if isinstance(model, dict):
+            self._model = build.build_model({'MODEL': backbone})
+        elif isinstance(model, nn.Module):
+            self._model = model
+        # apply methods
+        for k, v in kwargs.items():
+            assert hasattr(self, k)
+            getattr(self, k)(v)
 
-    def set_grad_by_label(self, labels, label_params, requires_grad=True):
+    def __repr__(self):
+        # set _model repr as self repr
+        return self._model.__repr__()
+
+    def insert_modules(self, insert={}):
         """
-        Set `requires_grad` for parameters in `label_params.get(label)`
+        Insert modules into network at given layer indices
 
         Parameters
         ----------
-        labels : list or torch.Tensor
-            labels to set `requires_grad`
-        label_params : dict
-            dictionary with (label, parameters) pairs to set `requires_grad`
-        requires_grad : boolean
-            True/False to set `requires_grad` for given parameters
+        modules : dict
+            dictionary with following keys:
+            LAYERS : list
+                indices of network `_modules` to insert module
+            NETWORK : str, optional
+                network to insert modules [default: None, inserts in model]
+            IMAGE_SHAPE : list
+                shape of input image used to infer output channels of intermediate
+                layers within the network (i.e., `[in_channels, h, w]`)
+                [default: [3, 12, 12]]
+            {module name} : dict
+                kwargs to initialize {module name} (see Notes)
 
         Returns
         -------
-        None
+        None, updates model
+
+        Notes
+        -----
+        The {module name} should be a dictionary where {module name} is a class
+        of `rf_pool.modules`, `rf_pool.pool`, or `torch.nn`. The dictionary will
+        be passed e.g. `getattr(rf_pool.modules, {module name})(**kwargs)`,
+        where `kwargs` is the dictionary of keyword arguments used to initialize
+        {module name}.
+
+        A separate module is inserted at each index in `LAYERS`, such that the
+        output of previous layer is passed to the inserted module and its output
+        is passed to the following layer in the network. If {module name} has
+        the parameter `in_channels` or `out_channels`, these will be set by the
+        `out_channels` of the previous layer (unless either parameter is set in
+        `kwargs`). See Examples.
+
+        Examples
+        --------
+        >>> model = Model(nn.ModuleDict({'backbone':
+                                         nn.Sequential(
+                                            nn.Conv2d(3, 64, 3),
+                                            nn.Conv2d(64, 128, 3)
+                                         )}))
+        >>> insert = {'NETWORK': 'backbone',
+                      'LAYERS': [1,2],
+                      'LeakyReLU': {'negative_slope': 0.2}}
+        >>> model.insert_modules(insert)
+        >>> print(model)
+        ModuleDict(
+          (backbone): Sequential(
+            (0): Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1))
+            (leakyrelu_1): LeakyReLU(negative_slope=0.2)
+            (1): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1))
+            (leakyrelu_3): LeakyReLU(negative_slope=0.2)
+          )
+        )
         """
-        # set parameter gradients based on label
-        for label in labels:
-            if label_params.get(label) is not None:
-                if type(label_params.get(label)) is str:
-                    self.set_requires_grad(pattern=label_params.get(label),
-                                           requires_grad=requires_grad)
-                else:
-                    self.set_requires_grad(label_params.get(label),
-                                           requires_grad=requires_grad)
+        # get network and layers
+        net_name = insert.pop('NETWORK', '_model')
+        if net_name == '_model':
+            net = getattr(self, net_name)
+        else:
+            net = getattr(self._model, net_name, None)
+        layers = insert.pop('LAYERS', [])
+        n_layers = len(layers)
+        if net is None or n_layers == 0:
+            return
+        # get network modules
+        net_mods = list(net._modules.items())
+        # get out channels of network modules
+        img_shape = insert.pop('IMAGE_SHAPE', [3,12,12])
+        net_out_channels = _get_out_channels(net, img_shape)
+        # get modules to insert
+        insert_mods = list(insert.items())
+        insert_mods = (insert_mods + insert_mods[-1:] * n_layers)[:n_layers]
+        # insert modules to network
+        cnt = 0
+        for idx, (name, kwargs) in zip(layers, insert_mods):
+            kwargs = kwargs.copy()
+            # set in_channels, out_channels if needed
+            if idx > 0:
+                out_channels = net_out_channels[idx-1]
+            else:
+                out_channels = img_shape[0]
+            # update idx based on number of previous inserted modules
+            idx = idx + cnt
+            # get module to insert
+            mod_fn = build.get_class([modules, pool, nn], name)
+            args = inspect.getfullargspec(mod_fn).args
+            if 'in_channels' in args:
+                kwargs.setdefault('in_channels', out_channels)
+            if 'out_channels' in args:
+                kwargs.setdefault('out_channels', out_channels)
+            # insert to net_mods
+            net_mods.insert(idx, ('%s_%d' % (name.lower(), idx), mod_fn(**kwargs)))
+            cnt += 1
+        # update modules
+        updated_net = _sequential(OrderedDict(net_mods))
+        if net_name == '_model':
+            setattr(self, net_name, updated_net)
+        else:
+            setattr(self._model, net_name, updated_net)
 
-    def sparseness(self, input, layer_id, module_name=None, **kwargs):
-        # equation from Hoyer (2004) used in Ji et al. (2014)
-        with torch.no_grad():
-            pre_layer_ids = self.get_layer_ids(layer_id)[:-1]
-            layer_input = self.apply(input.detach(), pre_layer_ids)
-            activity = self.layers[layer_id].apply(layer_input, 'forward_layer',
-                                                   output_module=module_name,
-                                                   **kwargs)
-            n = torch.tensor(torch.numel(activity), dtype=activity.dtype)
-            l1_l2 = torch.div(torch.sum(torch.abs(activity)),
-                              torch.sqrt(torch.sum(torch.pow(activity, 2))))
-            sqrt_n = torch.sqrt(n)
-        return (sqrt_n - l1_l2) / (sqrt_n - 1)
+    def _find_parameters(self, patterns):
+        """"convenience function to return params that match given patterns"""
+        if not isinstance(patterns, list):
+            patterns = [patterns]
+        params = []
+        for name, param in self.named_parameters():
+            if any(name.find(pattern) != -1 for pattern in patterns):
+                params.append(param)
+        return params
 
+    def set_parameters(self, params):
+        """
+        Set parameters from model components for training
+
+        Parameters
+        ----------
+        params : dict
+            (name, patterns) key/value pairs for setting parameters like
+            `setattr(self, name, self._find_parameters(patterns))`
+
+        Returns
+        -------
+        None, parameters set to `self.model`
+
+        Examples
+        --------
+        >>> model = Model(nn.ModuleDict({'backbone':
+                                         nn.Sequential(
+                                            nn.Conv2d(3, 64, 3),
+                                            nn.Conv2d(64, 128, 3)
+                                         )}))
+        >>> params = {'weight_parameters': 'weight', 'bias_parameters': 'bias'}
+        >>> model.set_parameters(params)
+        >>> print(['number of %s: %d' % (p, len(getattr(model, p))) for p in
+                   ['weight_parameters','bias_parameters']])
+        ['number of weight_parameters: 2', 'number of bias_parameters: 2']
+        """
+        # set parameters for each set of patterns
+        for name, patterns in params.items():
+            # set parameters to model
+            setattr(self, name, self._find_parameters(patterns))
+
+    def print_model(self, verbose=False):
+        """
+        Print model and other attributes
+
+        Parameters
+        ----------
+        verbose : bool
+            True/False print model as well as all attributes in `self.__dict__`
+            [default: False, print model only]
+
+        Returns
+        -------
+        None, prints to sys.stdout
+        """
+        print('Model:\n%a\n' % self._model)
+        if verbose:
+            for k, v in self.__dict__.items():
+                print('%s:\n%a\n' % (k, v))
+
+    def apply_modules(self, *args, **kwargs):
+        pass
+
+    def forward(self, x):
+        for name, mod in self._model.named_children():
+            x = mod(x)
+        return x
+
+class _Model_OLD(nn.Module):
+    def __init__(self, **cfg):
+        super(Model, self).__init__()
+
+    #TODO: move these functions to visualize
     def rf_output(self, input, layer_id, module_name='pool', **kwargs):
         if module_name is None:
             rf_layer = self.layers[layer_id]

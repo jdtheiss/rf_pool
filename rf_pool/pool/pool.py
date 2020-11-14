@@ -1,6 +1,7 @@
 from collections import OrderedDict
 import inspect
 import re
+import warnings
 
 from IPython.display import clear_output, display
 import matplotlib.pyplot as plt
@@ -8,10 +9,15 @@ import numpy as np
 import torch
 from torch.autograd import Function
 
-import pool
-from . import ops
-from .modules import RBM
-from .utils import functions, lattice, visualize
+try:
+    import _pool
+except Exception as msg:
+    warnings.warn(msg.args)
+    _pool = None
+    
+from rf_pool import modules
+from rf_pool.pool import lattice
+from rf_pool.utils import functions, visualize
 
 def _default_grad(grad_output, input, rfs, index_mask=None, index_kernel=None,
                   kernel_size=None, stride=None, retain_shape=False,
@@ -57,8 +63,8 @@ def _apply_grad(grad_output, input, rfs, grad_fn, index_mask=None,
                 index_kernel=None, kernel_size=None, stride=None,
                 retain_shape=False, apply_mask=False):
     # assert pool_fn in pool and get pool_grad
-    assert hasattr(pool, grad_fn)
-    grad_fn = getattr(pool, grad_fn)
+    assert hasattr(_pool, grad_fn)
+    grad_fn = getattr(_pool, grad_fn)
 
     # set kwargs
     kwargs = {}
@@ -132,6 +138,7 @@ class _PoolGrad_with_indices(Function):
 def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
           stride=None, retain_shape=False, return_indices=False, apply_mask=False,
           **kwargs):
+    #TODO: need way to avoid pooling with smaller img shape than possible
     """
     Receptive field pooling
 
@@ -200,14 +207,14 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
         return u
 
     # assert pool_fn in pool and get pool_grad
-    assert hasattr(pool, pool_fn)
+    assert hasattr(_pool, pool_fn)
     if 'grad_fn' in kwargs:
         grad_fn = kwargs.pop('grad_fn')
-    elif hasattr(pool, pool_fn + '_grad'):
+    elif hasattr(_pool, pool_fn + '_grad'):
         grad_fn = pool_fn + '_grad'
     else:
         grad_fn = None
-    pool_fn = getattr(pool, pool_fn)
+    pool_fn = getattr(_pool, pool_fn)
 
     # set kwargs
     if rfs is not None:
@@ -298,10 +305,13 @@ def stochastic_pool(input, **kwargs):
 def unpool(input, index_mask, **kwargs):
     return apply(input, pool_fn='unpool', mask=index_mask, **kwargs)
 
-# set docstr from pool.function
-[setattr(f, '__doc__', getattr(pool, n).__doc__)
- for n, f in zip(['max_pool','probmax','probmax_pool','stochastic_pool','unpool'],
-                 [max_pool,probmax,probmax_pool,stochastic_pool,unpool])]
+try:
+    # set docstr from _pool.function
+    [setattr(f, '__doc__', getattr(_pool, n).__doc__)
+     for n, f in zip(['max_pool','probmax','probmax_pool','stochastic_pool','unpool'],
+                     [max_pool,probmax,probmax_pool,stochastic_pool,unpool])]
+except:
+    warnings.warn('C++ pooling module not installed. Run `python setup.py install`.')
 
 class Pool(torch.nn.Module):
     """
@@ -831,11 +841,11 @@ class Pool(torch.nn.Module):
         """
         assert self.mu is not None
         n_kernels = self.mu.shape[0]
-        self.rbm = RBM(hidden=torch.nn.Linear(n_kernels, n_Gaussians),
-                       activation=torch.nn.Sigmoid(),
-                       sample=ops.sample_fn('Bernoulli'),
-                       vis_activation=torch.exp,
-                       vis_sample=ops.sample_fn('Poisson'))
+        self.rbm = modules.RBM(hidden=torch.nn.Linear(n_kernels, n_Gaussians),
+                               activation=torch.nn.Sigmoid(),
+                               sample=modules.ops.sample_fn('Bernoulli'),
+                               vis_activation=torch.exp,
+                               vis_sample=modules.ops.sample_fn('Poisson'))
         # set training
         self.training = training
         # set optimizer
@@ -1544,8 +1554,8 @@ class RBM_Attention(Pool):
     The RBM should be trained using `train_RBM` with the same training data to
     be used for the rest of the model. Once trained, attentional Gaussians are
     obtained via the weights of RBM. The attention_mu is the weighted average
-    of each mu, and attention_sigma is computed from the full width at half
-    maximum of the weights. The attentional update is then performed via
+    of each mu, and attention_sigma is computed from the weighted standard
+    devation from attention_mu. The attentional update is then performed via
     Gaussian multiplication between the attentional Gaussians and RF Gaussians.
     The update of each attentional Gaussian is then weighted by its hidden unit
     activity (i.e., the attentional Gaussian that best matches the spatial
