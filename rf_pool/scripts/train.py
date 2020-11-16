@@ -15,6 +15,8 @@ def parse_args():
                         help='show config, model, loss, etc. during training')
     parser.add_argument('--config_file', type=str, required=False,
                         help='config file used to build model, loss, etc.')
+    parser.add_argument('--entity', type=str, required=False,
+                        help='team name for logging to wandb')
     # add WandbLogger args
     default_kwargs = dict(inspect.signature(WandbLogger).parameters)
     default_kwargs.pop('kwargs', None)
@@ -54,12 +56,14 @@ def main(args):
     # get wandb kwargs
     wandb_keys = inspect.signature(WandbLogger).parameters.keys()
     wandb_kwargs = dict((k, kwargs.pop(k)) for k in wandb_keys if k in kwargs)
+    wandb_kwargs.update({'entity': kwargs.pop('entity')})
 
     # init wandb and logger
     if any(v for v in wandb_kwargs.values()):
         # init run
         run = wandb.init(name=wandb_kwargs.get('name'),
                          project=wandb_kwargs.get('project'),
+                         entity=wandb_kwargs.get('entity'),
                          id=wandb_kwargs.get('id'), anonymous='allow',
                          resume='allow', reinit=True,
                          mode='offline' if wandb_kwargs.get('offline') else 'online')
