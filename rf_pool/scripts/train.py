@@ -5,7 +5,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
 import wandb
 
-from rf_pool.solver.build import build_solver
+from rf_pool.build import build_solver
 from rf_pool.utils.functions import load_from_yaml
 
 def parse_args():

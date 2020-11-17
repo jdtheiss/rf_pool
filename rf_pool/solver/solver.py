@@ -5,7 +5,7 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 
-from rf_pool.solver import build
+from rf_pool import build
 from rf_pool.utils import functions
 
 class Solver(pl.LightningModule):

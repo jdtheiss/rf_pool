@@ -7,8 +7,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from rf_pool import modules, pool
-from rf_pool.solver import build
+from rf_pool import build, modules, pool
 
 def _sequential(mods):
     """
