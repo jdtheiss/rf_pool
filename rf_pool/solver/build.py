@@ -117,7 +117,10 @@ def build_model(cfg):
     for k, v in cfg.get(model_key).items():
         # get module
         mod = get_class([models.backbones, models, modules, modules.ops,
-                         pool, nn, torchvision.models],
+                         pool, nn, torchvision.models,
+                         torchvision.models.detection,
+                         torchvision.models.inception,
+                         torchvision.models.segmentation],
                         k, throw_error=False)
         if mod is None:
             continue
