@@ -240,7 +240,7 @@ def build_metric(cfg):
 def build_transforms(kwargs):
     """convenience function to build transforms for datasets"""
     # update each key ending with transform
-    keys = [k for k in kwargs.keys() if k.endswith('transform')]
+    keys = [k for k in kwargs.keys() if k.find('transform') != -1]
     for k in keys:
         t_list = []
         for name, args in kwargs.get(k).items():
