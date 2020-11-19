@@ -401,6 +401,9 @@ class Lambda(Module):
         # update modules
         kwargs = kwargs.copy()
         for name, module in kwargs.items():
+            if isinstance(module, (str,dict)):
+                module = build.build_module(module)
+                kwargs.update({name: module})
             if not isinstance(module, nn.Module):
                 kwargs.update({name: ops.Op(module)})
         # build
