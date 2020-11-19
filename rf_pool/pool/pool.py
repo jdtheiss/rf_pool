@@ -14,7 +14,7 @@ try:
 except Exception as msg:
     warnings.warn(msg.args)
     _pool = None
-    
+
 from rf_pool import modules
 from rf_pool.pool import lattice
 from rf_pool.utils import functions, visualize
@@ -194,6 +194,8 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
     See Also
     --------
     pool.max_pool
+    pool.avg_pool
+    pool.lp_pool
     pool.probmax
     pool.probmax_pool
     pool.stochastic_pool
@@ -205,6 +207,11 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
     # if no pool_fn, return u
     if pool_fn is None:
         return u
+
+    # get dtype, set to float32 for pooling
+    assert isinstance(u, torch.Tensor)
+    dtype = u.dtype
+    u = u.type(torch.float32)
 
     # assert pool_fn in pool and get pool_grad
     assert hasattr(_pool, pool_fn)
@@ -224,6 +231,7 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
     kwargs.setdefault('stride', stride)
     kwargs.setdefault('retain_shape', retain_shape)
     kwargs.setdefault('apply_mask', apply_mask)
+    assert kwargs['mask_indices'] is not None or kwargs['kernel_size'] is not None
 
     # apply cpp pooling function
     input = u.data.flatten(0,1)
@@ -235,7 +243,7 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
             else:
                 output_shape = (batch_size, ch,) + output.shape[1:]
             output = output.reshape(output_shape)
-            outputs[i] = torch.as_tensor(output)
+            outputs[i] = torch.as_tensor(output, dtype=dtype)
 
     # return without grad if less than 3 outputs
     if len(outputs) < 3:
@@ -284,6 +292,18 @@ def max_pool(input, **kwargs):
     kwargs.setdefault('grad_fn', None)
     return apply(input, pool_fn='max_pool', **kwargs)
 
+def avg_pool(input, **kwargs):
+    if 'rfs' in kwargs and 'rf_indices' not in kwargs:
+        kwargs.setdefault('rf_indices', rf_to_indices(kwargs.get('rfs')))
+    kwargs.setdefault('grad_fn', None)
+    return apply(input, pool_fn='avg_pool', **kwargs)
+
+def lp_pool(input, **kwargs):
+    if 'rfs' in kwargs and 'rf_indices' not in kwargs:
+        kwargs.setdefault('rf_indices', rf_to_indices(kwargs.get('rfs')))
+    kwargs.setdefault('grad_fn', None)
+    return apply(input, pool_fn='lp_pool', **kwargs)
+
 def probmax(input, **kwargs):
     if 'rfs' in kwargs and 'rf_indices' not in kwargs:
         kwargs.setdefault('rf_indices', rf_to_indices(kwargs.get('rfs')))
@@ -308,8 +328,10 @@ def unpool(input, index_mask, **kwargs):
 try:
     # set docstr from _pool.function
     [setattr(f, '__doc__', getattr(_pool, n).__doc__)
-     for n, f in zip(['max_pool','probmax','probmax_pool','stochastic_pool','unpool'],
-                     [max_pool,probmax,probmax_pool,stochastic_pool,unpool])]
+     for n, f in zip(['max_pool','avg_pool','lp_pool','probmax','probmax_pool',
+                      'stochastic_pool','unpool'],
+                     [max_pool,avg_pool,lp_pool,probmax,probmax_pool,
+                      stochastic_pool,unpool])]
 except:
     warnings.warn('C++ pooling module not installed. Run `python setup.py install`.')
 

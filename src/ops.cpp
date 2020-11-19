@@ -362,7 +362,16 @@ T ops<T>::mean(const T* a, size_t size) {
 }
 template<typename T>
 T ops<T>::mean(const T* a, size_t size, const T* mask) {
-    return sum(a, size, mask) / T(size);
+    T o = 0;
+    T cnt = 0;
+    for (size_t i=0; i < size; ++i) {
+        if ((i > 0) && (size_t(mask[i]) == 0)) {
+            break;
+        }
+        o += a[size_t(mask[i])];
+        cnt += 1;
+    }
+    return o / cnt;
 }
 template<typename T>
 void ops<T>::softmax(const T* a, bool include_zero, size_t size, T* output) {
