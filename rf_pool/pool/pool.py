@@ -437,9 +437,6 @@ class Pool(torch.nn.Module):
                        if v is not None and defaults.get(k) is not v])
         return s.replace(name + '(', name + '(' + a)
 
-    def apply(self, *args, **kwargs):
-        return self.forward(*args, **kwargs)
-
     def pool(self, input, **kwargs):
         # get inputs for rf_pool
         input_kwargs = functions.get_attributes(self, self.input_keys)
@@ -919,6 +916,7 @@ class Pool(torch.nn.Module):
         modules.RBM.train
         utils.functions.kwarg_fn
         """
+        raise NotImplementedError #TODO: need to update
         assert hasattr(self, 'rbm')
         # set optimizer
         if optimizer is None:
@@ -946,7 +944,7 @@ class Pool(torch.nn.Module):
                 if (i+1) > (n_epochs * n_batches):
                     return loss_history
                 # pass inputs through model to pool module with training=True
-                model.apply(data[0], output_layer=pool_layer_id, **layer_kwargs)
+                model.apply_modules(data[0], output_layer=pool_layer_id, **layer_kwargs)
                 # update running_loss
                 running_loss += self.loss_history.pop(-1)
                 # monitor
@@ -1042,7 +1040,7 @@ class Pool(torch.nn.Module):
         # set weight based on hidden unit activity
         if input is None:
             return attention_mu, attention_sigma, None
-        weight = self.rbm.apply(input, output_module='activation').detach()
+        weight = self.rbm.apply_modules(input, output_module='activation').detach()
         # if batch > 1, return normalized sum across batch
         weight = torch.sum(weight, 0)
         weight = torch.div(weight, torch.sum(weight, -1, keepdim=True))
