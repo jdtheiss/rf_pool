@@ -35,20 +35,20 @@ struct ops {
                               size_t img_shape[2], size_t size, size_t* output);
     static void slice_put(const T* b, size_t start[2], size_t end[2], size_t stride[2],
                           size_t img_shape[2], size_t size, T* output);
-    static void slice_fn(const T* a, const T* b, T fn(T, T), size_t start[2], size_t end[2], 
+    static void slice_fn(const T* a, const T* b, T fn(T, T), size_t start[2], size_t end[2],
                          size_t stride[2], size_t img_shape[2], size_t size, T* output);
-    static void slice_fn(const T* a, T fn(T), size_t start[2], size_t end[2], 
+    static void slice_fn(const T* a, T fn(T), size_t start[2], size_t end[2],
                          size_t stride[2], size_t img_shape[2], size_t size, T* output);
     // kernelwise
-    static size_t output_size(size_t kernel[2], size_t img_shape[2], size_t stride[2], 
+    static size_t output_size(size_t kernel[2], size_t img_shape[2], size_t stride[2],
                               size_t size);
-    static void kernel_fn(const T* a, T reduce(T, T), size_t kernel[2], size_t img_shape[2], 
+    static void kernel_fn(const T* a, T reduce(T, T), size_t kernel[2], size_t img_shape[2],
                           size_t stride[2], size_t size, T* output);
-    static void kernel_fn(const T* a, const T* b, T fn(T, T), T reduce(T, T), size_t kernel[2], 
+    static void kernel_fn(const T* a, const T* b, T fn(T, T), T reduce(T, T), size_t kernel[2],
                           size_t img_shape[2], size_t stride[2], size_t size, T* output);
-    static void kernel_fn(const T* a, T b, T fn(T, T), T reduce(T, T), size_t kernel[2], 
+    static void kernel_fn(const T* a, T b, T fn(T, T), T reduce(T, T), size_t kernel[2],
                           size_t img_shape[2], size_t stride[2], size_t size, T* output);
-    static void kernel_fn(const T* a, T fn(T), T reduce(T, T), size_t kernel[2], 
+    static void kernel_fn(const T* a, T fn(T), T reduce(T, T), size_t kernel[2],
                           size_t img_shape[2], size_t stride[2], size_t size, T* output);
     static void kernel_fn(const T* a, const T* b, T fn(T, T), size_t kernel[2],
                           size_t img_shape[2], size_t stride[2], size_t size, T* output);
@@ -80,8 +80,8 @@ struct ops {
     static void ones(size_t size, T* output);
     static void ones(size_t size, const T* mask, T* output);
     static size_t where(const T* a, T b, T fn(T, T), size_t size, size_t* indices);
-    static size_t slice_where(const T* a, const T* b, T fn(T, T), size_t start[2], 
-                              size_t end[2], size_t stride[2],  size_t img_shape[2], 
+    static size_t slice_where(const T* a, const T* b, T fn(T, T), size_t start[2],
+                              size_t end[2], size_t stride[2],  size_t img_shape[2],
                               size_t size, T* output, size_t* indices);
     static void find(const T* a, T fn(T, T), size_t size, T& value, size_t& idx);
     static void find(const T* a, T fn(T, T), size_t size, const T* mask, T& value, size_t& idx);
@@ -90,22 +90,26 @@ struct ops {
     // max and min
     static T max(const T* a, size_t size);
     static T max(const T* a, size_t size, const T* mask);
-    static void max(const T* a, size_t kernel[2], size_t img_shape[2], 
+    static void max(const T* a, size_t kernel[2], size_t img_shape[2],
                     size_t stride[2], size_t size, T* output, size_t* indices);
     static size_t argmax(const T* a, size_t size);
     static size_t argmax(const T* a, size_t size, const T* mask);
+    static void argmax(const T* a, size_t kernel[2], size_t img_shape[2],
+                       size_t stride[2], size_t size, size_t* indices);
     static T min(const T* a, size_t size);
     static T min(const T* a, size_t size, const T* mask);
-    static void min(const T* a, size_t kernel[2], size_t img_shape[2], 
+    static void min(const T* a, size_t kernel[2], size_t img_shape[2],
                     size_t stride[2], size_t size, T* output, size_t* indices);
     static size_t argmin(const T* a, size_t size);
     static size_t argmin(const T* a, size_t size, const T* mask);
+    static void argmin(const T* a, size_t kernel[2], size_t img_shape[2],
+                       size_t stride[2], size_t size, size_t* indices);
     static void keep_max(const T* a, size_t size, T* output, size_t* indices);
     static void keep_max(const T* a, size_t size, const T* mask, T* output, size_t* indices);
-    static void keep_max(const T* a, size_t kernel[2], size_t img_shape[2], 
+    static void keep_max(const T* a, size_t kernel[2], size_t img_shape[2],
                          size_t stride[2], size_t size, T* output, size_t* indices);
     static void set_max(const T* a, T b, size_t size, T* output, size_t* indices);
     static void set_max(const T* a, T b, size_t size, const T* mask, T* output, size_t* indices);
-    static void set_max(const T* a, T b, size_t kernel[2], size_t img_shape[2], 
+    static void set_max(const T* a, T b, size_t kernel[2], size_t img_shape[2],
                         size_t stride[2], size_t size, T* output, size_t* indices);
 };

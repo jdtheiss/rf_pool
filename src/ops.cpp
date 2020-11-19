@@ -592,6 +592,15 @@ size_t ops<T>::argmax(const T* a, size_t size) {
     return idx;
 }
 template<typename T>
+void ops<T>::argmax(const T* a, size_t kernel[2], size_t img_shape[2],
+                    size_t stride[2], size_t size, size_t* indices) {
+    size_t block_size = output_size(kernel, img_shape, stride, size);
+    T* values = new T[block_size];
+    set(-INFINITY, block_size, values);
+    find(a, gt, kernel, img_shape, stride, size, values, indices);
+    delete [] values;
+}
+template<typename T>
 size_t ops<T>::argmax(const T* a, size_t size, const T* mask) {
     T value = -INFINITY;
     size_t idx = 0;
@@ -632,6 +641,15 @@ size_t ops<T>::argmin(const T* a, size_t size, const T* mask) {
     size_t idx = 0;
     find(a, lt, size, mask, value, idx);
     return idx;
+}
+template<typename T>
+void ops<T>::argmin(const T* a, size_t kernel[2], size_t img_shape[2],
+                    size_t stride[2], size_t size, size_t* indices) {
+    size_t block_size = output_size(kernel, img_shape, stride, size);
+    T* values = new T[block_size];
+    set(INFINITY, block_size, values);
+    find(a, lt, kernel, img_shape, stride, size, values, indices);
+    delete [] values;
 }
 template<typename T>
 void ops<T>::keep_max(const T* a, size_t size, T* output, size_t* indices) {

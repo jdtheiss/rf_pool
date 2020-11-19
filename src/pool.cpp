@@ -134,6 +134,7 @@ void pool<T>::kernel_lp_pool(const T* array, T p, size_t kernel[2], size_t img_s
     size_t block_size = ops<T>::output_size(kernel, img_shape, stride, size);
     ops<T>::kernel_fn(array, p, ops<T>::pow, ops<T>::add, kernel, img_shape, stride, size, output);
     ops<T>::elem(output, 1 / p, ops<T>::pow, block_size, output);
+    ops<T>::argmax(array, kernel, img_shape, stride, size, indices);
 }
 // avg pool with kernel, set output to avg value across kernel blocks
 template<typename T>
@@ -143,6 +144,7 @@ void pool<T>::kernel_avg_pool(const T* array, size_t kernel[2], size_t img_shape
     size_t block_size = ops<T>::output_size(kernel, img_shape, stride, size);
     T b = T(kernel[0] * kernel[1]);
     ops<T>::kernel_fn(array, b, ops<T>::div, ops<T>::add, kernel, img_shape, stride, size, output);
+    ops<T>::argmax(array, kernel, img_shape, stride, size, indices);
 }
 // unpool with kernel, set output to values at indices in resized array
 template<typename T>
