@@ -281,7 +281,7 @@ def rf_to_indices(rfs):
     with torch.no_grad():
         rf_indices = torch.zeros_like(rfs.flatten(1))
         for i, rf in enumerate(rfs):
-            idx = torch.nonzero(rf.flatten())
+            idx = torch.nonzero(rf.flatten(), as_tuple=False)
             rf_indices[i,:idx.numel()] = idx.flatten()
     return rf_indices
 
@@ -1024,10 +1024,12 @@ class Pool(torch.nn.Module):
 
         Notes
         -----
+        If `input is None or not hasattr(self, 'rbm')`, weight is returned None.
         If weight is None, each attentional Gaussian is weighted equally in the
         Gaussian multiplication.
         """
-        assert hasattr(self, 'rbm')
+        if not hasattr(self, 'rbm'):
+            return self.attention_mu, self.attention_sigma, None
         # estimate mu, sigma for each attentional Gaussian
         mu = self.mu.detach()
         # exponentiate as if reconstructing with each hidden unit = 1
