@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from rf_pool import build
 from rf_pool.utils import functions
 
 def _count_items(d):
@@ -35,17 +36,24 @@ class Loss(nn.Module):
         dictionary of weights (per loss function in `losses`) as (name, weight)
         key/value pairs
         [default: {}, dict((k, 1.) for k in losses.keys())]
+    model : nn.Module or rf_pool.models.Model, optional
+        model used for building certain losses [default: None]
 
     Methods
     -------
     add_loss(name, loss_fn, weight=1.) : add another loss to `losses` attribute
     """
-    def __init__(self, losses, weights={}):
+    def __init__(self, losses={}, weights={}, model=None):
         super(Loss, self).__init__()
         self.losses = losses
         for k in losses.keys():
             weights.setdefault(k, 1.)
         self.weights = weights
+
+        # build losses requiring model
+        for name, loss_fn in self.losses.items():
+            if hasattr(loss_fn, 'build_from_model') and model is not None:
+                loss_fn.build_from_model(model)
 
     def add_loss(self, name, loss_fn, weight=1.):
         self.losses.update({name: loss_fn})
@@ -79,79 +87,41 @@ class Loss(nn.Module):
             self.model.set_requires_grad(on_parameters, requires_grad=True)
         return None
 
-class ArgLoss(Loss):
+class AttrLoss(Loss):
     """
-    Simple loss function applied with optional, constant input/target parameters
+    Attribute Loss function (apply a loss to some model attribute)
 
     Parameters
     ----------
     loss_fn : torch.nn.modules.loss or function
         loss function to use
-    input : torch.Tensor or None
-        input passed to `loss_fn` as first argument if not None, else replaced
-        by first argument passed during `forward` call [default: None]
-    target : torch.Tensor or None
-        target passed to `loss_fn` as second argument if not None, else replaced
-        by arguments passed during `forward` call [default: None] (see Notes)
-
-    Returns
-    -------
-    None
-
-    See Also
-    --------
-    KwargsLoss
+    attr : str
+        name of attribute within `model` to use as input to loss
+    model : nn.Module or rf_pool.models.Model
+        model containing attribute to use in loss [default: None]
+    **kwargs : **dict
+        keyword arguments passed to `loss_fn` during forward call
 
     Notes
     -----
-    If `input is not None and target is None`, the second argument passed to
-    `loss_fn` is either the first argument passed to `forward` if only one
-    argument is given or the second argument if more than one argument is given.
+    If multiple inputs are found for a given attribute, the returned loss is the
+    sum of losses (i.e., `sum([loss_fn(v, **kwargs) for v in attr_values])`).
     """
-    def __init__(self, loss_fn, input=None, target=None):
-        super(ArgLoss, self).__init__()
-        self.loss_fn = loss_fn
-        self.input = input
-        self.target = target
-
-    def forward(self, *args):
-        args *= 2
-        inputs = [a if v is None else v
-                  for a, v in zip(args[:2], [self.input,self.target])]
-        return self.loss_fn(*inputs)
-
-class KwargsLoss(Loss):
-    """
-    Loss function using keyword arguments
-
-    Parameters
-    ----------
-    loss_fn : torch.nn.modules.loss or function
-        loss function to use
-    n_args : int
-        number of arguments to be passed to `loss_fn` during `forward` call
-        [default: 1]
-    **kwargs : **dict
-        keyword arguments passed to `loss_fn` during `forward` call
-
-    Returns
-    -------
-    None
-
-    See Also
-    --------
-    ArgLoss
-    """
-    def __init__(self, *args, n_args=1, **kwargs):
-        super(KwargsLoss, self).__init__()
-        assert len(args) == 1, ('Only 1 loss function can be used.')
-        # use `args` to avoid loss_fn being a necessary kwarg
-        self.loss_fn = args[0]
-        self.n_args = n_args
+    def __init__(self, loss_fn, attr, model=None, **kwargs):
+        super(AttrLoss, self).__init__()
+        self.loss_fn = build.build_module(loss_fn)
+        self.attr = attr
         self.kwargs = kwargs
 
+        # build from model unless None
+        if model is not None:
+            self.build_from_model(model)
+
+    def build_from_model(self, model):
+        self.inputs = functions.get_model_attrs(model, [self.attr]).pop(self.attr)
+
     def forward(self, *args):
-        return self.loss_fn(*args[:self.n_args], **self.kwargs)
+        return sum([self.loss_fn(x, **self.kwargs) for x in self.inputs])
 
 class KernelLoss(Loss):
     """

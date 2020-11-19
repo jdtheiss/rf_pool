@@ -37,6 +37,10 @@ class Solver(pl.LightningModule):
         super(Solver, self).__init__()
         self.cfg = cfg
         self.model = build.build_model(cfg)
+        # get loss key, update cfg with model
+        loss_key = build.check_keys(cfg, 'Loss', warn=False)
+        if loss_key:
+            cfg.get(loss_key).update({'model': self.model})
         self.loss = build.build_loss(cfg)
         self.metric = build.build_metric(cfg)
         self._init_weights(cfg)
@@ -66,18 +70,8 @@ class Solver(pl.LightningModule):
             return {}
         fields = cfg.get('LOG').get('fields', [])
         reduce = cfg.get('LOG').get('reduce', 'sum')
-        # init logs
-        logs = dict((k, []) for k in fields)
-        if len(logs) == 0:
-            return logs
-        # init get_fn
-        def get_fn(m):
-            for field in fields:
-                attr = getattr(m, field, None)
-                if attr is not None:
-                    logs.get(field).append(attr)
         # get attributes
-        self.model.apply(get_fn)
+        logs = functions.get_model_attrs(self.model, fields)
         # get reduce function
         reduce_fn = getattr(np, reduce, None)
         if reduce_fn is None:

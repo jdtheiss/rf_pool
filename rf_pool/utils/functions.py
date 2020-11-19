@@ -13,6 +13,43 @@ from scipy.io import loadmat
 import torch
 from torch import nn
 
+def get_model_attrs(model, names):
+    """
+    Return dictionary of attributes from model
+
+    Parameters
+    ----------
+    model : nn.Module
+        model containing attributes (at any level) to return
+    names : list
+        list of attribute names to return from model
+
+    Returns
+    -------
+    output : dict
+        dictionary with key/value pairs as (name, attrs) where `attrs` is a
+        list of attributes encountered in model
+
+    Notes
+    -----
+    Model attributes are returned by using the nn.Module `apply` function, and
+    therefore attributes within `output` are appended sequentially as they are
+    encountered.
+    """
+    # init values dict
+    output = dict((k, []) for k in names)
+    if len(output) == 0:
+        return output
+    # init get_fn
+    def get_fn(m):
+        for name in names:
+            attr = getattr(m, name, None)
+            if attr is not None:
+                output.get(name).append(attr)
+    # get attributes
+    model.apply(get_fn)
+    return output
+
 def load_from_yaml(file):
     """
     Return dictionary loaded from yaml file
