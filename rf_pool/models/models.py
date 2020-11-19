@@ -158,6 +158,7 @@ class Model(nn.Module):
           )
         )
         """
+        #TODO: allow network.sub_network.etc
         # get network and layers
         net_name = kwargs.pop('NETWORK', '_model')
         if net_name == '_model':
@@ -206,12 +207,18 @@ class Model(nn.Module):
 
     def _find_parameters(self, patterns):
         """"convenience function to return params that match given patterns"""
+        if not hasattr(self, '_parameter_names'):
+            self._parameter_names = {}
         if not isinstance(patterns, list):
             patterns = [patterns]
         params = []
         for name, param in self.named_parameters():
             if any(name.find(pattern) != -1 for pattern in patterns):
+                if self._parameter_names.get(name) is not None:
+                    warnings.warn('Parameter "%s" already found. Skipping.' % name)
+                    continue
                 params.append(param)
+                self._parameter_names.update({name: True})
         return params
 
     def set_parameters(self, **kwargs):
