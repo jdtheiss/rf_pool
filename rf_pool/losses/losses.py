@@ -95,8 +95,8 @@ class AttrLoss(Loss):
     ----------
     loss_fn : torch.nn.modules.loss or function
         loss function to use
-    attr : str
-        name of attribute within `model` to use as input to loss
+    attr : str or list
+        name of attribute(s) within `model` to use as input to loss
     model : nn.Module or rf_pool.models.Model
         model containing attribute to use in loss [default: None]
     **kwargs : **dict
@@ -110,7 +110,7 @@ class AttrLoss(Loss):
     def __init__(self, loss_fn, attr, model=None, **kwargs):
         super(AttrLoss, self).__init__()
         self.loss_fn = build.build_module(loss_fn)
-        self.attr = attr
+        self.attr = attr if isinstance(attr, list) else [attr]
         self.kwargs = kwargs
 
         # build from model unless None
@@ -118,7 +118,8 @@ class AttrLoss(Loss):
             self.build_from_model(model)
 
     def build_from_model(self, model):
-        self.inputs = functions.get_model_attrs(model, [self.attr]).pop(self.attr)
+        self.inputs = []
+        [self.inputs.extend(v) for v in functions.get_model_attrs(model, self.attr).values()]
 
     def forward(self, *args):
         return sum([self.loss_fn(x, **self.kwargs) for x in self.inputs])
