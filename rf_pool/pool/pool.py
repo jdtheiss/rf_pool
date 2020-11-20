@@ -7,6 +7,7 @@ from IPython.display import clear_output, display
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from torch import nn
 from torch.autograd import Function
 
 try:
@@ -396,11 +397,20 @@ class Pool(torch.nn.Module):
         self.lattice_fn = lattice_fn
         # get kwargs keys
         self._kwarg_keys = kwargs.keys()
-        # check for optional kwargs
+        # check for optional kwargs #TODO: improve attribute management
         self.option_keys = ['adaptive','delta_mu','delta_sigma','fn','retain_shape',
                             'training','attention_mu','attention_sigma','weight',
                             'update_mu','update_sigma','vectorize','RF_weights']
         options = functions.pop_attributes(kwargs, self.option_keys)
+        # register learnable parameters
+        for k, v in options.copy().items():
+            if k in ['attention_mu','attention_sigma','weight']:
+                if isinstance(v, torch.Tensor) and v.requires_grad:
+                    self.register_parameter(k, nn.Parameter(v))
+                else:
+                    self.register_buffer(k, v)
+                options.pop(k)
+        # set other attributes
         functions.set_attributes(self, **options)
         self.apply_attentional_field(**options)
         # set inputs for rf_pool
