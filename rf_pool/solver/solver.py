@@ -72,8 +72,9 @@ class Solver(pl.LightningModule):
         reduce = cfg.get('LOG').get('reduce', 'sum')
         # get attributes
         logs = functions.get_model_attrs(self.model, fields)
-        # get reduce function
-        reduce_fn = getattr(np, reduce, None)
+        # get reduce function (try __builtins__ first, then numpy)
+        reduce_fn = __builtins__.get(reduce, getattr(np, reduce, None))
+        # reduce_fn = getattr(np, reduce, None)
         if reduce_fn is None:
             # debug
             self._debug(log_attrs=logs)
