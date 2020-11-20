@@ -193,7 +193,7 @@ def build_loss(cfg):
         return _none_fn
     loss_class = getattr(losses, loss_key)
     # set kwargs from sub-cfg
-    kwargs = deepcopy(cfg.get(loss_key))
+    kwargs = cfg.get(loss_key).copy()
     # init losses
     loss_dict = {}
     # for each loss in Loss field, update loss
