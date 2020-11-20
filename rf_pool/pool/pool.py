@@ -397,7 +397,7 @@ class Pool(torch.nn.Module):
         # get kwargs keys
         self._kwarg_keys = kwargs.keys()
         # check for optional kwargs
-        self.option_keys = ['adaptive','delta_mu','delta_sigma','fn',
+        self.option_keys = ['adaptive','delta_mu','delta_sigma','fn','retain_shape',
                             'training','attention_mu','attention_sigma','weight',
                             'update_mu','update_sigma','vectorize','RF_weights']
         options = functions.pop_attributes(kwargs, self.option_keys)
