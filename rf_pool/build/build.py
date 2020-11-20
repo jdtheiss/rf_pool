@@ -15,7 +15,7 @@ def check_keys(d, endswith, warn=True):
     key = [k for k in d.keys() if k.endswith(endswith)]
     if len(key) == 0:
         if warn:
-            warnings.warn('No "%s" field found in config' % ending)
+            warnings.warn('No "%s" field found in config' % endswith)
         return
     return key[0]
 
