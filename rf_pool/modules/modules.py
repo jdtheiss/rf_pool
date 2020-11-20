@@ -477,6 +477,50 @@ class ConvBlock(Module):
         # build conv block
         self.build(**conv_block)
 
+class Linear(Module):
+    """
+    Flatten + Linear layer
+
+    Parameters
+    ----------
+    in_features : int
+        number of input channels
+    out_features : int
+        number of output channels
+    bias : bool
+        True/False use bias
+
+    Notes
+    -----
+    This is a convenience module that combines `nn.Flatten` and `nn.Linear` to
+    ensure convolutional outputs are automatically flattened before passing to
+    the `nn.Linear` layer.
+    """
+    def __init__(self, in_features, out_features, bias=True):
+        super(Linear, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        # register weight and bias from nn.Linear
+        self._linear = nn.Linear(in_features, out_features, bias)
+        self.register_parameter('weight', self._linear.weight)
+        if self._linear.bias is not None:
+            self.register_parameter('bias', self._linear.bias)
+        else:
+            self.bias = None
+
+    def __repr__(self):
+        return self._linear.__repr__()
+
+    def apply_modules(self, *args, **kwargs):
+        return self.forward(args[0])
+
+    def forward(self, input):
+        input = input.flatten(1)
+        output = torch.mul(input.unsqueeze(1), self.weight.unsqueeze(0)).sum(-1)
+        if self.bias is not None:
+            output = output + self.bias
+        return output
+
 class ResNetBlock(Module):
     """
     Residual Network Block
