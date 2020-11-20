@@ -243,7 +243,10 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
             else:
                 output_shape = (batch_size, ch,) + output.shape[1:]
             output = output.reshape(output_shape)
-            outputs[i] = torch.as_tensor(output, dtype=dtype)
+            outputs[i] = torch.as_tensor(output)
+
+    # set output dtype
+    outputs[0] = outputs[0].type(dtype)
 
     # return without grad if less than 3 outputs
     if len(outputs) < 3:
