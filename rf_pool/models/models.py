@@ -219,6 +219,8 @@ class Model(nn.Module):
                     continue
                 params.append(param)
                 self._parameter_names.update({name: True})
+        if len(params) == 0:
+            warnings.warn('No parameters found for patterns: %a' % patterns)
         return params
 
     def set_parameters(self, **kwargs):
