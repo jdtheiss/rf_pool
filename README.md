@@ -19,8 +19,16 @@ After downloading, run the following from command line:
     $ cd rf_pool
     $ pip install -r requirements.txt
     $ pip install -e .
+    $ python -m unittest discover tests
 
-Note: rf_pool requires python version >= 3.6.
+Note: rf_pool requires python version >= 3.6. If tests fail, try using a conda environment during install:
+
+    $ cd rf_pool
+    $ conda create -n rf_pool python=3.6
+    $ conda activate rf_pool
+    $ pip install -r requirements.txt
+    $ pip install -e .
+    $ python -m unittest discover tests
 
 ## Example
 After installing, run the following from command line to train on MNIST:
