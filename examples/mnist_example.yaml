@@ -26,11 +26,11 @@ Model:
     Flatten: {}
     # insert attention at layer 1
     insert_modules:
-        LAYERS: [1]
-        IMAGE_SHAPE: [1,28,28]
-        Attention:
-            n_hidden: 10
-            img_shape: [12, 12]
+        ConvBlock_0:
+            Attention:
+                in_channels: 32
+                n_hidden: 10
+                img_shape: [12, 12]
     # set parameters for training
     set_parameters:
         rbm_parameters: attention

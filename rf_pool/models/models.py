@@ -9,6 +9,22 @@ from torch.nn import functional as F
 
 from rf_pool import build, modules, pool
 
+def _append_modules(mod, **kwargs):
+    """
+    Convenience function to append modules to current module without changing
+    module (subsequent modules are added with `add_module`)
+    """
+    # add modules
+    [mod.add_module(k, v) for k, v in kwargs.items()]
+    # set new forward function to call appended modules
+    def forward(x):
+        x = mod.__class__.forward(mod, x)
+        for m in mod._modules.values():
+            x = m(x)
+        return x
+    mod.forward = forward
+    return mod
+
 def _sequential(mods):
     """
     Convenience function to create Sequential model with Flatten added before
@@ -75,8 +91,8 @@ class Model(nn.Module):
 
     Methods
     -------
-    replace_modules(**modules : **dict) : replace modules in model
-    insert_modules(**modules : **dict) : insert modules into model
+    replace_modules(**layers : **dict) : replace modules in model
+    insert_modules(**layers : **dict) : insert modules into model
     set_parameters(**params : **dict) : set parameters for training
     print_model(verbose : bool) : print model and other attributes
 
@@ -88,7 +104,7 @@ class Model(nn.Module):
         super(Model, self).__init__()
         # build model
         if isinstance(model, dict):
-            self._model = build.build_model({'MODEL': backbone})
+            self._model = build.build_model({'MODEL': model})
         elif isinstance(model, nn.Module):
             self._model = model
         # apply methods
@@ -109,27 +125,7 @@ class Model(nn.Module):
                 output.extend([('%s.%s' % (name, n), m) for n, m in self.get_modules(mod)])
         return output
 
-    def replace_modules(self, **layers):
-        """
-        Replace modules in model with new module
-
-        Parameters
-        ----------
-        layers : dict
-            dictionary of key/value pairs like {module_name: module}
-            where module_name can be either the index or name of the module
-            (found using the model's `.named_modules()` method).
-
-        Returns
-        -------
-        None, overwrites module in model
-
-        Notes
-        -----
-        A specific module can be replaced by using it's fullpath module name
-        (e.g., 'model.layer1.1.activation'). Alternatively, multiple modules
-        can be replaced by using the ending module name (e.g., 'activation').
-        """
+    def _set_modules(self, layers, append=False):
         # get named modules as dict
         named_modules = dict(self.get_modules(self))
         # for each layer, update with new module
@@ -144,7 +140,7 @@ class Model(nn.Module):
                 assert len(updates) > 0, ('No modules ending with "%s" found.' % layer)
                 layers.pop(layer)
                 layers.update(updates)
-                return self.replace_modules(**layers)
+                return self._set_modules(layers, append=append)
             # build new module
             new_mod = build.build_module(module)
             # get parent module
@@ -154,114 +150,69 @@ class Model(nn.Module):
                 parent = named_modules.get('.'.join(split_name[:-1]))
             else:
                 parent = self
-            # add module to overwrite
+            # append module to current module
+            if append:
+                current_mod = named_modules[layer]
+                sub_name = new_mod.__class__.__name__.lower()
+                new_mod = _append_modules(current_mod, **{sub_name: new_mod})
+            # add_module to append or overwrite
             parent.add_module(name, new_mod)
 
-    def insert_modules(self, **kwargs):
+    def replace_modules(self, **layers):
         """
-        Insert modules into network at given layer indices
+        Replace modules in model with new module
 
         Parameters
         ----------
-        **kwargs : **dict
-            key/value pairs with following structure:
-            LAYERS : list
-                indices of network `_modules` to insert module
-            NETWORK : str, optional
-                network to insert modules [default: None, inserts in model]
-            IMAGE_SHAPE : list
-                shape of input image used to infer output channels of intermediate
-                layers within the network (i.e., `[in_channels, h, w]`)
-                [default: [3, 12, 12]]
-            {module name} : dict
-                kwargs to initialize {module name} (see Notes)
+        layers : dict
+            dictionary of key/value pairs like {module_name: module}
+            where `module_name` can be either the index or name of the module
+            (found using the model's `.named_modules()` method).
 
         Returns
         -------
-        None, updates model
+        None, overwrites module in model
 
         Notes
         -----
-        The {module name} should be a dictionary where {module name} is a class
-        of `rf_pool.modules`, `rf_pool.pool`, or `torch.nn`. The dictionary will
-        be passed e.g. `getattr(rf_pool.modules, {module name})(**kwargs)`,
-        where `kwargs` is the dictionary of keyword arguments used to initialize
-        {module name}.
+        A specific module can be replaced by using its fullpath module name
+        (e.g., 'model.layer1.1.activation'). Alternatively, multiple modules
+        can be replaced by using the ending module name (e.g., 'activation').
 
-        A separate module is inserted at each index in `LAYERS`, such that the
-        output of previous layer is passed to the inserted module and its output
-        is passed to the following layer in the network. If {module name} has
-        the parameter `in_channels` or `out_channels`, these will be set by the
-        `out_channels` of the previous layer (unless either parameter is set in
-        `kwargs`). See Examples.
-
-        Examples
+        See also
         --------
-        >>> model = Model(nn.ModuleDict({'backbone':
-                                         nn.Sequential(
-                                            nn.Conv2d(3, 64, 3),
-                                            nn.Conv2d(64, 128, 3)
-                                         )}))
-        >>> insert = {'NETWORK': 'backbone',
-                      'LAYERS': [1,2],
-                      'LeakyReLU': {'negative_slope': 0.2}}
-        >>> model.insert_modules(insert)
-        >>> print(model)
-        ModuleDict(
-          (backbone): Sequential(
-            (0): Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1))
-            (leakyrelu_1): LeakyReLU(negative_slope=0.2)
-            (1): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1))
-            (leakyrelu_3): LeakyReLU(negative_slope=0.2)
-          )
-        )
+        insert_modules
         """
-        #TODO: allow network.sub_network.etc
-        # get network and layers
-        net_name = kwargs.pop('NETWORK', '_model')
-        if net_name == '_model':
-            net = getattr(self, net_name)
-        else:
-            net = getattr(self._model, net_name, None)
-        layers = kwargs.pop('LAYERS', [])
-        n_layers = len(layers)
-        if net is None or n_layers == 0:
-            return
-        # get network modules
-        net_mods = list(net._modules.items())
-        # get out channels of network modules
-        img_shape = kwargs.pop('IMAGE_SHAPE', [3,12,12])
-        net_out_channels = _get_out_channels(net, img_shape)
-        # get modules to insert
-        insert_mods = list(kwargs.items())
-        insert_mods = (insert_mods + insert_mods[-1:] * n_layers)[:n_layers]
-        # insert modules to network
-        cnt = 0
-        for idx, (name, kwargs) in zip(layers, insert_mods):
-            kwargs = kwargs.copy()
-            # set in_channels, out_channels if needed
-            if idx > 0:
-                out_channels = net_out_channels[idx-1]
-            else:
-                out_channels = img_shape[0]
-            # update idx based on number of previous inserted modules
-            idx = idx + cnt
-            # get module to insert
-            mod_fn = build.get_class([modules, pool, nn], name)
-            args = inspect.getfullargspec(mod_fn).args
-            if 'in_channels' in args:
-                kwargs.setdefault('in_channels', out_channels)
-            if 'out_channels' in args:
-                kwargs.setdefault('out_channels', out_channels)
-            # insert to net_mods
-            net_mods.insert(idx, ('%s_%d' % (name.lower(), idx), mod_fn(**kwargs)))
-            cnt += 1
-        # update modules
-        updated_net = _sequential(OrderedDict(net_mods))
-        if net_name == '_model':
-            setattr(self, net_name, updated_net)
-        else:
-            setattr(self._model, net_name, updated_net)
+        self._set_modules(layers, append=False)
+
+    def insert_modules(self, **layers):
+        """
+        Insert modules in model after a given module
+
+        Parameters
+        ----------
+        layers : dict
+            dictionary of key/value pairs like {module_name: module}
+            where `module_name` can be either the index or name of the current
+            module (found using the model's `.named_modules()` method) after
+            which `module` will be appended.
+
+        Returns
+        -------
+        None, overwrites module in model
+
+        Notes
+        -----
+        A specific module can be inserted by using the fullpath name of the
+        preceding module (e.g., 'model.layer1.1.activation'). Alternatively,
+        multiple modules can be inserted by using the ending module name
+        (e.g., 'activation').
+
+        See also
+        --------
+        replace_modules
+        """
+        self._set_modules(layers, append=True)
 
     def _find_parameters(self, patterns):
         """"convenience function to return params that match given patterns"""
