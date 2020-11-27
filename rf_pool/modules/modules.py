@@ -1,4 +1,5 @@
 from collections import OrderedDict
+import copy
 import warnings
 
 import matplotlib.pyplot as plt
@@ -471,7 +472,7 @@ class ConvBlock(Module):
         elif normalization:
             conv_block.update({'norm': normalization(out_channels)})
         if activation:
-            conv_block.update({'act': activation})
+            conv_block.update({'act': copy.deepcopy(activation)})
         if pool:
             conv_block.update({'pool': pool})
         # build conv block

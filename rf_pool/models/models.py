@@ -75,9 +75,10 @@ class Model(nn.Module):
 
     Methods
     -------
-    insert_modules(**modules:**dict) : insert modules into model at specified layers
-    set_parameters(**params:**dict) : set parameters for training
-    print_model(verbose:bool) : print model and other attributes
+    replace_modules(**modules : **dict) : replace modules in model
+    insert_modules(**modules : **dict) : insert modules into model
+    set_parameters(**params : **dict) : set parameters for training
+    print_model(verbose : bool) : print model and other attributes
 
     See Also
     --------
@@ -98,6 +99,63 @@ class Model(nn.Module):
     def __repr__(self):
         # set _model repr as self repr
         return self._model.__repr__()
+
+    def get_modules(self, model):
+        # replacement for named_modules method when module is repeated
+        output = []
+        for name, mod in model.named_children():
+            output.append((name, mod))
+            if hasattr(mod, 'named_children') and len(mod._modules) > 0:
+                output.extend([('%s.%s' % (name, n), m) for n, m in self.get_modules(mod)])
+        return output
+
+    def replace_modules(self, **layers):
+        """
+        Replace modules in model with new module
+
+        Parameters
+        ----------
+        layers : dict
+            dictionary of key/value pairs like {module_name: module}
+            where module_name can be either the index or name of the module
+            (found using the model's `.named_modules()` method).
+
+        Returns
+        -------
+        None, overwrites module in model
+
+        Notes
+        -----
+        A specific module can be replaced by using it's fullpath module name
+        (e.g., 'model.layer1.1.activation'). Alternatively, multiple modules
+        can be replaced by using the ending module name (e.g., 'activation').
+        """
+        # get named modules as dict
+        named_modules = dict(self.get_modules(self))
+        # for each layer, update with new module
+        for layer, module in layers.copy().items():
+            # get layer by index
+            if isinstance(layer, int):
+                layer = list(named_modules.keys())[layer]
+            elif named_modules.get(layer) is None:
+                # recursively update modules that endswith layer
+                updates = dict((k, module) for k in named_modules.keys()
+                               if k.endswith(layer))
+                assert len(updates) > 0, ('No modules ending with "%s" found.' % layer)
+                layers.pop(layer)
+                layers.update(updates)
+                return self.replace_modules(**layers)
+            # build new module
+            new_mod = build.build_module(module)
+            # get parent module
+            split_name = layer.split('.')
+            parent_name, name = split_name[:-1], split_name[-1]
+            if parent_name:
+                parent = named_modules.get('.'.join(split_name[:-1]))
+            else:
+                parent = self
+            # add module to overwrite
+            parent.add_module(name, new_mod)
 
     def insert_modules(self, **kwargs):
         """
