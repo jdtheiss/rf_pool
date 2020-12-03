@@ -68,25 +68,6 @@ class Loss(nn.Module):
             self.logs.update({name: loss_i.detach()})
         return loss
 
-    def L2(self, x):
-        return torch.sqrt(torch.sum(torch.pow(x, 2)))
-
-    def set_params(self, on_parameters=None, set='on'):
-        if self.parameters is None:
-            return None
-        assert set in ['on','off']
-        # set requires grad True for self.parameters
-        if set == 'on':
-            on_parameters = self.model.get_trainable_params()
-            self.model.set_requires_grad(pattern='', requires_grad=False)
-            self.model.set_requires_grad(self.parameters, requires_grad=True)
-            return on_parameters
-        # set requires_grad True for on_parameters
-        elif set == 'off':
-            self.model.set_requires_grad(self.parameters, requires_grad=False)
-            self.model.set_requires_grad(on_parameters, requires_grad=True)
-        return None
-
 class AttrLoss(Loss):
     """
     Attribute Loss function (apply a loss to some model attribute)
@@ -123,6 +104,45 @@ class AttrLoss(Loss):
 
     def forward(self, *args):
         return sum([self.loss_fn(x, **self.kwargs) for x in self.inputs])
+
+class SumLoss(Loss):
+    """
+    Sum of dictionary of losses (i.e., `sum(outputs.values())`) where `outputs`
+    is a dictionary passed to `SumLoss.forward`
+
+    Parameters
+    ----------
+    losses : list
+        list of loss names to include in sum [default: None, all losses included]
+    weights : dict
+        dictionary of weights (per loss name in `losses`) as (name, weight)
+        key/value pairs
+        [default: {}, dict((k, 1.) for k in losses)]
+    """
+    def __init__(self, losses=[], weights={}):
+        super(SumLoss, self).__init__({}.fromkeys(losses), weights)
+
+    def forward(self, outputs):
+        """
+        Sum of outputs dict (i.e., `sum(outputs.values())`)
+
+        Parameters
+        ----------
+        outputs : dict
+            dictionary of loss tensors with key pairs (name, loss)
+
+        Notes
+        -----
+        If `len(self.losses) == 0`, `sum(outputs.values)` is returned.
+        Otherwise, `sum(outputs[k] for k in self.losses)` is returned.
+        """
+        loss = 0
+        self.logs = {}
+        for name in self.losses.keys() or outputs.keys():
+            loss_i = outputs[name]
+            loss = loss + loss_i * self.weights.get(name, 1.)
+            self.logs.update({name: loss_i.detach()})
+        return loss
 
 class KernelLoss(Loss):
     """
