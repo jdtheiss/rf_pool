@@ -122,7 +122,7 @@ class SumLoss(Loss):
     def __init__(self, losses=[], weights={}):
         super(SumLoss, self).__init__({}.fromkeys(losses), weights)
 
-    def forward(self, outputs):
+    def forward(self, *args):
         """
         Sum of outputs dict (i.e., `sum(outputs.values())`)
 
@@ -136,6 +136,7 @@ class SumLoss(Loss):
         If `len(self.losses) == 0`, `sum(outputs.values)` is returned.
         Otherwise, `sum(outputs[k] for k in self.losses)` is returned.
         """
+        outputs = args[0]
         loss = 0
         self.logs = {}
         for name in self.losses.keys() or outputs.keys():
