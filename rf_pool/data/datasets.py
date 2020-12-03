@@ -273,45 +273,39 @@ class URLDataset(Dataset):
         else:
             self.labels = self.data_info.copy()
 
-class FilesDataset(Dataset):
-    def __init__(self, root, files=[], labels=None, transform=None, **kwargs):
-        super(FilesDataset, self).__init__()
-        self.root = root
-        self.transform = transform
-        # set data_info, data, labels using patterns and pattern_labels
-        for i, file in enumerate(files):
-            if type(labels) is list and len(labels) > i:
-                label = labels[i]
-            else:
-                label = labels
-            pattern = os.path.abspath(os.path.join(self.root, file))
-            file_names = glob.glob(pattern)
-            self.set_data_info(file_names, label)
-        self.set_data(**kwargs)
-        self.set_labels(**kwargs)
+class SubsetDataset(Dataset):
+    """
+    Subset of a Dataset class
 
-    def set_data(self, load_fn=imageio.imread, load_transform=None, **kwargs):
-        # load data from file_names using load_fn and apply transform
-        data = []
-        for file_name in self.data_info.keys():
-            d = load_fn(file_name)
-            d = functions.kwarg_fn([self,functions,list,dict,__builtins__,np,torch],
-                                   d, **kwargs)
-            if load_transform:
-                d = load_transform(d)
-            data.append(d)
-        if np.all([type(d) is torch.Tensor and d.ndimension()==4 for d in data]):
-            self.data = torch.cat(data)
-        else:
-            self.data = data
+    Parameters
+    ----------
+    dataset_class : str
+        name of `torchvision.datastes` class to use
+    indices : list
+        indices to include in subset [default: None, full dataset used]
+    **kwargs : **dict
+        keyword arguments passed to initialize dataset
+    """
+    def __init__(self, dataset_class, indices=None, **kwargs):
+        # initialize with dataset_class
+        cls = getattr(torchvision.datasets, dataset_class, None)
+        self.__class__.__bases__ = (cls,)
+        super(SubsetDataset, self).__init__(**kwargs)
 
-    def set_labels(self, label_dtype=torch.uint8, **kwargs):
-        # convert data_info to labels
-        self.labels = list(self.data_info.values())
-        if np.all([label is not None for label in self.labels]):
-            self.labels = torch.as_tensor(self.labels, dtype=label_dtype)
-        else:
-            self.labels = None
+        # set indices
+        self._indices = indices
+
+    def __len__(self):
+        # return len of indices
+        if self._indices:
+            return len(self._indices)
+        return super().__len__()
+
+    def __getitem__(self, index):
+        # get index relative to indices
+        if self._indices:
+            index = self._indices[index]
+        return super().__getitem__(index)
 
 class TripletDataset(Dataset):
     def __init__(self, dataset, positive_labels={}, negative_labels={},
@@ -381,105 +375,6 @@ class TripletDataset(Dataset):
             positive = self.transform(positive)
             negative = self.transform(negative)
         return (img, positive, negative, label)
-
-class SearchDataset(Dataset):
-    """
-    #TODO:WRITEME
-    """
-    def __init__(self, dataset, n_distractors, n_images, target_labels=[],
-                 distractor_labels=[], target_loc=[], distractor_locs=[],
-                 label_map={}, transform=None, **kwargs):
-        super(SearchDataset, self).__init__()
-        self.n_distractors = n_distractors
-        self.n_images = n_images
-        self.target_labels = target_labels
-        self.distractor_labels = distractor_labels
-        self.target_loc = target_loc
-        self.distractor_locs = distractor_locs
-        self.label_map = label_map
-        self.transform = transform
-
-        # get labels from dataset
-        _, labels = self.get_data_labels(dataset, [],
-                                         ['labels','train_labels','test_labels'])
-
-        # set target_labels, flanker_labels
-        if len(self.target_labels) == 0:
-            self.target_labels = np.unique(labels).tolist()
-        if len(self.distractor_labels) == 0:
-            self.distractor_labels = np.unique(labels).tolist()
-
-        # ensure target_loc, distractor_locs are list of lists
-        if len(self.target_loc) == 0 or type(self.target_loc[0]) is not list:
-            self.target_loc = [self.target_loc]
-        if len(self.distractor_locs) == 0 or type(self.distractor_locs[0]) is not list:
-            self.distractor_locs = [self.distractor_locs]
-
-        # set data_info
-        self.set_data_info(self.target_labels + self.distractor_labels, labels)
-
-        # set data
-        self.set_data_labels(dataset, self.n_images, self.n_distractors,
-                             self.target_labels, self.distractor_labels,
-                             self.target_loc, self.distractor_locs, **kwargs)
-
-    def set_data_info(self, keys, labels):
-        self.data_info = OrderedDict()
-        for key in keys:
-            self.data_info.update({key: np.where(key==labels)[0].tolist()})
-
-    def set_data_labels(self, dataset, n_images, n_distractors, target_labels,
-                        distractor_labels, target_loc, distractor_locs, **kwargs):
-        self.data = []
-        self.locations = []
-        self.labels = []
-        for n in range(n_images):
-            # sample target/flanker labels
-            target_label_n = self.sample_label(target_labels, 1)[0]
-            distractor_labels_n = self.sample_label(distractor_labels, n_distractors)
-            # sample target/flanker data
-            target = self.sample_data(dataset, [target_label_n])[0]
-            distractors = self.sample_data(dataset, distractor_labels_n)
-            # permute target_loc, distractor_locs
-            target_loc_i = np.random.permutation(target_loc)[0]
-            distractor_locs_i = np.random.permutation(distractor_locs)[:n_distractors]
-            # create crowded stimuli
-            stim, loc = stimuli.make_search_stimuli(target, distractors,
-                                               target_loc=target_loc_i,
-                                               distractor_locs=distractor_locs_i,
-                                               **kwargs)
-            self.data.append(stim)
-            self.locations.append(loc)
-            self.labels.append(target_label_n)
-
-    def sample_data(self, dataset, labels):
-        data = []
-        for label in labels:
-            indices = self.data_info.get(label)
-            index = indices.pop(0)
-            self.data_info.update({label: indices + [index]})
-            data.append(self.to_numpy(dataset[index][0]))
-        return data
-
-    def sample_label(self, labels, n):
-        return np.random.permutation(labels)[:n]
-
-    def __getitem__(self, index):
-        img = self.data[index]
-        loc = self.locations[index]
-        if self.labels is not None and len(self.labels) > index:
-            label = self.labels[index]
-            if self.label_map.get(label) is not None:
-                label = self.label_map.get(label)
-        else:
-            label = -1
-        # convert to numpy, Image
-        img = self.to_numpy(img)
-        img = self.to_Image(img)
-        # apply transform
-        if self.transform:
-            img = self.transform(img)
-        return (img, loc, label)
 
 class CrowdedDataset(Dataset):
     """
@@ -660,78 +555,6 @@ class FeatureDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         img = self.data[None, index]
         label = self.labels[index]
-        img = Image.fromarray(img.numpy(), mode='L')
-        if self.transform:
-            img = self.transform(img)
-        return (img, label)
-
-    def __len__(self):
-        return len(self.labels)
-
-
-class CrowdedCircles(torch.utils.data.Dataset):
-    """
-    Class for creating a dataset of crowded circles stimuli
-
-    Attributes
-    ----------
-    n : int
-        number of total images to be made
-    label_type : str
-        decides the label for training ('center' or 'mean')
-    offset : int
-        offset to subtract from target labels to reduce number of classes for
-        cross entropy [default: 0]
-    **kwargs : dict
-        see stimuli.make_crowded_circles()
-    Methods
-    -------
-    make_stimuli(self, **kwargs)
-        makes self.n random crowded circle stimuli
-    """
-    def __init__(self, root, n, label_type, offset=0, train=True, download=False,
-                 transform=None, **kwargs):
-        self.root = root
-        self.n = n
-        self.label_type = label_type
-        self.offset = offset
-        self.train = train
-        self.download = download
-        self.transform = transform
-        self.data = []
-        self.labels = []
-
-        self.train_data_file = None
-        self.test_data_file = None
-        # load in previously saved dataset (TODO)
-        if self.download:
-            if self.train:
-                self.data, self.labels = torch.load(os.path.join(self.root, self.train_data_file))
-            else:
-                self.data, self.labels = torch.load(os.path.join(self.root, self.test_data_file))
-
-            self.data = torch.load(data_file)
-            self.labels = torch.load(label_fle)
-        # make new dataset of size self.n from keyword arguments
-        else:
-            self.make_stimuli(**kwargs)
-
-    def make_stimuli(self, **kwargs):
-        for i in range(self.n):
-            s, target_r, mean_r = stimuli.make_crowded_circles(**kwargs)
-            self.data.append(s)
-            if self.label_type.lower() == "center":
-                self.labels.append(target_r)
-            elif self.label_type.lower() == "mean":
-                self.labels.append(mean_r)
-            else:
-                raise Exception("label type not undetstood")
-        self.data = torch.tensor(self.data, dtype=torch.uint8)
-        self.labels = torch.tensor(self.labels)
-
-    def __getitem__(self, index):
-        img = self.data[index]
-        label = self.labels[index] - self.offset
         img = Image.fromarray(img.numpy(), mode='L')
         if self.transform:
             img = self.transform(img)
