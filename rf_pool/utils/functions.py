@@ -13,6 +13,73 @@ from scipy.io import loadmat
 import torch
 from torch import nn
 
+def call_module_fn(model, module_name, fn_name, *args, **kwargs):
+    """
+    Return outputs of a specific module's function
+
+    Parameters
+    ----------
+    model : nn.Module
+        model containing modules with functions to call
+    module_name : str
+        name of module to call function
+    fn_name : str
+        name of function to call
+    *args : *tuple
+        arguments passed to `model` which result in module input being passed to
+        function
+    **kwargs : **dict
+        keyword arguments passed to module function
+
+    Returns
+    -------
+    outputs : dict
+        dictionary of outputs with key pairs (module_name, function output)
+
+    Notes
+    -----
+    This function registers a `forward_pre_hook` to the module, which then is
+    used to call the module's function like `fn(*input, **kwargs)`. If
+    `module_name` is not the fullpath name of the module, then all modules that
+    end with `module_name` will be used.
+    """
+    # get named modules as dict
+    named_modules = dict(model.named_modules())
+
+    # get module directly
+    mods = named_modules.get(module_name)
+    # otherwise, find modules ending with module_name
+    if mods is None:
+        mods = [m for n, m in named_modules.items() if n.endswith(module_name)]
+        names = [n for n in named_modules.keys() if n.endswith(module_name)]
+    else:
+        mods = [mods]
+        names = [module_name]
+
+    assert len(mods) > 0, 'No modules found for "%s".' % module_name
+
+    # hook function to pass input, **kwargs to fn
+    outputs = []
+    def hook_fn(mod, input):
+        # append function output
+        fn = getattr(mod, fn_name)
+        outputs.append(fn(*input, **kwargs))
+
+    # set hooks
+    hooks = []
+    for mod in mods:
+        hooks.append(mod.register_forward_pre_hook(hook_fn))
+
+    # pass args through model
+    model.eval()
+    try:
+        model(*args)
+    finally:
+        # close hooks
+        [hook.remove() for hook in hooks]
+
+    return dict(zip(names, outputs))
+
 def get_model_attrs(model, names):
     """
     Return dictionary of attributes from model
