@@ -137,7 +137,7 @@ class Module(nn.Module):
         return input
 
     def forward(self, *args, **kwargs):
-        return self.apply_modules(input)
+        return self.apply_modules(*args, **kwargs)
 
     def train_module(self, input, label, loss_fn, optimizer=None, **kwargs):
         if optimizer:
@@ -1148,6 +1148,7 @@ class Attention(Module):
         # attend
         return self.attend(i_norm, rbm_name='feature_rbm')
 
+    @torch.no_grad()
     def cosine_similarity(self, input, **kwargs):
         """compute cosine similarity between input and attention"""
         # pass through forward and return attention
