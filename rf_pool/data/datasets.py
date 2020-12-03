@@ -2,6 +2,7 @@ from collections import OrderedDict
 import glob
 import io
 import os.path
+import pickle
 import re
 import urllib.request
 import warnings
@@ -277,23 +278,40 @@ class SubsetDataset(Dataset):
     """
     Subset of a Dataset class
 
+    This class wraps a dataset using a subset of the data indices
+
     Parameters
     ----------
     dataset_class : str
         name of `torchvision.datastes` class to use
     indices : list
         indices to include in subset [default: None, full dataset used]
+    index_file : str
+        pickle file containing indices to use [default: None]
     **kwargs : **dict
         keyword arguments passed to initialize dataset
+
+    Notes
+    -----
+    The search for `dataset_class` starts with the `rf_pool.data.datasets` then
+    `torchvision.datasets` (i.e., 'CocoDetection' uses
+    `rf_pool.data.datasets.CocoDetection`).
     """
-    def __init__(self, dataset_class, indices=None, **kwargs):
-        # initialize with dataset_class
-        cls = getattr(torchvision.datasets, dataset_class, None)
+    def __init__(self, dataset_class, indices=None, index_file=None, **kwargs):
+        # initialize with dataset_class from rf_pool.data.datasets
+        cls = globals().get(dataset_class)
+        # if not found, get from torchvision.datasets
+        if cls is None:
+            cls = getattr(torchvision.datasets, dataset_class, None)
         self.__class__.__bases__ = (cls,)
         super(SubsetDataset, self).__init__(**kwargs)
 
         # set indices
         self._indices = indices
+
+        # load from index_file
+        if index_file:
+            self._indices = pickle.load(open(index_file, 'rb'))
 
     def __len__(self):
         # return len of indices
@@ -306,6 +324,63 @@ class SubsetDataset(Dataset):
         if self._indices:
             index = self._indices[index]
         return super().__getitem__(index)
+
+class CocoDetection(torchvision.datasets.CocoDetection):
+    """
+    CocoDetection dataset converted to pytorch format
+
+    This class wraps the torchvision.datasets.CocoDetection class and converts
+    `bbox` (xmin,ymin,w,h) to (xmin,ymin,xmax,ymax)
+
+    Parameters
+    ----------
+    root : str
+        Root directory where images are downloaded to.
+    annFile : str
+        Path to json annotation file.
+    transform : function
+        A function/transform that  takes in an PIL image
+        and returns a transformed version. E.g, ``transforms.ToTensor``
+        [default: None]
+    target_transform : function
+        A function/transform that takes in the target and transforms it.
+        [default: None]
+    transforms : function
+        A function/transform that takes input sample and its target as entry
+        and returns a transformed version. [default: None]
+    """
+    def __init__(self, root, annFile, transform=None, target_transform=None, transforms=None):
+        super(CocoDetection, self).__init__(root, annFile, transform,
+                                            target_transform, transforms)
+
+    def _convert_targets(self, targets):
+        # convert targets to pytorch format (mostly bbox->boxes)
+        instances = dict((k,[]) for k in ['boxes','labels','area','iscrowd'])
+        for tgt in targets:
+            # convert bbox (xmin,ymin,w,h) to (xmin,ymin,xmax,ymax)
+            boxes = torch.tensor(tgt['bbox']).view(-1, 4)
+            boxes[:, 2:] += boxes[:, :2]
+            instances.get('boxes').append(boxes)
+            # append labels, area, iscrowd
+            instances.get('labels').append(torch.tensor([tgt['category_id']]))
+            instances.get('area').append(torch.tensor([tgt['area']]))
+            instances.get('iscrowd').append(torch.tensor([tgt['iscrowd']]))
+        # concatenate tensors
+        instances = dict((k, torch.cat(v)) for k, v in instances.items())
+        instances.update({'image_id': targets[0]['image_id']})
+        return instances
+
+    def __getitem__(self, index):
+        # get image, targets
+        img, tgt = super().__getitem__(index)
+        # convert targets
+        return img, self._convert_targets(tgt)
+
+    def collate_fn(self, batch):
+        # return list[Tensor], list[dict]
+        images = list(map(lambda x: x[0], batch))
+        targets = list(map(lambda x: x[1], batch))
+        return images, targets
 
 class TripletDataset(Dataset):
     def __init__(self, dataset, positive_labels={}, negative_labels={},
