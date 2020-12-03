@@ -140,8 +140,7 @@ void pool<T>::kernel_lp_pool(const T* array, T p, size_t kernel[2], size_t img_s
 template<typename T>
 void pool<T>::kernel_avg_pool(const T* array, size_t kernel[2], size_t img_shape[2],
                               size_t stride[2], size_t size, T* output, size_t* indices) {
-    // raise each to power p, sum across kernels, get root p
-    size_t block_size = ops<T>::output_size(kernel, img_shape, stride, size);
+    // divide by kernel size and sum
     T b = T(kernel[0] * kernel[1]);
     ops<T>::kernel_fn(array, b, ops<T>::div, ops<T>::add, kernel, img_shape, stride, size, output);
     ops<T>::argmax(array, kernel, img_shape, stride, size, indices);
