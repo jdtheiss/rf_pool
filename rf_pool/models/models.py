@@ -19,8 +19,8 @@ def _append_modules(mod, **kwargs):
     # set new forward function to call appended modules
     def forward(x):
         x = mod.__class__.forward(mod, x)
-        for m in mod._modules.values():
-            x = m(x)
+        for k in kwargs.keys():
+            x = mod._modules[k](x)
         return x
     mod.forward = forward
     return mod
@@ -286,10 +286,8 @@ class Model(nn.Module):
     def apply_modules(self, *args, **kwargs):
         pass
 
-    def forward(self, x):
-        for name, mod in self._model.named_children():
-            x = mod(x)
-        return x
+    def forward(self, *args, **kwargs):
+        return self._model(*args, **kwargs)
 
 #TODO: update classes to work as Model class does
 class VAE(Model):
