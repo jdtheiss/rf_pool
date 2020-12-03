@@ -136,11 +136,8 @@ class Module(nn.Module):
                 break
         return input
 
-    def forward(self, input):
+    def forward(self, *args, **kwargs):
         return self.apply_modules(input)
-
-    def __call__(self, *args, **kwargs):
-        return self.apply_modules(*args, **kwargs)
 
     def train_module(self, input, label, loss_fn, optimizer=None, **kwargs):
         if optimizer:
@@ -1188,9 +1185,6 @@ class Attention(Module):
         if kwargs.get('need_weights'):
             return out, attn
         return out
-
-    def __call__(self, *args, **kwargs):
-        return self.forward(*args, **kwargs)
 
 if __name__ == '__main__':
     import doctest
