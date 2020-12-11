@@ -132,7 +132,8 @@ class Solver(pl.LightningModule):
                 params = kwargs.get('params')
                 if isinstance(params, list):
                     for param in params:
-                        param.update({'params': getattr(self.model, param['params'])})
+                        param.update({'params': getattr(self.model, param['params']),
+                                      'name': param['params']})
             else: # otherwise, set model.parameters()
                 kwargs.update({'params': self.model.parameters()})
             optim_group.update({'optimizer': fn(**kwargs)})
