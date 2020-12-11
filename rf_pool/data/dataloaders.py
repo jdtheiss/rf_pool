@@ -21,6 +21,11 @@ class DataLoader(PTDataLoader):
         assert len(datasets) == 1, (
             'DataLoader class requires one dataset (%d found).' % (len(datasets))
         )
+        # get collate_fn from dataset if not passed in kwargs
+        if 'collate_fn' not in kwargs:
+            dataset = list(datasets.values())[0]
+            if hasattr(dataset, 'collate_fn'):
+                kwargs.update({'collate_fn': dataset.collate_fn})
         super(DataLoader, self).__init__(*datasets.values(), **kwargs)
 
 class ConcatDataLoader(PTDataLoader):

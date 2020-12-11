@@ -20,7 +20,7 @@ from rf_pool.utils import functions
 
 class Dataset(torch.utils.data.Dataset):
     """
-    #TODO:WRITEME
+    Base class for datasets
     """
     def __init__(self, **kwargs):
         self.root = None
@@ -283,7 +283,7 @@ class SubsetDataset(Dataset):
     Parameters
     ----------
     dataset_class : str
-        name of `torchvision.datastes` class to use
+        name of dataset class to use (see Notes)
     indices : list
         indices to include in subset [default: None, full dataset used]
     index_file : str
@@ -293,16 +293,17 @@ class SubsetDataset(Dataset):
 
     Notes
     -----
-    The search for `dataset_class` starts with the `rf_pool.data.datasets` then
-    `torchvision.datasets` (i.e., 'CocoDetection' uses
-    `rf_pool.data.datasets.CocoDetection`).
+    If `dataset_class` starts with 'torch', then `eval(dataset_class)` is used,
+    otherwise the dataset class will be assumed to be from `rf_pool.data.datasets`.
+    For example, the dataset can either be `torchvision.datasets.CocoDetection`
+    or `CocoDetection`, which will use `rf_pool.data.datasets.CocoDetection`.
     """
     def __init__(self, dataset_class, indices=None, index_file=None, **kwargs):
-        # initialize with dataset_class from rf_pool.data.datasets
-        cls = globals().get(dataset_class)
-        # if not found, get from torchvision.datasets
-        if cls is None:
-            cls = getattr(torchvision.datasets, dataset_class, None)
+        # initialize with dataset_class from rf_pool.data.datasets or torch
+        if dataset_class.startswith('torch'):
+            cls = eval(dataset_class)
+        else:
+            cls = globals().get(dataset_class)
         self.__class__.__bases__ = (cls,)
         super(SubsetDataset, self).__init__(**kwargs)
 
@@ -381,75 +382,6 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         images = list(map(lambda x: x[0], batch))
         targets = list(map(lambda x: x[1], batch))
         return images, targets
-
-class TripletDataset(Dataset):
-    def __init__(self, dataset, positive_labels={}, negative_labels={},
-                 transform=None):
-        super(TripletDataset, self).__init__()
-        self.root = dataset.root
-        self.transform = transform
-        # set data, labels from dataset
-        self.set_data(dataset)
-        self.set_labels(dataset)
-        assert self.data is not None, ('dataset must have attribute "data"')
-        assert self.labels is not None, ('dataset must have attribute "labels"')
-        # set data_info, update with postive/negative labels
-        patterns = [key for key in positive_labels.keys()]
-        patterns.extend([key for key in negative_labels.keys()])
-        patterns = np.unique(patterns)
-        self.set_data_info(patterns, None)
-        for pattern in patterns:
-            self.update_data_info(pattern, (positive_labels.get(pattern),
-                                  negative_labels.get(pattern)))
-
-    def set_data(self, dataset):
-        # set data, labels from dataset
-        data_keys = ['data', 'train_data', 'test_data']
-        data = None
-        for data_key in data_keys:
-            if hasattr(dataset, data_key):
-                data = getattr(dataset, data_key)
-                break
-        self.data = data
-
-    def set_labels(self, dataset):
-        label_keys = ['labels', 'train_labels', 'test_labels']
-        labels = None
-        for label_key in label_keys:
-            if hasattr(dataset, label_key):
-                labels = getattr(dataset, label_key)
-                break
-        self.labels = labels
-
-    def __getitem__(self, index):
-        # get data and label for index
-        img = self.data[index]
-        label = self.labels[index]
-        if type(label) is torch.Tensor:
-            label = label.item()
-        # get positive, negative labels and select random data for each
-        positive_labels, negative_labels = self.data_info.get(label)
-        positive = negative = None
-        for new_index in np.random.permutation(np.arange(len(self.data))):
-            if new_index == index:
-                continue
-            elif positive is not None and negative is not None:
-                break
-            elif self.labels[new_index] in positive_labels:
-                positive = self.data[new_index]
-            elif self.labels[new_index] in negative_labels:
-                negative = self.data[new_index]
-        # ensure correct number of dimensions
-        if type(self.data) is torch.Tensor:
-            img = torch.unsqueeze(img, 0)
-            positive = torch.unsqueeze(positive, 0)
-            negative = torch.unsqueeze(negative, 0)
-        # apply transforms
-        if self.transform:
-            img = self.transform(img)
-            positive = self.transform(positive)
-            negative = self.transform(negative)
-        return (img, positive, negative, label)
 
 class CrowdedDataset(Dataset):
     """
@@ -602,38 +534,3 @@ class CrowdedDataset(Dataset):
         if self.load_previous:
             copy_labels = labels.pop(0)[:n]
         return copy_labels
-
-class FeatureDataset(torch.utils.data.Dataset):
-    """
-    class for creating a dataset of features output from a model (i.e. for training a classifier on top)
-
-    Attributes
-    ----------
-    root : str
-        the root directory with the saved features and labels
-    train : bool
-        if True, uses the train set, else uses the test set
-    transform: torch.transform
-        sets a transform on the image
-
-    """
-    def __init__(self, root, train=True, transform=None):
-        self.root = root
-        self.train = train
-        self.transform = transform
-
-        if train:
-            self.data, self.labels = torch.load(self.root+ '_train')
-        else:
-            self.data, self.labels = torch.load(self.root+ '_test')
-
-    def __getitem__(self, index):
-        img = self.data[None, index]
-        label = self.labels[index]
-        img = Image.fromarray(img.numpy(), mode='L')
-        if self.transform:
-            img = self.transform(img)
-        return (img, label)
-
-    def __len__(self):
-        return len(self.labels)
