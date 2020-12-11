@@ -91,15 +91,14 @@ class Solver(pl.LightningModule):
 
     def training_step(self, batch, batch_idx, optimizer_idx=None):
         # pass forward and compute loss
-        x, y = batch
-        output = self.forward(x)
-        loss = self.loss(output, y)
+        output, targets = self.forward(*batch)
+        loss = self.loss(output, targets)
         # log losses
         logs = getattr(self.loss, 'logs', {})
         logs.update({'train_loss': loss})
         self.log_dict(logs)
         # log metrics
-        metrics = self.metric(output, y) or {}
+        metrics = self.metric(output, targets)
         self.log_dict(metrics)
         # log other attributes
         attrs = self._log_attrs(self.cfg)
@@ -107,13 +106,20 @@ class Solver(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        pass
+        return self.training_step(batch, batch_idx)
 
     def validation_epoch_end(self, outputs):
-        pass
+        metrics = self.metric.compute()
+        self.log_dict(metrics)
+        return {'val_loss': sum(outputs) / len(outputs)}
 
     def test_step(self, batch):
-        pass
+        return self.training_step(batch, batch_idx)
+
+    def test_epoch_end(self, outputs):
+        metrics = self.metric.compute()
+        self.log_dict(metrics)
+        return {'test_loss': sum(outputs) / len(outputs)}
 
     def configure_optimizers(self):
         # build optimizers
