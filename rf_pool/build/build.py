@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from copy import deepcopy
 import warnings
 
@@ -60,6 +61,7 @@ def build_module(mod):
         return eval(mod)
     elif isinstance(mod, nn.Module) or not isinstance(mod, dict):
         return mod
+
     # init output Sequential
     out = nn.Sequential()
     for i, (k, v) in enumerate(mod.items()):
@@ -68,6 +70,7 @@ def build_module(mod):
         mod_fn = get_class([modules, modules.ops, pool, nn], k, throw_error=True)
         # add module based on v type
         out.add_module(mod_name, _call_parsed_inputs(mod_fn, v))
+
     # if only one module, return it
     if len(out._modules) == 1:
         return list(out._modules.values())[0]
@@ -93,9 +96,11 @@ def build_solver(cfg):
     """
     # get solver key from cfg
     solver_key = check_keys(cfg, 'Solver')
+
     # if none, return default solver
     if solver_key is None:
         return solver.Solver(cfg)
+
     # return chosen solver
     return getattr(solver, cfg.get(solver_key) or solver_key)(cfg)
 
@@ -180,10 +185,13 @@ def build_loss(cfg):
     -----
     `cfg.get('Loss')` should be a dictionary with keys corresponding to
     the name of the loss to use and values corresponding to the arguments passed
-    in order to initialize the loss.
+    in order to initialize the loss. Alternatively, `cfg.get('Loss')` can be
+    a list of dictionaries (i.e. to accomodate multiple losses with the same class).
 
-    Additionally, loss weights can be set via `cfg.get('Loss').get('weights')`.
-    Default is `1.` for each weight in `cfg.get('Loss')`.
+    Additionally, loss weights can be set via `cfg.get('Loss').get('weights')`
+    (if `type(cfg.get('Loss')) is dict`, otherwise weights should be set for each
+    loss class as a kwarg `weights`). Default is `1.` for each weight in
+    `cfg.get('Loss')`.
 
     Losses can be derived from either losses.py or torch.nn.
     """
@@ -192,20 +200,33 @@ def build_loss(cfg):
     if loss_key is None:
         return _none_fn
     loss_class = getattr(losses, loss_key)
-    # set kwargs from sub-cfg
+
+    # set items for building class
+    assert isinstance(cfg.get(loss_key), (dict, list)), (
+        'type(cfg["%s"]) should be dict or list, found %s.' % (loss_key, type(kwargs))
+    )
     kwargs = cfg.get(loss_key).copy()
-    # init losses
-    loss_dict = {}
-    # for each loss in Loss field, update loss
-    for k, v in cfg.get(loss_key).items():
+    if isinstance(kwargs, dict):
+        items = list(kwargs.items())
+    else: # get from list
+        items = []
+        [items.extend(l.items()) for l in kwargs]
+        # set kwargs as {}
+        kwargs = {}
+
+    # for each field, update cls_dict
+    loss_dict = OrderedDict()
+    for i, (name, inputs) in enumerate(items):
         # get loss
-        loss_fn = get_class([losses, nn], k, throw_error=False)
-        if loss_fn is None:
+        fn = get_class([losses, nn], name, throw_error=False)
+        if fn is None:
             continue
         # pop field from kwargs
-        kwargs.pop(k)
-        # upate loss and weight dict
-        loss_dict.update({k.lower(): _call_parsed_inputs(loss_fn, v)})
+        kwargs.pop(name, None)
+        # get count of previous functions with same name
+        cnt = sum(k == name for k, _ in items[:i]) or ''
+        loss_dict.update({'%s%s' % (name.lower(), cnt): _call_parsed_inputs(fn, inputs)})
+
     return loss_class(loss_dict, **kwargs)
 
 def build_metric(cfg):
@@ -234,12 +255,12 @@ def build_metric(cfg):
     # get metric key from cfg
     metric_key = check_keys(cfg, 'Metric')
     if metric_key is None:
-        return _none_fn
+        return metrics.Metric()
     metric_class = getattr(metrics, metric_key)
     # set kwargs from sub-cfg
     kwargs = deepcopy(cfg.get(metric_key))
     # init metrics
-    metric_dict = {}
+    metric_dict = OrderedDict()
     # set kwargs from sub_cfg
     for k, v in cfg.get(metric_key).items():
         # get metric
@@ -299,7 +320,7 @@ def build_dataloader(cfg):
     # set kwargs from sub-cfg
     kwargs = deepcopy(cfg.get(dataloader_key))
     # init dataloaders
-    dataloader_dict = {}
+    dataloader_dict = OrderedDict()
     # set kwargs from sub_cfg
     for k, v in cfg.get(dataloader_key).items():
         # get metric
@@ -330,7 +351,7 @@ def build_optimizer(cfg):
 
     Returns
     -------
-    optims : list
+    optims : list[dict]
         list of dictionaries that will be used to create optimizers
         or learning schedulers
 
