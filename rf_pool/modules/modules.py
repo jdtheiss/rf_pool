@@ -83,8 +83,7 @@ class Module(nn.Module):
         # update modules
         self._modules = OrderedDict(mods)
 
-    def apply_modules(self, input, module_names=[], output={},
-                      output_module=None, **kwargs):
+    def forward(self, input, module_names=[], output={}, output_module=None, **kwargs):
         """
         Apply modules with module-specific kwargs and/or collect outputs in dict
 
@@ -135,9 +134,6 @@ class Module(nn.Module):
             if name == output_module:
                 break
         return input
-
-    def forward(self, *args, **kwargs):
-        return self.apply_modules(*args, **kwargs)
 
     def train_module(self, input, label, loss_fn, optimizer=None, **kwargs):
         if optimizer:
@@ -228,8 +224,7 @@ class Branch(Module):
         outputs = self.forward(torch.zeros(input_shape))
         return [output.shape for output in outputs]
 
-    def apply_modules(self, input, module_names=[], output={},
-                      output_module=None, **kwargs):
+    def forward(self, input, module_names=[], output={}, output_module=None, **kwargs):
         # if not list, copy n_branches times
         if isinstance(input, torch.Tensor):
             input = [input] * self.n_branches
@@ -291,8 +286,7 @@ class Control(Module):
         # update modules
         self.build(**kwargs)
 
-    def apply_modules(self, input, module_names=[], output={},
-                      output_module=None, **kwargs):
+    def forward(self, input, module_names=[], output={}, output_module=None, **kwargs):
         if self.input_shape:
             input = torch.reshape(input, self.input_shape)
         # init control_out
@@ -359,7 +353,7 @@ class Autoencoder(Module):
             input = module(input)
         return input
 
-    def apply_modules(self, input, module_names=[], output={}, output_module=None, **kwargs):
+    def forward(self, input, module_names=[], output={}, output_module=None, **kwargs):
         if self.input_shape:
             input = torch.reshape(input, self.input_shape)
         for name, module in [*self.encoder.named_children(),
@@ -509,9 +503,6 @@ class Linear(Module):
     def __repr__(self):
         return self._linear.__repr__()
 
-    def apply_modules(self, *args, **kwargs):
-        return self.forward(args[0])
-
     def forward(self, input):
         input = input.flatten(1)
         output = torch.mul(input.unsqueeze(1), self.weight.unsqueeze(0)).sum(-1)
@@ -563,11 +554,11 @@ class ResNetBlock(Module):
                            padding, pad_type, normalization, None, **kwargs)
         self.build(conv_0=conv_0, conv_1=conv_1)
 
-    def apply_modules(self, input, **kwargs):
+    def forward(self, input, **kwargs):
         # if output_module, do not add input
         if kwargs.get('output_module'):
-            return Module.apply_modules(self, input, **kwargs)
-        return input + Module.apply_modules(self, input, **kwargs)
+            return Module.forward(self, input, **kwargs)
+        return input + Module.forward(self, input, **kwargs)
 
 class RBM(Module):
     """
@@ -853,7 +844,7 @@ class RBM(Module):
             if mod is None:
                 continue
             input = mod(input)
-            if output_module and mod == output_module:
+            if output_module and name == output_module:
                 break
         return input
 
@@ -1003,6 +994,9 @@ class Attention(Module):
         number of hidden units in RBM for feature-based attention
     k_iter : int
         number of Gibbs samples for training rbm (see RBM class) [default: 1]
+    persistent : bool
+        True/False train RBM with persistent CD (see RBM class) [default: False]
+        note: this requires the input image to be same shape across iterations
     learn_hyperprior : bool
         True/False learn weights for hidden units via SGD to provide task-based
         attention [default: True]
@@ -1028,7 +1022,7 @@ class Attention(Module):
         fields: ['spatial_rbm_loss', 'feature_rbm_loss']
         reduce: 'mean'
     """
-    def __init__(self, in_channels, n_hidden, k_iter=1, learn_hyperprior=True,
+    def __init__(self, in_channels, n_hidden, k_iter=1, persistent=False, learn_hyperprior=True,
                  spatial_attention=True, feature_attention=True, img_shape=None):
         super(Attention, self).__init__(None)
         self.in_channels = in_channels
@@ -1037,6 +1031,7 @@ class Attention(Module):
         self.learn_hyperprior = learn_hyperprior
         self.spatial_attention = spatial_attention
         self.feature_attention = feature_attention
+        self.persistent = persistent
 
         # init feature_rbm
         if feature_attention:
@@ -1091,9 +1086,12 @@ class Attention(Module):
             return
         # get rbm
         rbm = getattr(self, rbm_name)
+        if self.persistent:
+            persistent = torch.zeros_like(i_norm)
+        else:
+            persistent = None
         # train update loss
-        loss = rbm.train_module(i_norm.detach(), k=self.k_iter,
-                                persistent=torch.zeros_like(i_norm))
+        loss = rbm.train_module(i_norm.detach(), k=self.k_iter, persistent=persistent)
         setattr(self, rbm_name + '_loss', loss)
 
     def attend(self, i_norm, rbm_name='spatial_rbm'):
