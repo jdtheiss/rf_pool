@@ -1164,26 +1164,96 @@ class Attention(Module):
     def forward(self, input, **kwargs):
         """train rbms/attend using spatial/feature priors"""
         # normalize input
-        i_norm = F.layer_norm(input, input.shape[1:]).type(input.dtype)
+        # i_norm = F.layer_norm(input, input.shape[1:]).type(input.dtype)
         # attend
         spatial_attn = feature_attn = None
         if kwargs.get('spatial_attention') in [None, True]:
-            spatial_attn = self.apply_spatial_attention(i_norm)
+            spatial_attn = self.apply_spatial_attention(input) #i_norm)
         if kwargs.get('feature_attention') in [None, True]:
-            feature_attn = self.apply_feature_attention(i_norm)
+            feature_attn = self.apply_feature_attention(input) #i_norm)
         # gaussian multiplication of attention fields (sigma=1)
         if spatial_attn is not None and feature_attn is not None:
             attn = (spatial_attn + feature_attn) / 2.
         else:
             attn = spatial_attn if spatial_attn is not None else feature_attn
         # gaussian multiplication of attention and input (sigma=1)
-        out = torch.add(input, attn) / 2.
+        out = torch.add(input, attn) / 2. # i_norm
         # normalize
-        out = F.layer_norm(out, out.shape[1:]).type(input.dtype)
+        # out = F.layer_norm(out, out.shape[1:]).type(input.dtype)
         # return attn weights as well as output
         if kwargs.get('need_weights'):
             return out, attn
         return out
+
+class LateralConv(Module):
+    """
+    Convolutional layer with lateral connections
+
+    Output of convolutional layer is added with weighted combination of local
+    connections based on cosine similarity of local inputs
+
+    Parameters
+    ----------
+    in_channels : int
+        number of channels for input
+    out_channels : int
+        number of filters in conv layer
+    kernel_size : int, tuple
+        size of kernel in conv layer [default: 3]
+    stride : int, tuple
+        stride used in conv layer [default: 1]
+    padding : int, tuple
+        padding used in conv layer [default: 1]
+    weight : float or None
+        weight for contribution of lateral connections
+        [default: None, learned parameter randomly initialized from N(0, 1)]
+    **kwargs : **dict
+        keyword arguments passed to nn.Conv2d
+
+    Notes
+    -----
+    Output is added with weighted combination of local outputs (as defined by
+    convolutional kernel) based on cosine similarity of local inputs multiplied
+    by `weight`.
+    """
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1,
+                 weight=None, **kwargs):
+        super(LateralConv, self).__init__(None)
+        # init conv layer
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, **kwargs)
+        assert self.conv.kernel_size[0] % 2 and self.conv.kernel_size[1] % 2, (
+            'kernel_size must be odd.'
+        )
+        # get midpoint of kernel
+        self.mid_idx = np.prod(self.conv.kernel_size) // 2
+        # init weight
+        if weight is None:
+            self.weight = nn.Parameter(torch.randn(1))
+        else:
+            self.weight = weight
+
+    def forward(self, x):
+        # conv layer output
+        x_out = self.conv(x)
+
+        # compute connection tensor
+        x_kern = F.unfold(x, self.conv.kernel_size, dilation=self.conv.dilation,
+                          stride=self.conv.stride, padding=self.conv.padding)
+        x_kern = x_kern.view(1, self.conv.in_channels, -1, x_kern.size(-1))
+        conn = torch.cosine_similarity(x_kern, x_kern[:,:,self.mid_idx,None], dim=1)
+
+        # remove self connection from softmax
+        conn[:,self.mid_idx] = -float('inf')
+        conn = self.weight * torch.softmax(conn, dim=1)
+        conn[:,self.mid_idx] = 1.
+
+        # weighted combination of local outputs added to output
+        x_out_kern = F.unfold(x_out, self.conv.kernel_size, dilation=self.conv.dilation,
+                              stride=self.conv.stride, padding=self.conv.padding)
+        x_out_kern = x_out_kern.view(1, self.conv.out_channels, -1, x_out_kern.size(-1))
+        out = torch.einsum('bcxn,bxn->bcn', x_out_kern, conn)
+
+        return out.view_as(x_out)
 
 if __name__ == '__main__':
     import doctest
