@@ -28,14 +28,14 @@ def _default_grad(grad_output, input, rfs, index_mask=None, index_kernel=None,
     if retain_shape:
         img_dim = 3
         input_shape.insert(2, grad_output.shape[2])
-        grad_input = torch.zeros(input_shape)
+        grad_input = torch.zeros_like(input)
     else:
         img_dim = 2
-        grad_input = torch.zeros(input_shape)
+        grad_input = torch.zeros_like(input)
     # set output gradients to locations in input space
     if index_kernel is not None:
         grad_input.flatten(img_dim).scatter_(img_dim, index_kernel.flatten(img_dim),
-                                             grad_output.flatten(img_dim));
+                                             grad_output.flatten(img_dim))
         grad_input = torch.reshape(grad_input, input_shape)
     else:
         grad_input = grad_output
@@ -77,7 +77,7 @@ def _apply_grad(grad_output, input, rfs, grad_fn, index_mask=None,
 
     # apply grad function #TODO: make flexible using output tuple
     grad_input = grad_fn(grad_output.data.flatten(0,1), **kwargs)
-    grad_input = torch.as_tensor(grad_input, dtype=grad_output.dtype)
+    grad_input = torch.as_tensor(grad_input).to(grad_output)
     output_shape = grad_output.shape[:2] + grad_input.shape[2:]
     grad_input = grad_input.reshape(output_shape)
 
@@ -211,7 +211,7 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
 
     # get dtype, set to float32 for pooling
     assert isinstance(u, torch.Tensor)
-    dtype = u.dtype
+    dtype, device = u.dtype, u.device
     u = u.type(torch.float32)
 
     # assert pool_fn in pool and get pool_grad
@@ -235,7 +235,7 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
     assert kwargs['mask_indices'] is not None or kwargs['kernel_size'] is not None
 
     # apply cpp pooling function
-    input = u.data.flatten(0,1)
+    input = u.data.flatten(0,1).cpu()
     outputs = list(pool_fn(input, **kwargs))
     for i, output in enumerate(outputs):
         if output is not None:
@@ -244,7 +244,7 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
             else:
                 output_shape = (batch_size, ch,) + output.shape[1:]
             output = output.reshape(output_shape)
-            outputs[i] = torch.as_tensor(output)
+            outputs[i] = torch.as_tensor(output, device=device)
 
     # set output dtype
     outputs[0] = outputs[0].type(dtype)
@@ -355,7 +355,7 @@ class Pool(torch.nn.Module):
         receptive field/detection layer shape [default: None]
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and
-        delta_sigma [default: lattice.gaussian_kernel_lattice]
+        delta_sigma [default: lattice.mask_kernel_lattice]
 
     Optional kwargs (see methods below for additional kwargs)
 
@@ -458,13 +458,17 @@ class Pool(torch.nn.Module):
         return apply(input, **input_kwargs)
 
     def set(self, **kwargs):
-        functions.set_attributes(self, **kwargs)
+        for k, v in kwargs.items():
+            if not hasattr(k, v) and isinstance(v, torch.Tensor):
+                self.register_buffer(k, v)
+            else:
+                setattr(self, k, v)
 
     def get(self, *args, **kwargs):
         output = {}.fromkeys(args, None)
         output.update(kwargs)
         for key, value in output.items():
-            if hasattr(self, key) and getattr(self, key) is not None:
+            if getattr(self, key, None) is not None:
                 output.update({key: getattr(self, key)})
         if len(output) == 1:
             return list(output.values())[0]
@@ -622,14 +626,14 @@ class Pool(torch.nn.Module):
         if x is not None:
             # show input
             fig, axes = plt.subplots(1, 2, figsize=figsize)
-            x = torch.squeeze(x.permute(0,2,3,1), -1).numpy()
+            x = torch.squeeze(x.permute(0,2,3,1), -1).cpu().numpy()
             x = x - np.min(x, axis=(1,2), keepdims=True)
             x = x / np.max(x, axis=(1,2), keepdims=True)
             axes[0].imshow(x[0], cmap=cmap)
-            return visualize.scatter_rfs(mu, sigma, x.shape[-2:], ax=axes[1],
+            return visualize.scatter_rfs(mu.cpu(), sigma.cpu(), x.shape[-2:], ax=axes[1],
                                          **kwargs)
         # visualize rfs
-        return visualize.scatter_rfs(mu, sigma, img_shape, figsize=figsize,
+        return visualize.scatter_rfs(mu.cpu(), sigma.cpu(), img_shape, figsize=figsize,
                                      **kwargs)
 
     def init_mu_sigma(self, init_fn, img_shape, **kwargs):
@@ -670,17 +674,16 @@ class Pool(torch.nn.Module):
         --------
         adaptive_update
         """
-        if self.mu is None and self.sigma is None:
+        mu = getattr(self, 'mu', None)
+        sigma = getattr(self, 'sigma', None)
+        if mu is None and sigma is None:
             return None, None
-        else:
-            mu = self.mu
-            sigma = self.sigma
         # add delta_mu to mu
         if delta_mu is not None:
-            mu = torch.add(self.mu, delta_mu)
+            mu = torch.add(mu, delta_mu)
         # add delta_sigma to log(sigma**2) then exponentiate and sqrt
         if delta_sigma is not None:
-            log_sigma = torch.add(torch.log(torch.pow(self.sigma, 2)),
+            log_sigma = torch.add(torch.log(torch.pow(sigma, 2)),
                                   delta_sigma)
             sigma = torch.sqrt(torch.exp(log_sigma))
         # update mu, sigma with a lattice function
@@ -716,22 +719,21 @@ class Pool(torch.nn.Module):
         shift_mu_sigma
         """
         # return None if no mu/sigma or adaptive is False
-        if self.mu is None and self.sigma is None or adaptive is False:
+        mu = getattr(self, 'mu', None)
+        sigma = getattr(self, 'sigma', None)
+        if (mu is None and sigma is None) or adaptive is False:
             return None, None
-        else:
-            mu = self.mu
-            sigma = self.sigma
         # if img_shape unchanged, return None
         self.tmp_img_shape = img_shape
-        img_shape = torch.as_tensor(img_shape, dtype=mu.dtype)
-        img_shape0 = torch.as_tensor(self.img_shape, dtype=mu.dtype)
+        img_shape = torch.as_tensor(img_shape).to(mu)
+        img_shape0 = torch.as_tensor(self.img_shape).to(mu)
         if torch.all(torch.eq(img_shape, img_shape0)):
             return None, None
         # get ratio
         ratio = torch.div(img_shape, img_shape0)
         # multiply by ratio, return tmp_mu, tmp_sigma
-        self.tmp_mu = self.mu * ratio
-        self.tmp_sigma = self.sigma * torch.mean(ratio)
+        self.tmp_mu = mu * ratio
+        self.tmp_sigma = sigma * torch.mean(ratio)
         return self.tmp_mu, self.tmp_sigma
 
     def apply_attentional_field(self, attention_mu=None, attention_sigma=None,
@@ -837,8 +839,7 @@ class Pool(torch.nn.Module):
             return output
         return torch.max(torch.flatten(output, -2), -1)[0]
 
-    def init_RBM(self, n_Gaussians, training=False, lr=1e-5,
-                 **kwargs):
+    def init_RBM(self, n_Gaussians, training=False, lr=1e-5, **kwargs):
         """
         Initialize RBM used to learn spatial associations (modeled as Gaussians)
         among RF outputs to update RF locations/sizes using Gaussian
@@ -1089,7 +1090,7 @@ class Pool(torch.nn.Module):
         attention_mu, attention_sigma, weight = self.get_attentional_field(input)
         if weight is None:
             weight = [1.]
-        return visualize.scatter_rfs(attention_mu, attention_sigma, self.img_shape,
+        return visualize.scatter_rfs(attention_mu.cpu(), attention_sigma.cpu(), self.img_shape,
                                      linewidths=[w for w in weight])
 
     def apply_RBM(self, u, **kwargs):
@@ -1256,7 +1257,7 @@ class RF_Uniform(Pool):
         rotation (in radians, counterclockwise) to apply to the entire array
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and
-        delta_sigma [default: lattice.gaussian_kernel_lattice]
+        delta_sigma [default: lattice.mask_kernel_lattice]
 
     See Also
     --------
@@ -1297,7 +1298,7 @@ class RF_Hexagon(Pool):
         rotation (in radians, counterclockwise) to apply to the entire array
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and
-        delta_sigma [default: lattice.gaussian_kernel_lattice]
+        delta_sigma [default: lattice.mask_kernel_lattice]
 
     See Also
     --------
@@ -1330,7 +1331,7 @@ class RF_Random(Pool):
         receptive field/detection layer shape [default: None]
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and
-        delta_sigma [default: lattice.gaussian_kernel_lattice]
+        delta_sigma [default: lattice.mask_kernel_lattice]
 
     See Also
     --------
@@ -1394,7 +1395,7 @@ class RF_CenterCrop(Pool):
         receptive field/detection layer shape [default: None]
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and
-        delta_sigma [default: lattice.gaussian_kernel_lattice]
+        delta_sigma [default: lattice.mask_kernel_lattice]
 
     See Also
     --------
@@ -1444,7 +1445,7 @@ class RF_Foveated(Pool):
         [default: None]
     cortical_kernel_fn : utils.lattice function, optional
         function used to sample weights from cortical kernel
-        [default: lattice.exp_kernel_2d]
+        [default: lattice.gaussian_kernel_2d]
     lattice_fn : utils.lattice function, optional
         function used to update receptive field kernels given delta_mu and
         delta_sigma [default: lattice.mask_kernel_lattice]
@@ -1464,21 +1465,18 @@ class RF_Foveated(Pool):
                                    [['',Pool.__methodsdoc__]])
     def __init__(self, img_shape=None, scale=None, n_rings=None,
                  ref_axis=0., cortical_mu=None, cortical_sigma=None,
-                 cortical_kernel_fn=lattice.exp_kernel_2d,
+                 cortical_kernel_fn=lattice.gaussian_kernel_2d,
                  lattice_fn=lattice.mask_kernel_lattice, **kwargs):
-        # set variables
-        self.scale = torch.as_tensor(scale)
-        self.n_rings = n_rings
-        self.ref_axis = ref_axis
-        self.cortical_mu = cortical_mu
-        self.cortical_sigma = cortical_sigma
-        self.cortical_kernel_fn = cortical_kernel_fn
         # init mu, sigma
         mu, sigma = self.init_mu_sigma(lattice.init_foveated_lattice, img_shape,
                                        scale=scale, n_rings=n_rings, **kwargs)
         super(RF_Foveated, self).__init__(mu, sigma, img_shape, lattice_fn,
                                           init_fn=self.init_fn,
                                           init_kwargs=self.init_kwargs, **kwargs)
+         # set variables
+        self.set(scale=torch.as_tensor(scale), n_rings=n_rings, ref_axis=ref_axis,
+                 cortical_mu=cortical_mu, cortical_sigma=cortical_sigma, 
+                 cortical_kernel_fn=cortical_kernel_fn)
         # set cortical weight vars
         self.get_cortical_vars(self.init_kwargs)
 
@@ -1489,9 +1487,10 @@ class RF_Foveated(Pool):
             n_rf = lattice_kwargs.get('n_rf')
         if img_shape is None:
             img_shape = self.img_shape
-        self.rf_angle = 2. * np.pi * torch.linspace(0., 1., int(n_rf))[1]
-        self.offset = torch.as_tensor(lattice_kwargs.get('offset'))
-        self.offset += (torch.as_tensor(img_shape, dtype=torch.float) // 2)
+        rf_angle=2. * np.pi * torch.linspace(0., 1., int(n_rf))[1]
+        offset = torch.as_tensor(lattice_kwargs.get('offset'))
+        offset += (torch.as_tensor(img_shape, dtype=torch.float) // 2)
+        self.set(rf_angle=rf_angle, offset=offset)
 
     def get_cortical_mu(self, mu=None, beta=0.):
         if mu is None:
@@ -1530,7 +1529,7 @@ class RF_Foveated(Pool):
         cbar.set_label('RF Weight')
         xlim, ylim = sc.axes.get_xlim(), sc.axes.get_ylim()
         sc.axes.set_ylim(np.flip(ylim))
-        return fig;
+        return fig
 
     def forward(self, u, **kwargs):
         # get cortical_kwargs from kwargs
@@ -1626,7 +1625,7 @@ class MaxPool(Pool):
         receptive field/detection layer shape [default: None]
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and
-        delta_sigma [default: lattice.gaussian_kernel_lattice]
+        delta_sigma [default: lattice.mask_kernel_lattice]
 
     See Also
     --------
@@ -1658,7 +1657,7 @@ class ProbmaxPool(Pool):
         receptive field/detection layer shape [default: None]
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and
-        delta_sigma [default: lattice.gaussian_kernel_lattice]
+        delta_sigma [default: lattice.mask_kernel_lattice]
 
     See Also
     --------
@@ -1697,7 +1696,7 @@ class StochasticPool(Pool):
         receptive field/detection layer shape [default: None]
     lattice_fn : utils.lattice function
         function used to update receptive field kernels given delta_mu and
-        delta_sigma [default: lattice.gaussian_kernel_lattice]
+        delta_sigma [default: lattice.mask_kernel_lattice]
 
     See Also
     --------

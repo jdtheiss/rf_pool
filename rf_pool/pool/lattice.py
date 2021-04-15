@@ -26,6 +26,7 @@ def multiply_gaussians(mu0, sigma0, mu1, sigma1, weight=None):
     # return weighted combination based on mu1_batch size
     if weight is None:
         weight = torch.ones(mu1.shape[-1], 1) / torch.tensor(mu1.shape[-1])
+        weight = weight.to(mu1)
     mu = torch.matmul(mu, weight.reshape(-1, 1)).squeeze(-1)
     sigma = torch.matmul(sigma, weight.reshape(-1, 1)).squeeze(-1)
     return mu, sigma
@@ -66,14 +67,14 @@ def get_xy_coords(kernel_shape):
     # add 0.5 to coords to account for middle of pixel
     return xy + 0.5
 
-def exp_kernel_2d(mu, sigma, xy):
+def gaussian_kernel_2d(mu, sigma, xy):
     mu = mu.reshape(mu.shape + (1,1)).float()
     sigma = sigma.unsqueeze(-1).float()
     return torch.exp(-torch.sum((xy - mu)**2., dim=-3) / (2*sigma**2))
 
-def gaussian_kernel_2d(mu, sigma, xy):
+def normal_kernel_2d(mu, sigma, xy):
     a = 1./(2.*np.pi*sigma**2)
-    return a.reshape(-1,1,1) * exp_kernel_2d(mu, sigma, xy)
+    return a.reshape(-1,1,1) * gaussian_kernel_2d(mu, sigma, xy)
 
 def dog_kernel_2d(mu, sigma, ratio, xy):
     kernel_0 = gaussian_kernel_2d(mu, sigma, xy)
@@ -81,8 +82,8 @@ def dog_kernel_2d(mu, sigma, ratio, xy):
     return kernel_0 - kernel_1
 
 def mask_kernel_2d(mu, sigma, xy):
-    kernels = exp_kernel_2d(mu, sigma, xy)
-    output = torch.as_tensor(torch.ge(kernels, np.exp(-0.5)), dtype=kernels.dtype)
+    kernels = gaussian_kernel_2d(mu, sigma, xy)
+    output = torch.as_tensor(torch.ge(kernels, np.exp(-0.5))).to(mu)
     # ensure at least one pixel (if in image) is set to 1.
     mu = mu.reshape(mu.shape + (1,1))
     d = torch.eq(torch.sum(torch.pow(torch.floor(mu) - (xy - 0.5), 2), 1), 0.)
@@ -118,7 +119,7 @@ def gaussian_field(priority_map):
         return
     map_mu = map_mu[keep_indices].type(priority_map.dtype)
     map_sigma = 1. / map_sigma[keep_indices].type(priority_map.dtype)
-    field = exp_kernel_2d(map_mu, map_sigma, xy.unsqueeze(0).float())
+    field = gaussian_kernel_2d(map_mu, map_sigma, xy.unsqueeze(0).float())
     return field
 
 def gaussian_gradient(kernels):
@@ -166,7 +167,7 @@ def apply_attentional_field(mu, sigma, priority_map):
     with the gaussian at that location. Zero-valued locations will be ignored.
     """
     # get mu and sigma for map
-    xy = get_xy_coords(priority_map.shape[:2])
+    xy = get_xy_coords(priority_map.shape[:2]).to(priority_map)
     # get mu, sigma from priority map
     map_mu = xy.reshape(2, -1).t()
     map_sigma = priority_map.reshape(-1, 1)
@@ -174,46 +175,13 @@ def apply_attentional_field(mu, sigma, priority_map):
     keep_indices = map_sigma.nonzero()[:,0]
     if keep_indices.numel() == 0:
         return mu, sigma
-    map_mu = map_mu[keep_indices].type(priority_map.dtype)
-    map_sigma = 1. / map_sigma[keep_indices].type(priority_map.dtype)
+    map_mu = map_mu[keep_indices]
+    map_sigma = 1. / map_sigma[keep_indices]
     return multiply_gaussians(mu, sigma, map_mu, map_sigma)
-
-def exp_kernel_lattice(mu, sigma, kernel_shape):
-    """
-    Returns a tensor of exponential kernels with max value = 1
-
-    Parameters
-    ----------
-    mu : torch.Tensor
-        kernel centers with shape (n_kernels, 2)
-    sigma : torch.Tensor
-        kernel standard deviations with shape (n_kernels, 1)
-    kernel_shape : tuple
-        shape of input feature map
-
-    Returns
-    -------
-    kernels : torch.Tensor
-        output kernels with shape
-        mu.shape[:-1] + (kernel_shape[0], kernel_shape[1])
-
-    Examples
-    --------
-    # Create tensor of 10 kernels with random centers and sigma=1.
-    >>> mu = torch.rand(10, 2)
-    >>> sigma = torch.ones(10, 1)
-    >>> kernel_shape = (200,200)
-    >>> mu = mu * torch.as_tensor(kernel_shape, dtype=mu.dtype)
-    >>> kernels = exp_kernel_lattice(mu, sigma, kernel_shape)
-    """
-    # create the coordinates input to kernel function
-    xy = get_xy_coords(kernel_shape)
-
-    return exp_kernel_2d(mu, sigma, xy)
 
 def gaussian_kernel_lattice(mu, sigma, kernel_shape):
     """
-    Returns a tensor of gaussian kernels
+    Returns a tensor of gaussian kernels with peak value = 1
 
     Parameters
     ----------
@@ -240,9 +208,43 @@ def gaussian_kernel_lattice(mu, sigma, kernel_shape):
     >>> kernels = gaussian_kernel_lattice(mu, sigma, kernel_shape)
     """
     # create the coordinates input to kernel function
-    xy = get_xy_coords(kernel_shape)
+    xy = get_xy_coords(kernel_shape).to(mu)
 
     return gaussian_kernel_2d(mu, sigma, xy)
+
+def normal_kernel_lattice(mu, sigma, kernel_shape):
+    """
+    Returns a tensor of normal distribution kernels
+    (peak = `1./(2.*np.pi*sigma**2)`)
+
+    Parameters
+    ----------
+    mu : torch.Tensor
+        kernel centers with shape (n_kernels, 2)
+    sigma : torch.Tensor
+        kernel standard deviations with shape (n_kernels, 1)
+    kernel_shape : tuple
+        shape of input feature map
+
+    Returns
+    -------
+    kernels : torch.Tensor
+        output kernels with shape
+        mu.shape[:-1] + (kernel_shape[0], kernel_shape[1])
+
+    Examples
+    --------
+    # Create tensor of 10 kernels with random centers and sigma=1.
+    >>> mu = torch.rand(10, 2)
+    >>> sigma = torch.ones(10, 1)
+    >>> kernel_shape = (200,200)
+    >>> mu = mu * torch.as_tensor(kernel_shape, dtype=mu.dtype)
+    >>> kernels = normal_kernel_lattice(mu, sigma, kernel_shape)
+    """
+    # create the coordinates input to kernel function
+    xy = get_xy_coords(kernel_shape).to(mu)
+
+    return normal_kernel_2d(mu, sigma, xy)
 
 def dog_kernel_lattice(mu, sigma, kernel_shape, ratio=4.):
     """
@@ -276,7 +278,7 @@ def dog_kernel_lattice(mu, sigma, kernel_shape, ratio=4.):
     >>> kernels = dog_kernel_lattice(mu, sigma, kernel_shape, ratio)
     """
     # create the coordinates input to kernel function
-    xy = get_xy_coords(kernel_shape)
+    xy = get_xy_coords(kernel_shape).to(mu)
 
     return dog_kernel_2d(mu, sigma, ratio, xy)
 
@@ -309,7 +311,7 @@ def mask_kernel_lattice(mu, sigma, kernel_shape):
     >>> kernels = mask_kernel_lattice(mu, sigma, kernel_shape)
     """
     # create the coordinates input to kernel function
-    xy = get_xy_coords(kernel_shape)
+    xy = get_xy_coords(kernel_shape).to(mu)
 
     return mask_kernel_2d(mu, sigma, xy)
 
