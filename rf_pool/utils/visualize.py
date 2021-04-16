@@ -686,6 +686,165 @@ def scatter_rfs(mu, sigma, img_shape, remove=False, updates={}, figsize=(5,5),
                     fn(scatter_kwargs.get(key))
     return fig
 
+def rf_heatmap(model, layer_idx, module_name='pool'):
+    """
+    Generate heatmap of receptive fields in image space (requires
+    `rf_pool.pool.Pool` module)
+    
+    Parameters
+    ----------
+    model : torch.nn.Module
+        model containing rf pooling layer to generate heatmap
+    layer_id : str
+        layer id of layer containing pooling module
+    module_name : str
+        name of pooling module within layer [default: 'pool']
+        
+    Returns
+    -------
+    heatmap : torch.Tensor
+        heatmap with shape (n_RF, h, w) as a binary map of RF area in image
+        space
+    """
+    if module_name is None:
+        rf_layer = model._modules[layer_idx]
+    else:
+        rf_layer = getattr(model._modules[layer_idx], module_name)
+    assert hasattr(rf_layer, 'rfs'), (
+        'No rf_pool layer found.'
+    )
+    
+    # for each layer apply transpose convolution of ones and unpooling
+    rf_layer._update_rfs(rf_layer.mu, rf_layer.sigma)
+    heatmap = torch.unsqueeze(rf_layer.rfs.detach(), 1)
+    
+    # get modules with kernel_size attribute
+    modules = []
+    model.apply(lambda m: modules.append(m) if hasattr(m, 'kernel_size') else None)
+    modules.reverse()
+    
+    # for each module, upsample or transpose convolution
+    start = False
+    for module in modules:
+        if module is rf_layer:
+            start = True
+            continue
+        if not start:
+            continue
+            
+        # get kernel_size
+        size = getattr(module, 'kernel_size')
+        if size is None:
+            continue
+        if type(size) is not tuple:
+            size = (size,)*2
+            
+        # if pool, upsample
+        if torch.typename(module).lower().find('pool') > -1:
+            heatmap = torch.nn.functional.interpolate(heatmap, scale_factor=size)
+        else: # conv transpose
+            w = torch.ones((1,1) + size)
+            heatmap = torch.conv_transpose2d(heatmap, w)
+        heatmap = torch.gt(heatmap, 0.).float()
+    return heatmap.squeeze(1)
+
+def rf_index(model, x, layer_idx, module_name='pool', thr=0.):
+    """
+    Index receptive fields within model conditioned on input
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        model containing pooling module to convert rf space to image space
+    x : torch.Tensor
+        input used to index receptive fields by selecting rfs containing at least
+        one pixel above given threshold
+    layer_idx : str or int
+        layer index containing pooling module (i.e., `model._modules[layer_idx]`)
+    module_name : str or None
+        name of pooling module [default: 'pool']
+    thr : float
+        threshold used for indexing rfs [default: 0.]
+
+    Returns
+    -------
+    out : torch.Tensor
+        tensor with shape (batch, n_receptive_fields,) of receptive fields containing at 
+        least one pixel above threshold
+    """
+    # get heatmap
+    heatmap = rf_heatmap(model, layer_idx, module_name=module_name)
+    # get RFs where any pixel is greater than threshold
+    return torch.max(torch.gt(torch.mul(x, heatmap), thr).flatten(-2),-1)[0]
+
+def rf_to_image_space(model, layer_idx, *args, module_name='pool'):
+    """
+    Convert rf space to image space
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        model containing pooling module to convert rf space to image space
+    layer_idx : str or int
+        layer index containing pooling module (i.e., `model._modules[layer_idx]`)
+    *args : *torch.Tensor
+        tensors of rf space sizes or coordinates to be converted to image space
+        (number and index of returned outputs correspond to `args`)
+        [default: `(pool_module.mu, pool_module.sigma)` if `pool_module` has 'mu' or 'sigma' attributes]
+    module_name : str or None
+        name of pooling module [default: 'pool']
+
+    Returns
+    -------
+    outputs : list[torch.Tensor]
+        list of image-space tensors corresponding to input rf-space `args`
+    """
+    # get modules with kernel_size attribute
+    modules = []
+    model.apply(lambda m: modules.append(m) if hasattr(m, 'kernel_size') else None)
+    modules.reverse()
+
+    # get start_module
+    if module_name is None:
+        start_module = model._modules[layer_idx]
+    else:
+        start_module = getattr(model._modules[layer_idx], module_name)
+    
+    # init args if not provided
+    if len(args) == 0:
+        args = [getattr(start_module, k) for k in ['mu','sigma'] if hasattr(start_module, k)]
+    
+    # ensure args are tensor
+    args = [torch.as_tensor(a) for a in args]
+    arg_shapes = [a.shape for a in args]
+    
+    # for each module, upsample/downsample each size in arg
+    start = False
+    for mod in modules:
+        if mod is start_module:
+            start = True
+            continue
+        if not start:
+            continue
+            
+        # get kernel size
+        size = getattr(mod, 'kernel_size')
+        if size is None:
+            continue
+        size = torch.as_tensor(size)
+        
+        # if pool, upsample
+        if torch.typename(mod).lower().find('pool') > -1:
+            args = [a * size.type(a.dtype) for a in args]
+        else: # downsample
+            half_kernel = (size - 1) // 2
+            args = [a + half_kernel.type(a.dtype) for a in args]
+            
+    # ensure same shape by averaging over different dim
+    args = [torch.mean(a, -1).reshape(a_shp) if a.shape != a_shp else a
+            for (a, a_shp) in zip(args, arg_shapes)]
+    return args
+
 def heatmap(model, layer_id, module_name='pool', score_map=None, scores=None,
             input=None, rf_fn=scatter_rfs, filename=None, figsize=(5,5),
             colorbar=False, **kwargs):
@@ -760,13 +919,13 @@ def heatmap(model, layer_id, module_name='pool', score_map=None, scores=None,
         ax = kwargs.pop('ax')
         fig = ax.get_figure()
     # get heatmap
-    heatmap = model.rf_heatmap(layer_id, module_name)
+    heatmap = rf_heatmap(model, layer_id, module_name)
     # plot RF outlines in image space
     if rf_fn:
         # get mu, sigma in image space
-        mu, sigma = model.rf_to_image_space(layer_id, module_name=module_name)
-        rf_fn(mu, sigma, heatmap.shape[1:], remove=False, ax=ax, fn_prefix='RF',
-              **kwargs)
+        mu, sigma = rf_to_image_space(model, layer_id, module_name=module_name)
+        rf_fn(mu, sigma, heatmap.shape[1:], remove=False, ax=ax,
+              fn_prefix='RF', **kwargs)
     # set scores
     if scores is None:
         scores = torch.zeros(heatmap.shape[0])

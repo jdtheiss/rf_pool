@@ -183,6 +183,61 @@ def init_weights(model, named_parameters=None, **kwargs):
     # apply through model
     model.apply(fn)
 
+def intermediate_outputs(model, x, module_names):
+    """
+    Get intermediate outputs from a model for a given
+    input and set of module names
+    
+    Parameters
+    ----------
+    model : torch.nn.Module
+        model used to obtain intermediate outputs
+    x : torch.Tensor
+        input to model
+    module_names : list[str]
+        list of module names to obtain outputs
+        
+    Returns
+    -------
+    out : dict
+        dictionary of (full module_name, output) key/value pairs
+        
+    Notes
+    -----
+    `module_names` can be either the full module name (e.g., "0.block1.act") 
+    or the ending module name (e.g., "act"), and in either case the full 
+    module name is set as the key in `out`.
+    """
+    # init module_names/out dict
+    if isinstance(module_names, str):
+        module_names = [module_names]
+    out = {}
+    
+    # set {module: name} mapping dict
+    mod_mapping = dict((m, n) for n, m in model.named_modules())
+    
+    # init apply function
+    def _get_outputs(mod):
+        nonlocal x
+        # if has modules, skip
+        if len(mod._modules) > 0:
+            return
+        
+        # get output
+        x = mod(x)
+        
+        # get name from mapping dict
+        mod_name = mod_mapping[mod]
+        
+        # set to output if in keys
+        if not any(mod_name.endswith(k) for k in module_names):
+            return
+        out.update({mod_name: x})
+            
+    # apply _get_outputs to all modules
+    model.apply(_get_outputs)
+    return out
+
 def get_doc(docstr, field='', lines=[], end_field=None):
     """
     Parse docstring based on given fields, lines

@@ -7,6 +7,7 @@ import torch
 from torch import nn
 
 from rf_pool import build, modules, pool
+from rf_pool.utils import functions
 
 def _append_modules(mod, **kwargs):
     """
@@ -99,21 +100,17 @@ class Model(nn.Module):
     --------
     rf_pool.solver.build.build_model
     """
-    def __init__(self, model, **kwargs):
+    def __init__(self, model=None, **kwargs):
         super(Model, self).__init__()
         # build model
         if isinstance(model, dict):
-            self._model = build.build_model({'MODEL': model})
+            self._modules = build.build_model({'Model': model})._modules
         elif isinstance(model, nn.Module):
-            self._model = model
+            self._modules = model._modules
         # apply methods
         for k, v in kwargs.items():
             assert hasattr(self, k)
             getattr(self, k)(**v)
-
-    def __repr__(self):
-        # set _model repr as self repr
-        return self._model.__repr__()
 
     def get_modules(self, model):
         # replacement for named_modules method when module is repeated
@@ -277,22 +274,41 @@ class Model(nn.Module):
         -------
         None, prints to sys.stdout
         """
-        print('Model:\n%a\n' % self._model)
+        print('Model:\n%a\n' % self)
         if verbose:
             for k, v in self.__dict__.items():
                 print('%s:\n%a\n' % (k, v))
 
-    def forward(self, inputs, targets=None, **kwargs):
+    def forward_intermediate_outputs(self, x, module_names):
         """
-        Pass inputs through model and return outputs and targets
+        Pass input through model and return intermediate outputs
 
         Parameters
         ----------
-        inputs : torch.Tensor
+        x : torch.Tensor
             input to model passed to return outputs
-        targets : torch.Tensor
-            targets to be passed to loss function with model outputs
-            [default: None]
+        module_names : list[str]
+            module names to return outputs
+
+        Returns
+        -------
+        outputs : dict
+            outputs from each module as (module_name, output) key/value pairs
+
+        See also
+        --------
+        rf_pool.utils.functions.intermediate_outputs
+        """
+        return functions.intermediate_outputs(self, x, module_names)
+
+    def forward(self, x, **kwargs):
+        """
+        Pass input through model and return outputs
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            input to model passed to return outputs
         **kwargs : **dict
             keyword arguments passed to model with `inputs`
 
@@ -300,11 +316,10 @@ class Model(nn.Module):
         -------
         outputs : any
             model outputs passed to loss function
-        targets : any
-            targets passed to loss function
         """
-        # return model outputs and targets
-        return self._model(inputs, **kwargs), targets
+        for mod in self.children():
+            x = mod(x, **kwargs)
+        return x
 
 if __name__ == '__main__':
     import doctest

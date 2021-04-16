@@ -459,7 +459,7 @@ class Pool(torch.nn.Module):
 
     def set(self, **kwargs):
         for k, v in kwargs.items():
-            if not hasattr(k, v) and isinstance(v, torch.Tensor):
+            if not hasattr(self, k) and isinstance(v, torch.Tensor):
                 self.register_buffer(k, v)
             else:
                 setattr(self, k, v)
