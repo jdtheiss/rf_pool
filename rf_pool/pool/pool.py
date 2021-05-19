@@ -1488,14 +1488,14 @@ class RF_Foveated(Pool):
         if img_shape is None:
             img_shape = self.img_shape
         rf_angle=2. * np.pi * torch.linspace(0., 1., int(n_rf))[1]
-        offset = torch.as_tensor(lattice_kwargs.get('offset'))
-        offset += (torch.as_tensor(img_shape, dtype=torch.float) // 2)
-        self.set(rf_angle=rf_angle, offset=offset)
+        rf_center = torch.as_tensor(lattice_kwargs.get('offset'))
+        rf_center += (torch.as_tensor(img_shape, dtype=torch.float) // 2)
+        self.set(rf_angle=rf_angle, rf_center=rf_center)
 
     def get_cortical_mu(self, mu=None, beta=0.):
         if mu is None:
             mu = self.mu
-        return lattice.cortical_xy(mu - self.offset, self.scale,
+        return lattice.cortical_xy(mu - self.rf_center, self.scale,
                                    self.rf_angle, beta, self.ref_axis)
 
     def get_cortical_weights(self, cortical_mu=None, cortical_sigma=None, beta=0.):
