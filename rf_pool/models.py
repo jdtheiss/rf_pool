@@ -763,7 +763,7 @@ class Model(nn.Module):
             forward_fn = lambda x: x[0]
         # set loss function to self.layers[layer_id].train_layer(...,loss_fn,**kwargs)
         layer_loss_fn = losses.KwargsLoss(self.layers[layer_id].train_layer,
-                                          n_args=2, loss_fn=loss_fn, **kwargs)
+                                          n_args=2, **kwargs)
         # train for n_epochs
         return self.train_n_epochs(n_epochs, trainloader, loss_fn=layer_loss_fn,
                                    optimizer=optimizer, forward_fn=forward_fn,

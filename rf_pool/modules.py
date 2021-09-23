@@ -766,7 +766,7 @@ class RBM(Module):
         # get pooling x_mean, x_sample if rf_pool
         pool_module = self.get_modules(layer_name, ['pool'])
         if len(pool_module) > 0 and hasattr(pool_module[0], 'rfs'):
-            if not pooled_output:
+            if not pooled_output and isinstance(pool_module[0].pool_fn, str): #TODO: allow function type
                 pool_fn = pool_module[0].pool_fn.replace('_pool', '')
             else:
                 pool_fn = pool_module[0].pool_fn

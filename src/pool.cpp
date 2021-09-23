@@ -4,7 +4,7 @@
 
 // max pool operation, set output to max value in mask_indices at max index
 template<typename T>
-void pool<T>::rf_max_pool(const T* array, const T* mask, size_t size, const T* mask_indices, 
+void pool<T>::rf_max_pool(const T* array, const T* mask, size_t size, const T* mask_indices,
                           T* output, size_t* indices, bool apply_mask) {
     T* masked_array = new T[size];
     if (apply_mask) {
@@ -17,7 +17,7 @@ void pool<T>::rf_max_pool(const T* array, const T* mask, size_t size, const T* m
 }
 // probmax operation, set output to (1-prob all pixels off) across mask_indices at multinomial index
 template<typename T>
-void pool<T>::rf_probmax(const T* array, const T* mask, size_t size, const T* mask_indices, 
+void pool<T>::rf_probmax(const T* array, const T* mask, size_t size, const T* mask_indices,
                          T* output, size_t* indices, bool apply_mask) {
     if (apply_mask) {
         ops<T>::elem(array, mask, ops<T>::mul, size, mask_indices, output);
@@ -31,7 +31,7 @@ void pool<T>::rf_probmax(const T* array, const T* mask, size_t size, const T* ma
 }
 // probmax pool operation, set output to (1-prob all pixels off) across mask_indices at multinomial index
 template<typename T>
-void pool<T>::rf_probmax_pool(const T* array, const T* mask, size_t size, const T* mask_indices, 
+void pool<T>::rf_probmax_pool(const T* array, const T* mask, size_t size, const T* mask_indices,
                               T* output, size_t* indices, bool apply_mask) {
     T* soft_out = new T[size];
     if (apply_mask) {
@@ -62,7 +62,7 @@ void pool<T>::rf_stochastic_pool(const T* array, const T* mask, size_t size, con
 }
 // lp pool operation, set output to LP value across mask_indices at max index
 template<typename T>
-void pool<T>::rf_lp_pool(const T* array, T p, const T* mask, size_t size, const T* mask_indices, 
+void pool<T>::rf_lp_pool(const T* array, T p, const T* mask, size_t size, const T* mask_indices,
                          T* output, size_t* indices, bool apply_mask) {
     T* lp_out = new T[size];
     if (apply_mask) {
@@ -75,15 +75,30 @@ void pool<T>::rf_lp_pool(const T* array, T p, const T* mask, size_t size, const 
     ops<T>::set_max(array, ops<T>::pow(sum_output, 1 / p), size, mask_indices, output, indices);
     delete [] lp_out;
 }
+// avg pool operation, set output to avg value across mask_indices at max index
+template<typename T>
+void pool<T>::rf_avg_pool(const T* array, const T* mask, size_t size, const T* mask_indices,
+                          T* output, size_t* indices, bool apply_mask) {
+    T* masked_array = new T[size];
+    T avg_out = 0;
+    if (apply_mask) {
+        ops<T>::elem(array, mask, ops<T>::mul, size, mask_indices, masked_array);
+        avg_out = ops<T>::mean(masked_array, size, mask_indices);
+    } else {
+        avg_out = ops<T>::mean(array, size, mask_indices);
+    }
+    ops<T>::set_max(array, avg_out, size, mask_indices, output, indices);
+    delete [] masked_array;
+}
 // max pool with kernel, set output to max value across kernel blocks
 template<typename T>
-void pool<T>::kernel_max_pool(const T* array, size_t kernel[2], size_t img_shape[2], 
+void pool<T>::kernel_max_pool(const T* array, size_t kernel[2], size_t img_shape[2],
                               size_t stride[2], size_t size, T* output, size_t* indices) {
     ops<T>::max(array, kernel, img_shape, stride, size, output, indices);
 }
 // probmax with kernel, set output to (1-prob all pixels off) across kernels at multinomial index
 template<typename T>
-void pool<T>::kernel_probmax(const T* array, size_t kernel[2], size_t img_shape[2], 
+void pool<T>::kernel_probmax(const T* array, size_t kernel[2], size_t img_shape[2],
                              size_t stride[2], size_t size, T* output, size_t* indices) {
     ops<T>::softmax(array, true, kernel, img_shape, stride, size, output);
     T* mult_output = new T[size];
@@ -92,7 +107,7 @@ void pool<T>::kernel_probmax(const T* array, size_t kernel[2], size_t img_shape[
 }
 // probmax pool with kernel, set output to (1-prob all pixels off) across kernels
 template<typename T>
-void pool<T>::kernel_probmax_pool(const T* array, size_t kernel[2], size_t img_shape[2], 
+void pool<T>::kernel_probmax_pool(const T* array, size_t kernel[2], size_t img_shape[2],
                                   size_t stride[2], size_t size, T* output, size_t* indices) {
     T* soft_output = new T[size];
     ops<T>::zeros(size, soft_output);
@@ -102,7 +117,7 @@ void pool<T>::kernel_probmax_pool(const T* array, size_t kernel[2], size_t img_s
 }
 // probmax with kernel, set output to (1-prob all pixels off) across kernels at multinomial index
 template<typename T>
-void pool<T>::kernel_stochastic_pool(const T* array, size_t kernel[2], size_t img_shape[2], 
+void pool<T>::kernel_stochastic_pool(const T* array, size_t kernel[2], size_t img_shape[2],
                                      size_t stride[2], size_t size, T* output, size_t* indices) {
     T* p = new T[size];
     ops<T>::softmax(array, false, kernel, img_shape, stride, size, p);
@@ -113,16 +128,26 @@ void pool<T>::kernel_stochastic_pool(const T* array, size_t kernel[2], size_t im
 }
 // lp pool with kernel, set output to LP value across kernel blocks
 template<typename T>
-void pool<T>::kernel_lp_pool(const T* array, T p, size_t kernel[2], size_t img_shape[2], 
+void pool<T>::kernel_lp_pool(const T* array, T p, size_t kernel[2], size_t img_shape[2],
                              size_t stride[2], size_t size, T* output, size_t* indices) {
     // raise each to power p, sum across kernels, get root p
     size_t block_size = ops<T>::output_size(kernel, img_shape, stride, size);
     ops<T>::kernel_fn(array, p, ops<T>::pow, ops<T>::add, kernel, img_shape, stride, size, output);
     ops<T>::elem(output, 1 / p, ops<T>::pow, block_size, output);
+    ops<T>::argmax(array, kernel, img_shape, stride, size, indices);
+}
+// avg pool with kernel, set output to avg value across kernel blocks
+template<typename T>
+void pool<T>::kernel_avg_pool(const T* array, size_t kernel[2], size_t img_shape[2],
+                              size_t stride[2], size_t size, T* output, size_t* indices) {
+    // divide by kernel size and sum
+    T b = T(kernel[0] * kernel[1]);
+    ops<T>::kernel_fn(array, b, ops<T>::div, ops<T>::add, kernel, img_shape, stride, size, output);
+    ops<T>::argmax(array, kernel, img_shape, stride, size, indices);
 }
 // unpool with kernel, set output to values at indices in resized array
 template<typename T>
-void pool<T>::kernel_unpool(const T* array, size_t kernel[2], size_t img_shape[2], 
+void pool<T>::kernel_unpool(const T* array, size_t kernel[2], size_t img_shape[2],
                             size_t stride[2], size_t size, const T* mask, T* output) {
     ops<T>::set_kernel(array, kernel, img_shape, stride, size, output);
     ops<T>::elem(output, mask, ops<T>::mul, size, output);
