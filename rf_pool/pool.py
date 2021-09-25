@@ -200,8 +200,13 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
     if pool_fn is None:
         return u
 
+    # if pooled_output is False, replace _pool in pool_fn
+    if kwargs.get('pooled_output') is False and isinstance(pool_fn, str):
+        pool_fn = pool_fn.replace('_pool', '')
+
     # assert pool_fn in pool and get pool_grad
-    # assert hasattr(pool, pool_fn), 'Pool function ""%s" not found.' % pool_fn
+    if isinstance(pool_fn, str):
+        assert hasattr(pool, pool_fn), 'Pool function ""%s" not found.' % pool_fn
     if 'grad_fn' in kwargs:
         grad_fn = kwargs.pop('grad_fn')
     elif not isinstance(pool_fn, str): #TODO: allow function type
@@ -222,28 +227,17 @@ def apply(u, pool_fn=None, rfs=None, rf_indices=None, kernel_size=None,
     kwargs.setdefault('retain_shape', retain_shape)
     kwargs.setdefault('apply_mask', apply_mask)
 
-    #TODO: rfs and kernel probmax pooling causing crashes, currently max pool after
-    # if rfs is not None and kernel_size is not None:
-    #     kwargs.update({'kernel_size': None})
-
     # apply cpp pooling function
     input = u.data.flatten(0,1)
     outputs = list(pool_fn(input, **kwargs))
     for i, output in enumerate(outputs):
         if output is not None:
-            #TODO: rfs and kernel probmax pooling causing crashes, currently max pool after
-            # if i == 0 and rfs is not None and kernel_size is not None:
-            #     output, indices = F.max_pool2d_with_indices(torch.as_tensor(output), kernel_size)
             if retain_shape:
                 output_shape = (batch_size, ch, -1) + output.shape[1:]
             else:
                 output_shape = (batch_size, ch,) + output.shape[1:]
             output = output.reshape(output_shape)
             outputs[i] = torch.as_tensor(output)
-
-    #TODO: rfs and kernel probmax pooling causing crashes, currently max pool after
-    # if rfs is not None and kernel_size is not None and return_indices:
-    #     outputs[1] = indices
 
     # return without grad if less than 3 outputs
     if len(outputs) < 3:

@@ -12,7 +12,7 @@ def fwhm2sigma(fwhm):
 def sigma2fwhm(sigma):
     return 2. * np.sqrt(2. * np.log(2)) * sigma
 
-def multiply_gaussians(mu0, sigma0, mu1, sigma1, weight=None):
+def multiply_gaussians(mu0, sigma0, mu1, sigma1, weight=None, scale=True):
     # reshape to (mu0_batch, 2, 1) (1, 2, mu1_batch)
     mu0 = torch.unsqueeze(mu0, -1)
     mu1 = torch.unsqueeze(mu1.t(), 0)
@@ -23,6 +23,11 @@ def multiply_gaussians(mu0, sigma0, mu1, sigma1, weight=None):
     sigma1_2 = torch.pow(sigma1, 2)
     mu = (sigma1_2 * mu0 + sigma0_2 * mu1) / (sigma0_2 + sigma1_2)
     sigma = torch.sqrt((sigma0_2 * sigma1_2) / (sigma0_2 + sigma1_2))
+    # update mu0, sigma0 relative to scaling factor
+    if scale:
+        s = torch.exp(-torch.sum((mu0 - mu1)**2 / (2. * (sigma0_2 + sigma1_2)), 1, keepdim=True))
+        mu = s * mu + (1. - s) * mu0
+        sigma = s * sigma + (1. - s) * sigma0
     # return weighted combination based on mu1_batch size
     if weight is None:
         weight = torch.ones(mu1.shape[-1], 1) / torch.tensor(mu1.shape[-1])
@@ -132,7 +137,7 @@ def gaussian_gradient(kernels):
     w[1,0,0,:] = -1.
     return torch.conv2d(kernels, w)[0]
 
-def apply_attentional_field(mu, sigma, priority_map):
+def apply_attentional_field(mu, sigma, priority_map, **kwargs):
     """
     Returns updated mu and sigma after multiplication with a map of gaussian
     precision values
@@ -176,7 +181,7 @@ def apply_attentional_field(mu, sigma, priority_map):
         return mu, sigma
     map_mu = map_mu[keep_indices].type(priority_map.dtype)
     map_sigma = 1. / map_sigma[keep_indices].type(priority_map.dtype)
-    return multiply_gaussians(mu, sigma, map_mu, map_sigma)
+    return multiply_gaussians(mu, sigma, map_mu, map_sigma, **kwargs)
 
 def exp_kernel_lattice(mu, sigma, kernel_shape):
     """

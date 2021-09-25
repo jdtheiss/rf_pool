@@ -445,9 +445,12 @@ class Model(nn.Module):
                 if name.find(pattern) >=0:
                     param.requires_grad = requires_grad
 
-    def get_prediction(self, input, crop=None, top_n=1):
+    def get_prediction(self, input, crop=None, top_n=1, **kwargs):
         with torch.no_grad():
-            output = self.forward(input)
+            if kwargs:
+                output = self.apply(input, **kwargs)
+            else:
+                output = self.forward(input)
             if crop:
                 output = output[:,:,crop[0],crop[1]]
             if output.ndimension() == 4:
@@ -455,13 +458,13 @@ class Model(nn.Module):
             pred = torch.sort(output, -1)[1]
         return pred[:,-top_n:]
 
-    def get_accuracy(self, dataloader, crop=None, monitor=100, top_n=1):
+    def get_accuracy(self, dataloader, crop=None, monitor=100, top_n=1, **kwargs):
         correct = 0.
         total = 0.
         for i, (data, labels) in enumerate(dataloader):
             with torch.no_grad():
                 # get predicted labels, update accuracy
-                pred = self.get_prediction(data, crop=crop, top_n=top_n)
+                pred = self.get_prediction(data, crop=crop, top_n=top_n, **kwargs)
                 total += float(labels.shape[0])
                 correct += float(torch.eq(pred, labels.reshape(-1,1)).sum())
                 # monitor accuracy

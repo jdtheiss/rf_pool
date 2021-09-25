@@ -223,8 +223,8 @@ class Module(nn.Module):
             if len(module_names) > 0 and name not in module_names:
                 continue
             # get module-specific kwargs
-            mod_kwargs = kwargs.get(name)
-            if mod_kwargs is None:
+            mod_kwargs = kwargs.get(name, {})
+            if isinstance(module, nn.Sequential):
                 mod_kwargs = {}
             # apply module
             input = module(input, **mod_kwargs)
@@ -238,8 +238,8 @@ class Module(nn.Module):
             if len(module_names) > 0 and name not in module_names:
                 continue
             # get module-specific kwargs
-            mod_kwargs = kwargs.get(name)
-            if mod_kwargs is None:
+            mod_kwargs = kwargs.get(name, {})
+            if isinstance(module, nn.Sequential):
                 mod_kwargs = {}
             # apply module
             input = module(input, **mod_kwargs)
@@ -764,13 +764,15 @@ class RBM(Module):
         # get activation
         x_mean = self.apply(x, layer_name, ['activation'])
         # get pooling x_mean, x_sample if rf_pool
-        pool_module = self.get_modules(layer_name, ['pool'])
-        if len(pool_module) > 0 and hasattr(pool_module[0], 'rfs'):
-            if not pooled_output and isinstance(pool_module[0].pool_fn, str): #TODO: allow function type
-                pool_fn = pool_module[0].pool_fn.replace('_pool', '')
-            else:
-                pool_fn = pool_module[0].pool_fn
-            x_mean = pool_module[0](x_mean, pool_fn=pool_fn)
+        # pool_module = self.get_modules(layer_name, ['pool'])
+        x_mean = self.apply(x_mean, layer_name, ['pool'],
+                            pool={'pooled_output': pooled_output})
+        # if len(pool_module) > 0 and hasattr(pool_module[0], 'rfs'):
+            # if not pooled_output: #TODO: allow function type
+            #     pool_fn = pool_module[0].pool_fn.replace('_pool', '')
+            # else:
+            #     pool_fn = pool_module[0].pool_fn
+            # x_mean = pool_module[0](x_mean, pool_fn=pool_fn, pooled_output=pooled_output)
         # sample from x_mean
         x_sample = self.apply(x_mean, layer_name, ['sample'])
         return x_mean, x_sample
