@@ -107,6 +107,8 @@ class Model(nn.Module):
             self._modules = build.build_model({'Model': model})._modules
         elif isinstance(model, nn.Module):
             self._modules = model._modules
+        else:
+            raise Exception('Unknown model type: %s' % type(model))
         # apply methods
         for k, v in kwargs.items():
             assert hasattr(self, k)
@@ -301,7 +303,7 @@ class Model(nn.Module):
         """
         return functions.intermediate_outputs(self, x, module_names)
 
-    def forward(self, x, **kwargs):
+    def forward(self, x, *args, **kwargs):
         """
         Pass input through model and return outputs
 
@@ -309,6 +311,8 @@ class Model(nn.Module):
         ----------
         x : torch.Tensor
             input to model passed to return outputs
+        *args : *any
+            positional arguments (currently ignored)
         **kwargs : **dict
             keyword arguments passed to model with `inputs`
 

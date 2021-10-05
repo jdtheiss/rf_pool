@@ -137,6 +137,9 @@ def build_model(cfg):
     model_class = getattr(models, model_key)
     # set kwargs from sub-cfg
     kwargs = deepcopy(cfg.get(model_key))
+    # if kwargs is model_class, return
+    if isinstance(kwargs, model_class):
+        return kwargs
     # init model
     model = nn.Sequential()
     # for each module in Model field, add_module
@@ -200,12 +203,13 @@ def build_loss(cfg):
     if loss_key is None:
         return _none_fn
     loss_class = getattr(losses, loss_key)
+    # set kwargs from sub-cfg
+    kwargs = deepcopy(cfg.get(loss_key))
 
-    # set items for building class
-    assert isinstance(cfg.get(loss_key), (dict, list)), (
-        'type(cfg["%s"]) should be dict or list, found %s.' % (loss_key, type(kwargs))
-    )
-    kwargs = cfg.get(loss_key).copy()
+    # if kwargs is loss_class, return
+    if isinstance(kwargs, loss_class):
+        return kwargs
+
     if isinstance(kwargs, dict):
         items = list(kwargs.items())
     else: # get from list
@@ -259,6 +263,11 @@ def build_metric(cfg):
     metric_class = getattr(metrics, metric_key)
     # set kwargs from sub-cfg
     kwargs = deepcopy(cfg.get(metric_key))
+
+    # if kwargs is metric_class, return
+    if isinstance(kwargs, metric_class):
+        return kwargs
+
     # init metrics
     metric_dict = OrderedDict()
     # set kwargs from sub_cfg
@@ -319,6 +328,11 @@ def build_dataloader(cfg):
     dataloader_class = getattr(dataloaders, dataloader_key)
     # set kwargs from sub-cfg
     kwargs = deepcopy(cfg.get(dataloader_key))
+
+    # if kwargs is dataloader_class, return
+    if isinstance(kwargs, dataloader_class):
+        return kwargs
+
     # init dataloaders
     dataloader_dict = OrderedDict()
     # set kwargs from sub_cfg
@@ -372,6 +386,12 @@ def build_optimizer(cfg):
         return []
     # set optimizers or learning schedulers from sub-cfg
     optims = deepcopy(cfg.get(optim_key))
+
+    # if optims is torch.nn.optim
+    if isinstance(optims, torch.optim.Optimizer):
+        return optims
+
+    # ensure optims is list
     if not isinstance(optims, list):
         optims = [optims]
     # update with optimizer/scheduler functions

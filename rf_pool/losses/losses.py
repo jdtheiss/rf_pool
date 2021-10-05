@@ -1,9 +1,11 @@
 from collections import OrderedDict
 import copy
+from math import log
 
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from rf_pool import build
 from rf_pool.utils import functions
@@ -51,6 +53,9 @@ class Loss(nn.Module):
         self.weights = weights
 
         # build losses requiring model
+        self.build_from_model(model)
+
+    def build_from_model(self, model=None):
         for name, loss_fn in self.losses.items():
             if hasattr(loss_fn, 'build_from_model') and model is not None:
                 loss_fn.build_from_model(model)
@@ -681,3 +686,29 @@ class BEAMLoss(LayerLoss):
             if i < (len(idx)-1):
                 loss = loss + d_i
         return -(2. * loss / torch.sum(d_i) - 1.).mean()
+
+class FlowLoss(Loss):
+    """
+    Normalizing flow loss
+
+    Parameters
+    ----------
+    in_channels : int
+        number of input channels of data
+    image_size : int or tuple[int]
+        height and width of input image data
+    n_bins : int
+        number of bins to quantize data [default: 256]
+    """
+    def __init__(self, in_channels, image_size, n_bins=256):
+        super(FlowLoss, self).__init__()
+        in_channels = in_channels
+        image_size = F._pair(image_size)
+        self.n_pixel = np.prod(image_size) * in_channels
+        self.n_bins = n_bins
+
+    def forward(self, output, target=None):
+        log_p, logdet = output[:2]
+        loss = -log(self.n_bins) * self.n_pixel
+        loss = loss + logdet + log_p
+        return (-loss / (log(2) * self.n_pixel)).mean()

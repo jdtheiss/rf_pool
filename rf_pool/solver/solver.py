@@ -37,12 +37,13 @@ class Solver(pl.LightningModule):
         super(Solver, self).__init__()
         self.cfg = cfg
         self.model = build.build_model(cfg)
-        # get loss key, update cfg with model
-        loss_key = build.check_keys(cfg, 'Loss', warn=False)
-        if loss_key:
-            cfg.get(loss_key).update({'model': self.model})
+        # # get loss/metric, update with model
         self.loss = build.build_loss(cfg)
+        if hasattr(self.loss, 'build_from_model'):
+            self.loss.build_from_model(self.model)
         self.metric = build.build_metric(cfg)
+        if hasattr(self.metric, 'build_from_model'):
+            self.metric.build_from_model(self.model)
         self._init_weights(cfg)
         self._load_model(cfg)
         self._debug(cfg=cfg, model=self.model, loss=self.loss, metric=self.metric)
@@ -87,18 +88,25 @@ class Solver(pl.LightningModule):
         return logs
 
     def forward(self, *args, **kwargs):
-        return self.model(*args, **kwargs)
+        output = self.model(*args, **kwargs)
+        if isinstance(output, tuple) and len(output) == 2:
+            return output
+        elif len(args) == 2:
+            target = args[1]
+        else:
+            target = None
+        return output, target
 
     def training_step(self, batch, batch_idx, optimizer_idx=None):
         # pass forward and compute loss
-        output, targets = self.forward(*batch)
-        loss = self.loss(output, targets)
+        output, target = self.forward(*batch)
+        loss = self.loss(output, target)
         # log losses
         logs = getattr(self.loss, 'logs', {})
         logs.update({'train_loss': loss})
         self.log_dict(logs)
         # log metrics
-        metrics = self.metric(output, targets)
+        metrics = self.metric(output, target)
         self.log_dict(metrics)
         # log other attributes
         attrs = self._log_attrs(self.cfg)
@@ -122,18 +130,29 @@ class Solver(pl.LightningModule):
         return {'test_loss': sum(outputs) / len(outputs)}
 
     def configure_optimizers(self):
+        """
+        #TODO:WRITEME
+        """
         # build optimizers
         optims = build.build_optimizer(self.cfg)
+        # if already optimizer, return
+        if isinstance(optims, torch.optim.Optimizer):
+            optims = [{'optimizer': optims}]
+            self._debug(optimizer=optims)
+            return optims
+        # create optimizers from (fn, kwargs) pairs
         for optim_group in optims:
             # update optimizer
             fn, kwargs = optim_group.get('optimizer')
             # set params if attribute(s) given
             if kwargs.get('params') is not None:
                 params = kwargs.get('params')
-                if isinstance(params, list):
-                    for param in params:
-                        param.update({'params': getattr(self.model, param['params']),
-                                      'name': param['params']})
+                if not isinstance(params, list):
+                    params = [{'params': params}]
+                for param in params:
+                    param.update({'params': getattr(self.model, param['params']).parameters(),
+                                  'name': param['params']})
+                kwargs.update({'params': params})
             else: # otherwise, set model.parameters()
                 kwargs.update({'params': self.model.parameters()})
             optim_group.update({'optimizer': fn(**kwargs)})
